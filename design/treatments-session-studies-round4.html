@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>STAR/MUX — One canvas, your splits</title><style>
+:root{color-scheme:light;--page:#f5f3ee;--ink:#292a27;--sub:#66665f;--line:#dcdad1;--orange:#c84325;--white:#fffefa;font-family:Inter,"Helvetica Neue",Arial,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink)}button,input,select{font:inherit}button,select,input[type=color]{cursor:pointer}button{color:inherit}button:focus-visible,select:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--orange);outline-offset:4px}button{border:1px solid var(--line);background:var(--white);border-radius:6px;padding:10px 13px}button:hover{border-color:var(--ink)}button[aria-pressed=true]{background:var(--ink);color:var(--white);border-color:var(--ink)}a{color:inherit}label{display:flex;gap:8px;align-items:center}select{border:1px solid var(--line);padding:9px 28px 9px 10px;border-radius:5px;background:var(--white);color:var(--ink);min-width:0}h1,h2,h3,p{margin:0}.eyebrow{font-size:10px;letter-spacing:.15em;text-transform:uppercase;font-weight:700}.mono{font-family:"Liberation Mono","DejaVu Sans Mono",monospace}.muted{color:var(--sub)}
+.mast{height:67px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:0 3vw;background:var(--page);position:sticky;top:0;z-index:20}.brand{font-weight:800;font-size:17px;letter-spacing:.03em}.brand b{color:var(--orange)}.mast nav{display:flex;gap:24px;font-size:12px}.mast a{text-decoration:none}.edition{font-size:10px;letter-spacing:.08em;color:var(--sub)}
+main{max-width:1760px;margin:auto;padding:50px 3vw 80px}.intro{display:flex;justify-content:space-between;align-items:flex-end;gap:40px;margin-bottom:30px}.intro h1{font-family:Georgia,serif;font-size:clamp(34px,4vw,65px);font-weight:400;letter-spacing:-.055em;line-height:1.04;margin:14px 0}.intro p{font-size:14px;line-height:1.7;max-width:590px;color:var(--sub)}.intro-note{font-size:11px;line-height:1.7;max-width:235px;border-left:2px solid var(--orange);padding:7px 0 7px 16px}
+.lab{display:grid;grid-template-columns:252px minmax(0,1fr);border:1px solid var(--line);border-radius:10px;background:var(--white);overflow:hidden}.controls{border-right:1px solid var(--line);padding:23px 20px;display:flex;flex-direction:column;gap:20px}.field{display:flex;flex-direction:column;gap:8px}.field>label,.field>.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:700}.field small{font-size:11px;line-height:1.5;color:var(--sub)}.field select{width:100%}.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pair select{font-size:12px;padding:9px 5px}.palette-card[aria-pressed=true] small{color:#ddd}.check{font-size:12px;line-height:1.5}.check input{accent-color:var(--orange)}.controls hr{width:100%;border:0;border-top:1px solid var(--line);margin:0}.save{background:var(--orange);border-color:var(--orange);color:white;font-size:12px;font-weight:600}.save:hover{background:#a7371e}.swatches{display:flex;gap:4px}.swatches i{height:20px;flex:1;border-radius:3px;border:1px solid #0002}
+.stage{padding:20px;background:#eae8e1;min-width:0}.stage-head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:15px}.stage-title{display:flex;align-items:center;gap:12px}.index{font-size:11px;color:var(--orange)}.stage-title h2{font-size:17px;letter-spacing:-.03em}.stage-head small{font-size:10px;color:var(--sub)}.stage-actions{display:flex;gap:7px}.stage-actions button{font-size:11px;padding:7px 10px}.previews{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.previews.compare{grid-template-columns:repeat(2,minmax(0,1fr))}.preview-label{font-size:10px;margin:0 0 8px;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between}.hero{height:490px;min-width:0}.compare .hero{height:470px;font-size:11px}.stage-foot{display:flex;justify-content:space-between;gap:20px;font-size:11px;line-height:1.6;color:var(--sub);margin-top:15px}.stage-foot span{max-width:540px}.contrast-readout{white-space:nowrap}.state-controls{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0}.state-controls button{padding:7px 10px;font-size:10px}.prototype{margin-top:13px;font-size:10px;line-height:1.6;color:var(--sub)}
+.section-heading{margin:46px 0 22px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.section-heading h2{font:400 32px Georgia,serif;letter-spacing:-.035em}.section-heading p{font-size:12px;line-height:1.6;color:var(--sub);max-width:470px}.gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.study{min-width:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--white);transition:border-color .15s}.study.chosen{border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}.study-preview{height:225px;background:#e7e4db;padding:18px;cursor:pointer;position:relative}.study-preview:hover{background:#dedbd2}.mini{height:100%;font-size:7px!important;pointer-events:none}.study-copy{padding:17px 18px}.study-name{display:flex;align-items:center;gap:10px}.study-name h3{font-size:15px;letter-spacing:-.025em}.study-name span{font-size:10px;color:var(--orange)}.study-copy p{font-size:12px;line-height:1.6;color:var(--sub);min-height:39px;margin:9px 0 14px}.study-actions{display:flex;justify-content:space-between;gap:6px}.study-actions button{font-size:10px;padding:7px 10px}.study-actions button:last-child{background:transparent}.pill{font-size:9px;border:1px solid var(--line);border-radius:20px;padding:3px 7px;white-space:nowrap}.caption-row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.theme-section{border:1px solid var(--line);background:var(--white);padding:26px;border-radius:8px}.theme-intro{display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:13px;line-height:1.7;color:var(--sub);margin-bottom:24px}.theme-intro h3{font-size:15px;color:var(--ink);margin-bottom:8px}.palette-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.palette-card{text-align:left;padding:12px;border:1px solid var(--line);background:var(--page)}.palette-card .swatches{margin-top:10px}.palette-card strong{font-size:11px}.palette-card small{float:right;font-size:9px;color:var(--sub)}.tokens{display:flex;gap:6px;flex-wrap:wrap;margin-top:20px}.tokens span{font:10px "Liberation Mono",monospace;border:1px solid var(--line);border-radius:4px;padding:6px 8px}.shortlist{padding:24px;border:1px dashed #bab8ae;min-height:100px;border-radius:8px;font-size:13px;color:var(--sub)}.shortlist-items{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:15px}.shortlist-items button{font-size:11px}.footer{margin-top:30px;font-size:11px;line-height:1.6;color:var(--sub);display:flex;justify-content:space-between;gap:30px}.toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--white);padding:12px 20px;border-radius:6px;font-size:12px;z-index:100;box-shadow:0 6px 24px #0002}.toast:empty{display:none}
+[hidden]{display:none!important}html{scroll-padding-top:82px}.lab{scroll-margin-top:82px}.controls .field{gap:7px}.controls details>summary{font-size:12px;cursor:pointer;line-height:1.8}.controls details>summary small{display:block;color:var(--sub);font-size:10px}.controls details .field,.controls details .pair{margin-top:16px}.controls details .check{margin-top:14px}.treatment-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.treatment-gallery .study-preview{height:285px}.treatment-gallery .study-copy p{min-height:0}.treatment-gallery .study-actions{justify-content:flex-start;flex-wrap:wrap}.treatment-gallery .pill{margin-left:auto}.tradeoff{border-left:2px solid var(--line);padding-left:12px;font-size:11px;line-height:1.6;color:var(--sub);margin:12px 0 17px}.guardrail{padding:16px 20px;background:var(--white);border:1px solid var(--line);border-left:3px solid var(--orange);margin-bottom:24px;font-size:12px;line-height:1.7}.guardrail strong{font-weight:600}.stage-foot{align-items:flex-start}.previews.compare .hero{height:640px}.split-guide{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.guide-step{border:1px solid var(--line);border-radius:7px;background:var(--white);padding:20px}.guide-step span{font-size:10px;color:var(--orange)}.guide-step h3{font-size:14px;margin:12px 0}.guide-step p{font-size:12px;color:var(--sub);line-height:1.7}.guide-actions{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 0}.guide-actions button{font-size:12px}.split-note{font-size:11px;color:var(--sub);line-height:1.7;margin-top:15px}.stage-actions{flex-wrap:wrap}.preview-label select{max-width:230px}.mini{pointer-events:none}.workspace-prototype{font-size:var(--preview-font,18px);--r:0px;--nav-w:10em;--gap:.75em;font-family:Inter,"Helvetica Neue",Arial,sans-serif;line-height:1.5;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;position:relative;display:grid;grid-template-rows:2.8em minmax(0,1fr) 1.7em;min-height:0;min-width:0;text-align:left}.workspace-prototype.hero{height:650px}.workspace-prototype.mini{height:100%;font-size:8px!important}.previews.compare .workspace-prototype.hero{font-size:calc(var(--preview-font,18px) - 3px)}.workspace-prototype button,.workspace-prototype select{font:inherit;color:var(--fg);background:transparent;border:1px solid var(--border);border-radius:var(--r);padding:.35em .65em;line-height:1.5}.workspace-prototype button{font-size:.65em;white-space:nowrap}.workspace-prototype select{font-size:.65em;max-width:12em;min-width:0;background:var(--panel);padding:.25em .55em}.workspace-prototype button:hover{color:var(--accent);border-color:var(--accent)}.workspace-prototype button:focus-visible,.workspace-prototype select:focus-visible,.workspace-prototype [role=separator]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.workspace-prototype button[aria-pressed=true]{background:var(--selection);color:var(--accent);border-color:var(--accent)}.app-top{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:0 1em;border-bottom:1px solid var(--border);background:var(--panel);min-width:0}.app-brand{font-size:.7em;font-weight:750;letter-spacing:.05em;white-space:nowrap}.app-brand i{font-style:normal;color:var(--accent)}.app-project{font-size:.63em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.app-actions{display:flex;gap:.5em;align-items:center;min-width:0}.app-host{font: .6em "Liberation Mono",monospace;color:var(--success);white-space:nowrap}.app-body{display:grid;grid-template-columns:minmax(0,1fr);min-height:0;min-width:0;overflow:hidden}.main-well{display:grid;grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0;background:var(--bg)}.session-strip{display:flex;align-items:center;justify-content:space-between;gap:.5em;padding:.65em .8em;border-bottom:1px solid var(--border);min-width:0;position:relative;z-index:5;background:var(--bg)}.session-tabs{display:flex;gap:.35em;align-items:center;overflow:auto;min-width:0;scrollbar-width:thin}.session-tabs button{font-size:.64em;padding:.4em .8em;color:var(--muted);border-color:transparent}.session-tabs button[aria-pressed=true]{border-color:var(--border);color:var(--fg);background:var(--raised)}.session-tabs .tab-dot{display:inline-block;width:.38em;height:.38em;border-radius:50%;margin-right:.55em;background:var(--success);vertical-align:middle}.session-tabs .tab-dot.waiting{background:var(--warning)}.split-tools{position:relative;display:flex;gap:.4em;align-items:center;flex-shrink:0}.split-menu{position:absolute;top:calc(100% + .5em);right:0;min-width:13em;border:1px solid var(--border);background:var(--panel);box-shadow:0 .5em 2em #0004;padding:.5em;z-index:30;display:grid;gap:.3em}.split-menu button{font-size:.7em;text-align:left;width:100%;border:0;padding:.65em .8em}.split-menu small{font-size:.57em;line-height:1.6;color:var(--muted);padding:.5em .8em}.canvas{position:relative;padding:var(--gap);min-width:0;min-height:0;overflow:hidden}.split-node{display:grid;min-width:0;min-height:0;height:100%;width:100%}.split-handle{position:relative;min-width:0;min-height:0;touch-action:none;outline:none}.split-handle[data-axis=row]{cursor:col-resize}.split-handle[data-axis=column]{cursor:row-resize}.split-handle:before{content:'';position:absolute;background:var(--border)}.split-handle[data-axis=row]:before{width:1px;top:0;bottom:0;left:50%}.split-handle[data-axis=column]:before{height:1px;left:0;right:0;top:50%}.split-handle:hover:before,.split-handle:focus-visible:before{background:var(--accent)}.terminal-pane{display:grid;grid-template-rows:2.4em minmax(0,1fr);background:var(--bg);min-width:0;min-height:0;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;position:relative}.terminal-pane.is-active{border-color:var(--accent)}.pane-header{display:flex;align-items:center;justify-content:space-between;min-width:0;padding:0 .8em;background:var(--panel);border-bottom:1px solid var(--border);gap:.6em}.pane-header button.pane-identity{background:transparent;border:0;color:var(--muted);padding:.3em 0;overflow:hidden;text-overflow:ellipsis;text-align:left;font-size:.64em}.is-active .pane-header button.pane-identity{color:var(--fg)}.pane-buttons{display:flex;gap:.4em;align-items:center}.pane-buttons button{border:0;font-size:.65em;padding:.1em .4em;color:var(--muted)}.pane-host{font-size:.55em;color:var(--muted);white-space:nowrap}.terminal-scroll{padding:1.45em 1.5em;overflow:auto;min-height:0;font: .78em/1.75 "Liberation Mono","DejaVu Sans Mono",monospace;scrollbar-width:thin;color:var(--term-fg,var(--fg));background:var(--term-bg,var(--bg));display:flex;flex-direction:column}.terminal-scroll p{margin:0 0 1em;overflow-wrap:anywhere;max-width:88ch}.terminal-scroll .terminal-title{color:var(--accent);font-weight:600;letter-spacing:.01em;margin-bottom:1.5em}.terminal-scroll .dim{color:var(--muted)}.terminal-scroll .ok{color:var(--success)}.terminal-scroll .warning{color:var(--warning)}.terminal-scroll .accent{color:var(--accent)}.terminal-scroll pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:.3em 0 1.5em;line-height:1.8}.terminal-scroll .diff-sample{border-left:2px solid var(--success);padding:.7em 1em;background:var(--selection);margin:.2em 0 1.3em;max-width:88ch}.composer{padding:.85em 1em;border:1px solid var(--border);background:var(--raised);border-radius:var(--r);font:inherit;line-height:1.6;max-width:90ch;margin-top:auto;overflow-wrap:anywhere}.composer .cursor{display:inline-block;width:.55em;height:1.1em;background:var(--accent);vertical-align:middle;margin-left:.2em}.shell-content .composer{border:0;background:transparent;padding:0}.request{border:1px solid var(--warning);padding:1em;max-width:75ch;margin-bottom:1.5em}.request-actions{display:flex;gap:.6em;margin-top:.8em}.request-actions button{font-size:1em;background:var(--selection)}.app-bottom{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:0 1.2em;background:var(--panel);border-top:1px solid var(--border);color:var(--muted);font:.55em "Liberation Mono",monospace;white-space:nowrap;overflow:hidden}.app-bottom strong{font-weight:400;color:var(--fg)}.session-index{display:flex;flex-direction:column;gap:.35em;padding:1em .7em;background:var(--panel);border-right:1px solid var(--border);overflow:auto;min-width:0;min-height:0}.session-index .index-heading{font-size:.55em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:.5em .5em 1.2em}.session-index button{text-align:left;white-space:normal;border-color:transparent;border-radius:0;padding:.8em .65em;font-size:.65em}.session-index button[aria-pressed=true]{background:var(--selection);border-left:2px solid var(--accent);border-top-color:transparent;border-right-color:transparent;border-bottom-color:transparent}.session-index button small{display:block;font-size:.83em;color:var(--muted);margin-top:.5em}.index-tail{margin-top:auto;font-size:.55em;line-height:1.8;color:var(--muted);padding:1em .5em}.context-pane{padding:1.1em;background:var(--panel);border-left:1px solid var(--border);min-height:0;min-width:0;overflow:auto}.context-pane header{display:flex;align-items:center;justify-content:space-between;font-size:.7em}.context-pane h3{font-family:Georgia,serif;font-size:1.3em;font-weight:400;letter-spacing:-.03em;margin:1.5em 0 .7em}.context-pane p{font-size:.66em;line-height:1.8;margin:.7em 0;color:var(--muted);overflow-wrap:anywhere}.context-pane .context-label{font-size:.53em;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:1.8em 0 .8em}.context-pane .context-file{padding:.65em 0;border-bottom:1px solid var(--border);font:.62em/1.7 "Liberation Mono",monospace}.timeline{padding:1em .8em;background:var(--panel);border-right:1px solid var(--border);min-width:0;min-height:0;overflow:auto}.timeline h4{font-size:.55em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:.3em 0 1.8em}.timeline .entry{padding:0 0 1.8em 1em;border-left:1px solid var(--border);position:relative;font-size:.62em;line-height:1.7}.timeline .entry:before{content:'';position:absolute;width:.4em;height:.4em;border-radius:50%;background:var(--accent);top:.5em;left:-.22em}.timeline .entry time{color:var(--muted);display:block;font-size:.85em;margin-bottom:.5em}.timeline .entry span{color:var(--muted);display:block;margin-top:.5em}.drop-target{outline:2px dashed var(--accent);outline-offset:-5px}.pane-dropmask{position:absolute;inset:2.8em .6em .6em;background:var(--panel);border:2px dashed var(--accent);z-index:15;display:none;place-items:center;text-align:center;pointer-events:none;opacity:.97;padding:1.2em}.drop-target .pane-dropmask{display:grid}.pane-dropmask strong{font-size:.9em}.pane-dropmask p{font-size:.65em;color:var(--muted);line-height:1.7;margin-top:1em}.workspace-prototype.compact{--gap:.4em}.workspace-prototype.compact .terminal-scroll{padding:.9em 1em}.workspace-prototype.high-contrast{box-shadow:none!important}.workspace-prototype.independent-terminal .terminal-scroll{--fg:#d6deeb;--muted:#9baabe;--accent:#99bfff;--success:#98be89;--warning:#e5c285;--raised:#202b3a;--panel:#192330;--border:#526079;--selection:#263750;--term-bg:#151c27;--term-fg:#d6deeb}.d-monolith{--gap:0em;border-color:transparent}.d-monolith .app-top,.d-monolith .app-bottom,.d-monolith .session-strip{background:var(--bg);border-color:transparent}.d-monolith .terminal-pane:not(.is-active){border-color:var(--border)}.d-monolith .terminal-pane.is-active{border-color:transparent}.d-monolith:not(.has-splits) .pane-header{display:none}.d-monolith:not(.has-splits) .terminal-pane{grid-template-rows:minmax(0,1fr)}.d-monolith .terminal-scroll{padding:1.6em 2em}.d-monolith .session-tabs button[aria-pressed=true]{background:transparent;border-color:transparent;border-bottom-color:var(--accent);color:var(--fg)}.d-monolith .app-project{display:none}.d-monolith .app-brand{font-weight:500;letter-spacing:.12em;font-size:.62em}.d-index .app-body{grid-template-columns:11em minmax(0,1fr)}.d-index .session-strip .session-tabs{display:none}.d-index .session-strip{justify-content:flex-end}.d-index .terminal-pane{border-style:solid}.d-index .app-top{background:var(--bg)}.d-index.nav-collapsed .app-body{grid-template-columns:3.5em minmax(0,1fr)}.d-index.nav-collapsed .session-index{padding:.7em .4em}.d-index.nav-collapsed .session-index button{text-align:center;padding:.75em 0;font-size:.8em}.d-index.nav-collapsed .index-heading,.d-index.nav-collapsed .index-tail,.d-index.nav-collapsed .session-index button small,.d-index.nav-collapsed .session-index .session-name{display:none}.d-index.nav-collapsed .session-index button .session-mark{display:inline}.d-index .session-mark{display:none}.d-ribbon{--r:5px;--gap:0em}.d-ribbon .session-strip{padding:.6em .7em 0;background:var(--panel);align-items:flex-end}.d-ribbon .session-tabs button{border-radius:5px 5px 0 0;padding:.65em 1.5em;border-color:transparent}.d-ribbon .session-tabs button[aria-pressed=true]{background:var(--bg);border-color:var(--border);border-bottom-color:var(--bg)}.d-ribbon .split-tools{padding-bottom:.4em}.d-ribbon:not(.has-splits) .pane-header{display:none}.d-ribbon:not(.has-splits) .terminal-pane{grid-template-rows:minmax(0,1fr);border:0;border-radius:0}.d-ribbon .app-brand{font-size:.65em}.d-ribbon .app-top{background:var(--panel)}.d-studio{--r:.6em;--gap:.9em;border-color:var(--border);background:var(--panel)}.d-studio .app-top{background:var(--bg);height:2.8em}.d-studio .session-strip{background:var(--panel);border:0;padding:.8em 1em .15em}.d-studio .canvas{background:var(--panel)}.d-studio .terminal-pane{box-shadow:0 .15em .5em #0001}.d-studio .pane-header{background:var(--bg)}.d-studio .app-bottom{border:0}.d-studio .session-tabs button[aria-pressed=true]{background:var(--bg);box-shadow:0 1px 3px #0001}.d-studio .app-brand{letter-spacing:-.03em;font-size:.8em}.d-studio .composer{border-radius:.5em}.d-command{--gap:0em;grid-template-rows:2.3em minmax(0,1fr) 1.5em;font-family:"Liberation Mono",monospace}.d-command .main-well{grid-template-rows:minmax(0,1fr) auto}.d-command .session-strip{grid-row:2;background:var(--panel);border-top:1px solid var(--border);border-bottom:0;padding:.65em .8em}.d-command .canvas{grid-row:1}.d-command .split-menu{top:auto;bottom:calc(100% + .5em)}.d-command .app-top{background:var(--bg);border:0}.d-command .app-brand{font-size:.6em;letter-spacing:.08em}.d-command .session-tabs button{border:1px solid var(--border)}.d-command .session-tabs button[aria-pressed=true]{border-color:var(--accent)}.d-command:not(.has-splits) .terminal-pane{border:0}.d-command:not(.has-splits) .pane-header{display:none}.d-command:not(.has-splits) .terminal-pane{grid-template-rows:minmax(0,1fr)}.d-dossier{--r:0px;--gap:.85em}.d-dossier .app-body.context-open{grid-template-columns:minmax(0,1fr) 15em}.d-dossier .context-pane{background:var(--bg)}.d-dossier .app-top{background:var(--bg);border-bottom-color:var(--border)}.d-dossier .app-brand{font:1em Georgia,serif;letter-spacing:-.06em}.d-dossier .terminal-pane{border:0;border-top:1px solid var(--border);border-radius:0}.d-dossier .pane-header{background:var(--bg)}.d-dossier .session-tabs button{background:transparent;border:0;border-bottom:1px solid transparent;border-radius:0}.d-dossier .session-tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--fg)}.d-dossier .app-bottom{background:var(--bg)}.d-dossier .composer{background:var(--bg);border-width:0 0 1px;border-radius:0;padding:.7em 0}.d-frame{--r:.28em;--gap:.65em;box-shadow:0 .5em 1.5em #0002}.d-frame .app-top{background:linear-gradient(180deg,var(--raised),var(--panel));box-shadow:inset 0 1px 0 #ffffff20,0 1px 3px #0003;z-index:2}.d-frame .app-brand{font-size:.7em;text-shadow:0 1px 0 #0002}.d-frame .session-strip{background:var(--panel);box-shadow:inset 0 1px 0 #ffffff12}.d-frame .session-tabs button{border:1px solid var(--border);background:var(--raised);box-shadow:inset 0 1px 0 #ffffff10,0 1px 2px #0002}.d-frame .session-tabs button[aria-pressed=true]{background:var(--selection);box-shadow:inset 0 1px 2px #0002}.d-frame .pane-header{background:linear-gradient(180deg,var(--raised),var(--panel))}.d-frame .terminal-pane{border-bottom-width:2px}.d-ledger{--r:0px;--gap:.7em;font-family:"Liberation Mono",monospace}.d-ledger .app-body{grid-template-columns:11em minmax(0,1fr)}.d-ledger.nav-collapsed .app-body{grid-template-columns:minmax(0,1fr)}.d-ledger.nav-collapsed .timeline{display:none}.d-ledger .app-top{background:var(--bg)}.d-ledger .pane-header{background:var(--bg)}.d-ledger .terminal-pane{border-color:var(--border);border-top:2px solid var(--accent)}.d-ledger .app-brand{font-size:.65em;letter-spacing:.1em}.d-ledger .session-tabs button{border-radius:0}.d-ledger .terminal-scroll{padding:1.2em}.surface-name{font-size:.55em;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+@media(min-width:1500px){.workspace-prototype.hero{height:670px}.treatment-gallery .study-preview{height:300px}}@media(max-width:1100px){.previews.compare{grid-template-columns:1fr}.previews.compare .workspace-prototype.hero{font-size:var(--preview-font,18px)}.workspace-prototype.hero{font-size:16px}.treatment-gallery .workspace-prototype.mini{font-size:7px!important}.d-dossier .app-body.context-open{grid-template-columns:minmax(0,1fr) 12em}.split-guide{grid-template-columns:repeat(2,1fr)}}@media(max-width:740px){main{padding-top:28px}.intro{display:block}.intro-note{margin-top:20px;max-width:none}.mast{height:58px}.edition{display:none}.mast nav{gap:8px;font-size:10px}.lab{grid-template-columns:1fr}.controls{border-right:0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;padding:18px}.controls>.eyebrow,.controls hr{display:none}.stage{padding:13px}.stage-head{flex-wrap:wrap}.workspace-prototype.hero,.previews.compare .workspace-prototype.hero{font-size:12px;height:520px}.gallery,.treatment-gallery{grid-template-columns:1fr}.treatment-gallery .study-preview{height:260px}.theme-intro{grid-template-columns:1fr;gap:15px}.palette-grid{grid-template-columns:repeat(2,1fr)}.theme-section{padding:18px}.section-heading{display:block}.section-heading p{margin-top:10px}.footer,.stage-foot{display:block}.contrast-readout{margin-top:5px}.app-project,.surface-name{display:none}.d-index .app-body{grid-template-columns:7em minmax(0,1fr)}.d-dossier .app-body.context-open{grid-template-columns:minmax(0,1fr)}.d-dossier .context-pane{display:none}.d-ledger .app-body{grid-template-columns:7em minmax(0,1fr)}.workspace-prototype .app-host{font-size:.55em}.session-tabs button{padding:.4em .5em}.split-guide{grid-template-columns:1fr 1fr}.guide-step{padding:14px}.split-menu{min-width:14em}.pane-host{display:none}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+.terminal-pane{height:100%}.d-studio .app-body.context-open{grid-template-columns:minmax(0,1fr) 15em}@media(max-width:1100px){.d-studio .app-body.context-open{grid-template-columns:minmax(0,1fr) 12em}}@media(max-width:740px){.d-studio .app-body.context-open{grid-template-columns:minmax(0,1fr)}.d-studio .context-pane{display:none}}
+
+/* Blueprint geometry is shared by every treatment. */
+.workspace-prototype{border-radius:0;border-color:var(--border);box-shadow:inset 0 0 0 3px var(--bg),inset 0 0 0 4px var(--border)}
+.workspace-prototype .canvas{padding:max(var(--gap),10px);background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}
+.workspace-prototype[class] .terminal-pane{border-radius:0;border:1px solid var(--border);box-shadow:0 0 0 2px var(--bg),0 0 0 3px var(--border)}
+.workspace-prototype[class] .terminal-pane.is-active{border-color:var(--accent);box-shadow:0 0 0 2px var(--bg),0 0 0 3px var(--accent)}
+.workspace-prototype .app-top,.workspace-prototype .session-strip,.workspace-prototype .app-bottom{border-radius:0}
+.workspace-prototype[class] .virtual-pane{grid-template-rows:2.4em minmax(0,1fr)}
+.workspace-prototype[class] .virtual-pane .pane-header{display:flex}
+.virtual-surface{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--panel)}
+.virtual-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.6em;padding:.8em 1em;border-bottom:1px solid var(--border);font-size:.65em}
+.virtual-toolbar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.virtual-desktop{padding:1.6em;min-height:0;overflow:auto;background:var(--bg);background-image:radial-gradient(var(--grid) 1px,transparent 1px);background-size:12px 12px}
+.virtual-window{max-width:42em;margin:auto;border:1px solid var(--border);box-shadow:0 0 0 3px var(--bg),0 0 0 4px var(--border);background:var(--panel)}
+.virtual-title{font-size:.7em;border-bottom:1px solid var(--border);padding:.7em 1em;display:flex;justify-content:space-between;gap:1em}
+.virtual-file{display:grid;grid-template-columns:1fr auto;gap:1em;padding:.9em 1.2em;border-bottom:1px solid var(--border);font:.65em/1.6 "Liberation Mono",monospace}.virtual-file:first-of-type{background:var(--selection);color:var(--accent)}
+.virtual-caption{padding:1em 1.2em;font-size:.62em;color:var(--muted);line-height:1.8;overflow-wrap:anywhere}
+.virtual-status{padding:.7em 1em;font-size:.58em;border-top:1px solid var(--border);color:var(--muted);overflow-wrap:anywhere}
+.virtual-offline{display:grid;place-items:center;text-align:center;padding:2em;font-size:.8em;line-height:1.8;color:var(--warning)}
+.launch-dialog{width:min(620px,calc(100vw - 28px));max-height:90vh;padding:0;border:1px solid var(--accent);color:var(--fg);background:var(--bg);box-shadow:0 0 0 3px var(--bg),0 0 0 4px var(--accent);border-radius:0;overflow:auto}.launch-dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
+.launch-head{display:flex;justify-content:space-between;align-items:center;padding:22px 25px;border-bottom:1px solid var(--border)}.launch-head h2{font-size:19px;letter-spacing:-.03em}.launch-head button{background:transparent;border:0;color:var(--muted)}
+.launch-form{padding:22px 25px;display:grid;gap:18px;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}.launch-form label{display:grid;gap:8px;font-size:12px;color:var(--muted)}.launch-form input,.launch-form select{width:100%;min-width:0;padding:11px;border:1px solid var(--border);border-radius:0;background:var(--panel);color:var(--fg);font-size:14px}.launch-form p{font-size:12px;line-height:1.8;color:var(--muted)}.launch-route{border:1px solid var(--border);padding:14px;font:12px/1.8 "Liberation Mono",monospace;overflow-wrap:anywhere;background:var(--panel)}.launch-submit{display:flex;justify-content:space-between;align-items:center;gap:15px}.launch-submit button{border:1px solid var(--accent);background:var(--selection);color:var(--accent);border-radius:0;font-size:13px}.launch-submit small{font-size:11px;color:var(--muted)}
+@media(max-width:740px){.workspace-prototype .canvas{padding:8px}.launch-form .pair{grid-template-columns:1fr}.virtual-desktop{padding:1em}.virtual-file{grid-template-columns:1fr}.virtual-file span:last-child{display:none}}
+</style></head>
+<body><header class="mast"><a class="brand" href="#top">STAR<span style="color:#999">/</span>MUX <b>↗</b></a><nav aria-label="Sections"><a href="#treatments">Treatments</a><a href="#split-lab">Split lab</a><a href="#virtual-apps">Apps</a><a href="#themes">Themes</a><a href="#selection">Shortlist <span id="count">0</span></a></nav><span class="edition">PANEL STUDIES / 04</span></header>
+<main id="top"><section class="intro"><div><div class="eyebrow" style="color:var(--orange)">One terminal by default</div><h1>One canvas. Any session.</h1><p>Eight directions with Blueprint’s grid and dual borders intact. Terminals and virtual app panels share the same tabs. One panel owns the canvas until you choose to split it.</p></div><div class="intro-note">Interactive design studies.<br>Simulated sessions; no connection to your running agents.</div></section>
+<div class="guardrail"><strong>The rule for every treatment:</strong> switching sessions changes the terminal you see. <strong>Split right</strong> or <strong>Split below</strong> explicitly adds a pane. Closing a pane keeps its session available.</div>
+<section class="lab" aria-label="Single-terminal design workbench"><aside class="controls"><div class="eyebrow">The workbench</div><div class="field"><label for="design">Treatment</label><select id="design"></select><small id="design-description"></small></div><div class="field"><label for="font">Text size</label><select id="font"><option value="16">16 px / compact</option><option value="18">18 px / readable</option><option value="20">20 px / larger</option></select></div><details><summary>Theme &amp; appearance <small id="theme-name">Kanagawa</small></summary><div class="field"><label for="theme">Palette</label><select id="theme"></select><div class="swatches" id="swatches" aria-hidden="true"></div></div><div class="field"><label for="appearance">Appearance</label><select id="appearance"><option value="palette">Palette default</option><option value="system">Follow browser preference</option><option value="dark">Dark study</option><option value="light">Light study</option></select><small id="appearance-note"></small></div><div class="pair"><div class="field"><label for="density">Density</label><select id="density"><option value="comfortable">Relaxed</option><option value="compact">Compact</option></select></div><div class="field"><label for="accent">Accent</label><input id="accent" type="color" value="#7e9cd8" style="width:100%;height:36px;padding:3px;border:1px solid var(--line);border-radius:5px;background:var(--white)"></div></div><label class="check"><input id="contrast" type="checkbox"> Stronger contrast</label><label class="check"><input id="sync" type="checkbox" checked> Match terminal palette</label></details><hr><button class="save" id="save">＋ Save this direction</button><small class="muted" style="font-size:10px;line-height:1.7">The shortlist saves your treatment, theme, text size, sessions, and split arrangement.</small></aside>
+<div class="stage"><div class="stage-head"><div class="stage-title"><span class="index" id="active-index">D01</span><h2 id="active-title">Monolith</h2></div><div class="stage-actions"><button id="compare" aria-pressed="false">Compare treatments</button><button id="reset">Reset study</button></div></div><div class="previews" id="previews"><div><div class="preview-label"><span id="a-label">A / Monolith</span><span id="variant-label"></span></div><div id="hero-a"></div></div><div id="compare-panel" hidden><div class="preview-label"><label for="design-b">B / <select id="design-b" style="font-size:10px;padding:3px 7px"></select></label><span>Same sessions + theme</span></div><div id="hero-b"></div></div></div><div class="state-controls" aria-label="Preview Codex state"><button data-state="working" aria-pressed="true">● Working</button><button data-state="approval">◇ Needs approval</button><button data-state="transfer">↗ File delivered</button><button data-state="offline">○ Disconnected</button></div><div class="stage-foot"><span id="treatment-note"></span><div class="contrast-readout" id="contrast-readout"></div></div><p class="prototype">Try “Launch app” for a local or SSH virtual panel, or the Split menu inside a preview. Dividers support dragging and arrow keys. File drops simulate delivery to the chosen pane; this page does not read or upload files.</p></div></section>
+<section id="treatments"><div class="section-heading"><h2>Eight ways to hold one terminal.</h2><p>Every thumbnail starts with one pane. Inspect a treatment to try its navigation and explicit split controls.</p></div><div class="gallery treatment-gallery" id="gallery"></div></section>
+<section id="split-lab"><div class="section-heading"><h2>Splitting is an action.</h2><p>One shared feature across all eight treatments, independent of the visual style.</p></div><div class="split-guide"><article class="guide-step"><span>01 / START</span><h3>One active terminal</h3><p>Tabs and the session index select the terminal shown in the active pane. They don’t automatically divide the screen.</p></article><article class="guide-step"><span>02 / SPLIT</span><h3>Choose a direction</h3><p>Split right or below. A new shell opens in that pane; an existing session stays available in its tab.</p></article><article class="guide-step"><span>03 / ARRANGE</span><h3>Resize and focus</h3><p>Drag the divider, or focus it and use arrow keys. Split a pane again to try a nested arrangement. ↗ focuses one pane temporarily.</p></article><article class="guide-step"><span>04 / RETURN</span><h3>Keep the sessions</h3><p>Close a pane with ×, or keep only the focused pane. Its session remains in the tab strip for later.</p></article></div><div class="guide-actions"><button data-split="row" data-jump="yes">Try split right ↔</button><button data-split="column" data-jump="yes">Try split below ↕</button><button data-single="yes">Keep only focused pane</button></div><p class="split-note">These are interactive feature studies. The installed application still needs the selected treatment and splitting behavior implemented.</p></section>
+<section id="virtual-apps"><div class="section-heading"><h2>The app belongs in the workspace.</h2><p>A STAR/SCREEN-style private desktop, presented as an ordinary session panel.</p></div><div class="split-guide"><article class="guide-step"><span>01 / LAUNCH</span><h3>Local or over SSH</h3><p>Choose the app command and its working directory on that host. Open a tab, or explicitly split the focused pane.</p></article><article class="guide-step"><span>02 / PRESENT</span><h3>A virtual app surface</h3><p>The app runs in a private compositor on its host. Its pixels appear in the panel. Existing terminal sessions stay available.</p></article><article class="guide-step"><span>03 / CONTROL</span><h3>Capture and release</h3><p>Give keyboard and pointer input to the app. Ctrl+Esc releases input. Switching sessions releases capture too.</p></article><article class="guide-step"><span>04 / RECONNECT</span><h3>Keep the remote app</h3><p>Reconnect to the existing app session after a transport interruption. Desktop drops must stage files on that app’s host before delivery.</p></article></div><div class="guide-actions"><button data-launch-app="yes">Try the app launcher ↗</button></div><p class="split-note">This page previews the interaction and an illustrative app surface. Remote app execution, streaming, persistence, clipboard and file delivery require live implementation and validation.</p></section><section id="themes"><div class="section-heading"><h2>Keep the theme independent.</h2><p>Compare a treatment in light and dark palettes without changing its terminal model.</p></div><div class="theme-section"><div class="theme-intro"><div><h3>Shared semantic colors</h3><p>Twelve complete Base16 palettes from STAR/KIT. Terminal text, tab state, focus, approval, and file delivery resolve from the same color roles.</p></div><div><h3>Readable by default</h3><p>Larger preview text, a stronger-contrast option, and independent terminal colors are available in the workbench. Light and dark adaptations are visual studies, not additional official KIT themes.</p></div></div><div class="palette-grid" id="palette-grid"></div><div class="tokens" id="tokens"></div></div></section>
+<section id="selection"><div class="section-heading"><h2>Keep a few directions.</h2><p>Save a treatment as one terminal, or save the split arrangement you built. Export the shortlist to make the next implementation concrete.</p></div><div class="shortlist"><div class="shortlist-items" id="shortlist-items"></div><div id="empty-shortlist">Nothing saved yet. Choose a treatment and use “Save this direction.”</div><div style="display:flex;gap:9px;flex-wrap:wrap"><button id="export" disabled>Export shortlist ↓</button><button id="copy" disabled>Copy brief</button><button id="clear" disabled>Clear shortlist</button></div></div></section>
+<footer class="footer"><p>STAR/MUX · Panel studies / 04<br>Local HTML · no external scripts, fonts, uploads, or analytics.</p><p>One canvas by default.<br>More panes when you choose them.</p></footer></main><div class="toast" id="toast" role="status" aria-live="polite"></div><dialog id="app-launcher" class="launch-dialog" aria-labelledby="launcher-title"><header class="launch-head"><h2 id="launcher-title">Launch a virtual app</h2><button id="launcher-close" type="button" aria-label="Close launcher">×</button></header><form id="launch-form" class="launch-form"><p>The app runs on the chosen host in a private virtual desktop. Its panel lives alongside your terminal sessions.</p><div class="pair"><label>Run on<select name="target" id="launch-target"><option value="ssh">SSH host</option><option value="local">This computer</option></select></label><label id="launch-address-label">SSH address<input id="launch-address" name="address" value="atlas" placeholder="user@host" required pattern="[^\s]+" maxlength="200"></label></div><label>Application command<input name="command" id="launch-command" value="nautilus --new-window ." required maxlength="1000" placeholder="Application and arguments"></label><label>Working directory on that host<input name="directory" id="launch-directory" value="/work/star/starmux" required maxlength="1000"></label><label>Open in<select name="placement" id="launch-placement"><option value="tab">New tab · use focused pane</option><option value="row">Split right</option><option value="column">Split below</option></select></label><div class="launch-route" id="launch-route" aria-live="polite"></div><div class="launch-submit"><small>Interactive design preview · no SSH command runs</small><button type="submit">Preview app panel ↗</button></div></form></dialog><script id="palette-data" type="application/json">[
+  {
+    "id": "ayu-dark",
+    "name": "Ayu Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#0f1419",
+      "base01": "#131721",
+      "base02": "#272d38",
+      "base03": "#3e4b59",
+      "base04": "#bfbdb6",
+      "base05": "#e6e1cf",
+      "base06": "#e6e1cf",
+      "base07": "#f3f4f5",
+      "base08": "#f07178",
+      "base09": "#ff8f40",
+      "base0A": "#ffb454",
+      "base0B": "#b8cc52",
+      "base0C": "#95e6cb",
+      "base0D": "#59c2ff",
+      "base0E": "#d2a6ff",
+      "base0F": "#e6b673"
+    }
+  },
+  {
+    "id": "catppuccin-latte",
+    "name": "Catppuccin Latte",
+    "variant": "light",
+    "base16": {
+      "base00": "#eff1f5",
+      "base01": "#e6e9ef",
+      "base02": "#ccd0da",
+      "base03": "#bcc0cc",
+      "base04": "#acb0be",
+      "base05": "#4c4f69",
+      "base06": "#dc8a78",
+      "base07": "#7287fd",
+      "base08": "#d20f39",
+      "base09": "#fe640b",
+      "base0A": "#df8e1d",
+      "base0B": "#40a02b",
+      "base0C": "#179299",
+      "base0D": "#1e66f5",
+      "base0E": "#8839ef",
+      "base0F": "#dd7878"
+    }
+  },
+  {
+    "id": "catppuccin-mocha",
+    "name": "Catppuccin Mocha",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1e1e2e",
+      "base01": "#181825",
+      "base02": "#313244",
+      "base03": "#45475a",
+      "base04": "#585b70",
+      "base05": "#cdd6f4",
+      "base06": "#f5e0dc",
+      "base07": "#b4befe",
+      "base08": "#f38ba8",
+      "base09": "#fab387",
+      "base0A": "#f9e2af",
+      "base0B": "#a6e3a1",
+      "base0C": "#94e2d5",
+      "base0D": "#89b4fa",
+      "base0E": "#cba6f7",
+      "base0F": "#f2cdcd"
+    }
+  },
+  {
+    "id": "dracula",
+    "name": "Dracula",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282a36",
+      "base01": "#44475a",
+      "base02": "#44475a",
+      "base03": "#6272a4",
+      "base04": "#6272a4",
+      "base05": "#f8f8f2",
+      "base06": "#f8f8f2",
+      "base07": "#ffffff",
+      "base08": "#ff5555",
+      "base09": "#ffb86c",
+      "base0A": "#f1fa8c",
+      "base0B": "#50fa7b",
+      "base0C": "#8be9fd",
+      "base0D": "#bd93f9",
+      "base0E": "#ff79c6",
+      "base0F": "#ff5555"
+    }
+  },
+  {
+    "id": "everforest",
+    "name": "Everforest Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#2d353b",
+      "base01": "#343f44",
+      "base02": "#3d484d",
+      "base03": "#475258",
+      "base04": "#859289",
+      "base05": "#d3c6aa",
+      "base06": "#e6e2cc",
+      "base07": "#fdf6e3",
+      "base08": "#7fbbb3",
+      "base09": "#dbbc7f",
+      "base0A": "#e69875",
+      "base0B": "#a7c080",
+      "base0C": "#83c092",
+      "base0D": "#7fbbb3",
+      "base0E": "#d699b6",
+      "base0F": "#9da9a0"
+    }
+  },
+  {
+    "id": "gruvbox-dark",
+    "name": "Gruvbox Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282828",
+      "base01": "#3c3836",
+      "base02": "#504945",
+      "base03": "#665c54",
+      "base04": "#bdae93",
+      "base05": "#d5c4a1",
+      "base06": "#ebdbb2",
+      "base07": "#fbf1c7",
+      "base08": "#fb4934",
+      "base09": "#fe8019",
+      "base0A": "#fabd2f",
+      "base0B": "#b8bb26",
+      "base0C": "#8ec07c",
+      "base0D": "#83a598",
+      "base0E": "#d3869b",
+      "base0F": "#d65d0e"
+    }
+  },
+  {
+    "id": "kanagawa",
+    "name": "Kanagawa",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1f1f28",
+      "base01": "#2a2a37",
+      "base02": "#223249",
+      "base03": "#363646",
+      "base04": "#727169",
+      "base05": "#dcd7ba",
+      "base06": "#c8c093",
+      "base07": "#717c7c",
+      "base08": "#c34043",
+      "base09": "#ffa066",
+      "base0A": "#c0a36e",
+      "base0B": "#76946a",
+      "base0C": "#6a9589",
+      "base0D": "#7e9cd8",
+      "base0E": "#957fb8",
+      "base0F": "#d27e99"
+    }
+  },
+  {
+    "id": "nord",
+    "name": "Nord",
+    "variant": "dark",
+    "base16": {
+      "base00": "#2e3440",
+      "base01": "#3b4252",
+      "base02": "#434c5e",
+      "base03": "#4c566a",
+      "base04": "#d8dee9",
+      "base05": "#e5e9f0",
+      "base06": "#eceff4",
+      "base07": "#8fbcbb",
+      "base08": "#bf616a",
+      "base09": "#d08770",
+      "base0A": "#ebcb8b",
+      "base0B": "#a3be8c",
+      "base0C": "#88c0d0",
+      "base0D": "#81a1c1",
+      "base0E": "#b48ead",
+      "base0F": "#5e81ac"
+    }
+  },
+  {
+    "id": "one-dark",
+    "name": "One Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282c34",
+      "base01": "#353b45",
+      "base02": "#3e4451",
+      "base03": "#545862",
+      "base04": "#565c64",
+      "base05": "#abb2bf",
+      "base06": "#b6bdca",
+      "base07": "#c8ccd4",
+      "base08": "#e06c75",
+      "base09": "#d19a66",
+      "base0A": "#e5c07b",
+      "base0B": "#98c379",
+      "base0C": "#56b6c2",
+      "base0D": "#61afef",
+      "base0E": "#c678dd",
+      "base0F": "#be5046"
+    }
+  },
+  {
+    "id": "rose-pine",
+    "name": "Rose Pine",
+    "variant": "dark",
+    "base16": {
+      "base00": "#191724",
+      "base01": "#1f1d2e",
+      "base02": "#26233a",
+      "base03": "#6e6a86",
+      "base04": "#908caa",
+      "base05": "#e0def4",
+      "base06": "#e0def4",
+      "base07": "#524f67",
+      "base08": "#eb6f92",
+      "base09": "#f6c177",
+      "base0A": "#ebbcba",
+      "base0B": "#31748f",
+      "base0C": "#9ccfd8",
+      "base0D": "#c4a7e7",
+      "base0E": "#f6c177",
+      "base0F": "#524f67"
+    }
+  },
+  {
+    "id": "solarized-dark",
+    "name": "Solarized Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#002b36",
+      "base01": "#073642",
+      "base02": "#586e75",
+      "base03": "#657b83",
+      "base04": "#839496",
+      "base05": "#93a1a1",
+      "base06": "#eee8d5",
+      "base07": "#fdf6e3",
+      "base08": "#dc322f",
+      "base09": "#cb4b16",
+      "base0A": "#b58900",
+      "base0B": "#859900",
+      "base0C": "#2aa198",
+      "base0D": "#268bd2",
+      "base0E": "#6c71c4",
+      "base0F": "#d33682"
+    }
+  },
+  {
+    "id": "tokyo-night",
+    "name": "Tokyo Night",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1a1b26",
+      "base01": "#16161e",
+      "base02": "#2f3549",
+      "base03": "#444b6a",
+      "base04": "#787c99",
+      "base05": "#a9b1d6",
+      "base06": "#c0caf5",
+      "base07": "#cfc9c2",
+      "base08": "#f7768e",
+      "base09": "#ff9e64",
+      "base0A": "#e0af68",
+      "base0B": "#9ece6a",
+      "base0C": "#7dcfff",
+      "base0D": "#7aa2f7",
+      "base0E": "#bb9af7",
+      "base0F": "#d5d6db"
+    }
+  }
+]</script><script>'use strict';
+const PALETTES=JSON.parse(document.getElementById('palette-data').textContent);
+const DESIGNS=[
+{id:'monolith',name:'Monolith',tag:'Full canvas / almost no chrome',description:'One expansive terminal, with a quiet row of session tabs. The surrounding application gets out of the way.',tradeoff:'The quietest navigation, with Blueprint’s grid and dual frame retained. Context lives behind the terminal.',note:'The main terminal is the workspace. Try a split only when you actually need another session.'},
+{id:'index',name:'Index',tag:'Session directory / clear hierarchy',description:'A narrow session index on the left. Selecting a session replaces the terminal in the main canvas.',tradeoff:'Useful with many agents. The index costs some width, and can collapse to a small icon rail.',note:'Switch sessions from the index. Collapse it to see how much navigation you really need.',navigation:'index'},
+{id:'ribbon',name:'Ribbon',tag:'Native tabs / familiar workspace',description:'A familiar tab strip attached directly to the terminal. One active session fills everything below it.',tradeoff:'Easy to understand and compact. Lots of tabs will eventually need scrolling.',note:'A terminal application with the clarity of a browser tab strip. Split actions live at the end of the ribbon.'},
+{id:'studio',name:'Studio',tag:'Soft native surfaces / breathing room',description:'A single terminal in a calm, lightly raised work surface, with optional context tucked away.',tradeoff:'A little more spacing and softness. Less severe than Blueprint, with the same amount of terminal space.',note:'Try Latte for a light studio treatment. Context is a drawer; a second terminal appears only after a split.',context:false},
+{id:'command',name:'Command',tag:'Bottom session bar / terminal first',description:'A largely uninterrupted terminal with session switching and split controls along the bottom edge.',tradeoff:'Keeps the top of the terminal quiet. The bottom bar may take a moment to get used to.',note:'Navigation is at the bottom. The split menu opens upward, close to the command area.'},
+{id:'dossier',name:'Dossier',tag:'Agent + brief / editorial structure',description:'One terminal with a readable session brief on the right: the task, files, and decisions that matter.',tradeoff:'The brief earns its space when context is valuable. Close it when the terminal needs the full width.',note:'The companion is a brief, not another terminal. Close it, or explicitly split the terminal canvas.',context:true},
+{id:'frame',name:'Frame',tag:'Tactile chrome / precise boundaries',description:'A restrained native frame, raised tabs, and a clearly defined terminal well.',tradeoff:'More tangible than minimal layouts. Extra edges can become visual weight on smaller screens.',note:'A fresh take on classic desktop chrome. Try a light palette for a silver instrument-panel direction.'},
+{id:'ledger',name:'Ledger',tag:'Activity margin / operational focus',description:'A slim activity timeline beside one main terminal, showing handoffs, file delivery, and decisions.',tradeoff:'Useful for monitoring a running agent. Hide the activity margin when it stops being helpful.',note:'Activity stays beside the work; other terminals stay in tabs until you split.',navigation:'timeline'}
+];
+const INITIAL_SESSIONS=[{id:'codex',kind:'codex',name:'Codex',detail:'Implementation',host:'atlas / SSH',mark:'*'},{id:'review',kind:'review',name:'Review',detail:'Review changes',host:'atlas / SSH',mark:'◇'},{id:'shell',kind:'shell',name:'Shell',detail:'Local terminal',host:'local',mark:'~'}];
+const INITIAL_TREE={id:'p1',session:'codex'};
+const defaults={design:'monolith',otherDesign:'studio',theme:'kanagawa',appearance:'palette',accent:null,density:'comfortable',contrast:false,sync:true,font:18,compare:false,state:'working',tree:INITIAL_TREE,sessions:INITIAL_SESSIONS,activePane:'p1',zoomed:null,menu:null,context:null,navCollapsed:false,delivery:null};
+const clone=value=>JSON.parse(JSON.stringify(value));const $=id=>document.getElementById(id);
+let settings=clone(defaults),saved=[];
+try{const prior=JSON.parse(localStorage.getItem('starmux-studies-settings-v1')||'null')||{};for(const key of ['theme','appearance','accent','density','contrast','sync'])if(prior[key]!==undefined)settings[key]=prior[key];const current=JSON.parse(localStorage.getItem('starmux-single-settings-v3')||'null');if(current)settings=Object.assign(settings,current);saved=JSON.parse(localStorage.getItem('starmux-single-shortlist-v3')||'[]');if(!Array.isArray(saved))saved=[]}catch(e){}
+if(!DESIGNS.some(d=>d.id===settings.design))settings.design='monolith';if(!DESIGNS.some(d=>d.id===settings.otherDesign))settings.otherDesign='studio';if(!PALETTES.some(p=>p.id===settings.theme))settings.theme='kanagawa';
+if(!['palette','system','light','dark'].includes(settings.appearance))settings.appearance='palette';if(![16,18,20].includes(Number(settings.font)))settings.font=18;if(!['comfortable','compact'].includes(settings.density))settings.density='comfortable';if(settings.accent&&!/^#[0-9a-f]{6}$/i.test(settings.accent))settings.accent=null;
+function leaves(node=settings.tree){return node.a&&node.b?[...leaves(node.a),...leaves(node.b)]:[node]}
+function findNode(id,node=settings.tree){if(node.id===id)return node;if(node.a)return findNode(id,node.a)||findNode(id,node.b);return null}
+function validModel(s){try{if(!Array.isArray(s.sessions)||!s.sessions.length||s.sessions.length>64)return false;const sessionIds=new Set(s.sessions.map(t=>t.id));if(s.sessions.some(t=>!t||!['codex','review','shell','app'].includes(t.kind)||typeof t.name!=='string'||(t.kind==='app'&&(!t.app||typeof t.app.command!=='string'||typeof t.app.directory!=='string'||!['local','ssh'].includes(t.app.target)||typeof t.app.address!=='string'))))return false;const ids=new Set();let count=0;function valid(n,depth){if(!n||depth>8||++count>63||typeof n.id!=='string'||!/^[a-zA-Z0-9_-]+$/.test(n.id)||ids.has(n.id))return false;ids.add(n.id);if(n.a||n.b)return ['row','column'].includes(n.axis)&&Number.isFinite(n.ratio)&&n.ratio>=15&&n.ratio<=85&&valid(n.a,depth+1)&&valid(n.b,depth+1);return sessionIds.has(n.session)}return valid(s.tree,0)}catch(e){return false}}
+if(!validModel(settings)){settings.tree=clone(INITIAL_TREE);settings.sessions=clone(INITIAL_SESSIONS);settings.activePane='p1';settings.zoomed=null}
+if(!leaves().some(p=>p.id===settings.activePane))settings.activePane=leaves()[0].id;
+if(!leaves().some(p=>p.id===settings.zoomed))settings.zoomed=null;
+settings.menu=null;saved=saved.filter(s=>s&&DESIGNS.some(d=>d.id===s.design)&&PALETTES.some(p=>p.id===s.theme)&&validModel(s));
+let toastTimer,dragState=null,uid=0;
+function persist(){try{localStorage.setItem('starmux-single-settings-v3',JSON.stringify(settings));localStorage.setItem('starmux-single-shortlist-v3',JSON.stringify(saved))}catch(e){}}
+function makeId(prefix){return prefix+'-'+Date.now().toString(36)+'-'+(++uid).toString(36)}
+function session(id,sessions=settings.sessions){return sessions.find(s=>s.id===id)||sessions[0]}
+function activeSession(){return session(findNode(settings.activePane)?.session||leaves()[0].session)}
+function sessionState(s){if(s.kind==='app')return s.app.disconnected?'Disconnected':'Virtual app';if(s.kind==='shell')return 'Ready';if(s.kind==='review')return 'Needs review';return ({working:'Working',approval:'Needs approval',transfer:'File delivered',offline:'Disconnected'})[settings.state]||'Working'}
+function chooseSession(id){for(const s of settings.sessions)if(s.kind==='app')s.app.capture=false;const visible=leaves().find(p=>p.session===id);if(visible){settings.activePane=visible.id;if(settings.zoomed)settings.zoomed=visible.id}else{findNode(settings.activePane).session=id}settings.menu=null;render()}
+function splitPane(axis,targetSession=null){const node=findNode(settings.activePane);if(!node||node.a)return;const old=clone(node),visible=new Set(leaves().map(p=>p.session));let target=targetSession?session(targetSession):settings.sessions.find(s=>s.kind==='shell'&&!visible.has(s.id));if(!target){const id=makeId('shell');target={id,kind:'shell',name:'Shell '+(settings.sessions.filter(s=>s.kind==='shell').length+1),detail:'Local terminal',host:'local',mark:'~'};settings.sessions.push(target)}const fresh={id:makeId('pane'),session:target.id};Object.keys(node).forEach(k=>delete node[k]);Object.assign(node,{id:makeId('split'),axis,ratio:50,a:old,b:fresh});settings.activePane=fresh.id;settings.zoomed=null;settings.menu=null;render()}
+function removeLeaf(node,id){if(!node.a)return node.id===id?null:node;const a=removeLeaf(node.a,id),b=removeLeaf(node.b,id);if(!a)return b;if(!b)return a;return Object.assign({},node,{a,b})}
+function closePane(id){if(leaves().length===1)return;settings.tree=removeLeaf(settings.tree,id);if(!leaves().some(p=>p.id===settings.activePane))settings.activePane=leaves()[0].id;settings.zoomed=null;settings.menu=null;render()}
+function keepActive(){settings.tree=clone(findNode(settings.activePane));settings.zoomed=null;settings.menu=null;render();notify('Single terminal. Other sessions remain in the tabs.')}
+function setRatio(id,value){const node=findNode(id);if(!node?.a)return;node.ratio=Math.max(15,Math.min(85,Math.round(value)));document.querySelectorAll('[data-node="'+id+'"]').forEach(el=>{el.style[node.axis==='row'?'gridTemplateColumns':'gridTemplateRows']=tracks(node.ratio)});document.querySelectorAll('[data-divider="'+id+'"]').forEach(el=>el.setAttribute('aria-valuenow',node.ratio))}
+function tracks(ratio){return 'minmax(0,'+ratio+'fr) 8px minmax(0,'+(100-ratio)+'fr)'}
+function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function rgb(hex){return hex.replace('#','').match(/../g).map(x=>parseInt(x,16))}
+function mix(a,b,f){return '#'+rgb(a).map((v,i)=>Math.round(v*(1-f)+rgb(b)[i]*f).toString(16).padStart(2,'0')).join('')}
+function lum(hex){return rgb(hex).map(x=>{x/=255;return x<=.04045?x/12.92:Math.pow((x+.055)/1.055,2.4)}).reduce((a,x,i)=>a+x*[.2126,.7152,.0722][i],0)}
+function ratio(a,b){const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+function readable(color,bg,target){if(ratio(color,bg)>=target)return color;const end=ratio('#ffffff',bg)>ratio('#000000',bg)?'#ffffff':'#000000';for(let i=1;i<=100;i++){const c=mix(color,end,i/100);if(ratio(c,bg)>=target)return c}return end}
+function readableOn(color,backgrounds,target){const end=lum(backgrounds[0])>.45?'#000000':'#ffffff';for(let i=0;i<=100;i++){const c=mix(color,end,i/100);if(backgrounds.every(bg=>ratio(c,bg)>=target))return c}return end}
+function resolve(s){
+ const p=PALETTES.find(p=>p.id===s.theme)||PALETTES[0],b=p.base16,systemDark=matchMedia('(prefers-color-scheme: dark)').matches;
+ const variant=s.appearance==='system'?(systemDark?'dark':'light'):s.appearance==='palette'?p.variant:s.appearance;
+ const adapted=variant!==p.variant,light=variant==='light';
+ const bg=adapted?(light?'#f4f3ee':'#191c23'):b.base00,panel=adapted?(light?'#eae9e3':'#232732'):b.base01;
+ const fg=readable(adapted?(light?'#34373d':'#dce0e8'):b.base05,bg,s.contrast?7:4.5);
+ const raised=mix(panel,'#ffffff',light?.48:.06),surfaces=[bg,panel,raised],border=readable(mix(bg,fg,.19),bg,s.contrast?3:1.35);
+ const accent=readableOn(s.accent||b.base0D,surfaces,s.contrast?7:4.5),muted=readableOn(mix(bg,fg,.58),surfaces,s.contrast?7:4.5);
+ return {bg,panel,raised,fg:readableOn(fg,surfaces,s.contrast?7:4.5),muted,border,accent,selection:mix(bg,accent,light?.10:.16),success:readableOn(b.base0B,surfaces,4.5),warning:readableOn(b.base0A,surfaces,4.5),error:readableOn(b.base08,surfaces,4.5),grid:mix(bg,accent,.09),variant,adapted,palette:p.name};
+}
+function cssTokens(t){return Object.entries(t).filter(([k,v])=>v[0]==='#').map(([k,v])=>'--'+k+':'+v).join(';')}
+function contentFor(s,paneId){
+ const delivered=settings.delivery&&settings.delivery.paneId===paneId;
+ if(s.kind==='shell')return '<p class="terminal-title">~ / '+esc(s.name)+' <span class="dim">· local</span></p><pre><span class="ok">~/projects/star</span> <span class="accent">❯</span> git status --short\n\n<span class="dim"> M src/workspace.rs\n M src/transfer.rs\n?? tests/ssh_handoff.rs</span></pre><p class="dim">This shell is a separate retained session.</p><div class="composer"><span class="ok">~/projects/star</span> ❯ '+(delivered?esc('~/.local/share/starmux/attachments/…/'+settings.delivery.name):'')+' <span class="cursor"></span></div>';
+ if(delivered)return '<p class="terminal-title">'+esc(s.mark)+' '+esc(s.name)+' <span class="dim">/ atlas</span></p><p class="ok">✓ File delivered to the remote host.</p><p class="dim">The path is ready in this session. Add your instructions before submitting.</p><div class="composer">› '+esc('~/.local/share/starmux/attachments/…/'+settings.delivery.name)+' <span class="cursor"></span></div>';
+ if(s.kind==='review')return '<p class="terminal-title">◇ Review / atlas</p><p>Reviewing the workspace changes.</p><p class="dim">• Compared session ownership<br>• Checked remote attachment paths<br>• Inspected transfer cancellation</p><div class="request"><span class="warning">One decision needs you</span><p>Keep staged attachments after the session closes?</p><div class="request-actions"><button data-decision="keep">Keep files</button><button data-decision="later">Review later</button></div></div><div class="composer">› Add review instructions <span class="cursor"></span></div>';
+ if(settings.state==='approval')return '<p class="terminal-title">* Codex / waiting for you</p><p>I’m ready to run the workspace checks.</p><div class="request"><span class="warning">◇ Approval requested</span><p>Run the project test command?</p><pre>cargo test --workspace</pre><div class="request-actions"><button data-decision="allow">Allow once</button><button data-decision="reject">Reject</button></div></div><p class="dim">The agent is paused. Your session stays open.</p><div class="composer">› Your instructions <span class="cursor"></span></div>';
+ if(settings.state==='offline')return '<p class="terminal-title">* Codex / atlas</p><p class="warning">○ SSH connection interrupted</p><p>Your agent process is retained on atlas.</p><p class="dim">Reconnecting to the same session…<br>Your composer text stays with it.</p><div class="composer dim">Waiting for the remote host.</div>';
+ return '<p class="terminal-title">* Codex <span class="dim">/ workspace assistant</span></p><p>Reviewing session handoff and remote file delivery.</p><p class="dim">• Read workspace.rs<br>• Checked transfer.rs<br>• Inspected session ownership</p><div class="diff-sample"><span class="ok">+ keep agent processes alive<br>+ verify destination checksum</span></div><p><span class="ok">✓</span> Checks passed. Preparing the changes.</p><div class="composer">› Ask a follow-up <span class="cursor"></span></div>';
+}
+function paneMarkup(leaf,options){const s=session(leaf.session,options.sessions),focused=options.activePane===leaf.id,count=options.count;return '<section class="terminal-pane '+(focused?'is-active':'')+(s.kind==='app'?' virtual-pane':'')+'" data-pane="'+leaf.id+'" data-session="'+esc(s.id)+'"><header class="pane-header"><button class="pane-identity" data-focus="'+leaf.id+'" aria-label="Focus '+esc(s.name)+' pane">'+esc(s.mark)+' / '+esc(s.name)+'</button><span class="pane-buttons"><span class="pane-host">'+esc(s.host)+'</span>'+(count>1?'<button data-zoom="'+leaf.id+'" aria-label="Focus this pane without closing the split">↗</button><button data-close-pane="'+leaf.id+'" aria-label="Close '+esc(s.name)+' pane; keep session">×</button>':'')+'</span></header>'+(s.kind==='app'?virtualMarkup(s,leaf.id):'<div class="terminal-scroll '+(s.kind==='shell'?'shell-content':'')+'">'+contentFor(s,leaf.id)+'</div>')+'<div class="pane-dropmask"><div><strong>Copy to '+esc(s.name)+' / '+esc(s.host)+'</strong><p>Stage on this session’s host.<br>Keep the prompt editable.<br>Design preview / no upload.</p></div></div></section>'}
+function treeMarkup(node,options){if(!node.a)return paneMarkup(node,options);return '<div class="split-node" data-node="'+node.id+'" style="'+(node.axis==='row'?'grid-template-columns':'grid-template-rows')+':'+tracks(node.ratio)+'">'+treeMarkup(node.a,options)+'<div class="split-handle" role="separator" tabindex="0" aria-label="Resize split" aria-orientation="'+(node.axis==='row'?'vertical':'horizontal')+'" aria-valuemin="15" aria-valuemax="85" aria-valuenow="'+node.ratio+'" data-divider="'+node.id+'" data-axis="'+node.axis+'"></div>'+treeMarkup(node.b,options)+'</div>'}
+function tabsMarkup(options){return '<div class="session-tabs">'+options.sessions.map(s=>'<button data-session-tab="'+esc(s.id)+'" aria-pressed="'+(s.id===options.activeSession)+'"><i class="tab-dot '+(s.kind==='review'?'waiting':'')+'"></i>'+esc(s.name)+'</button>').join('')+'</div>'}
+function indexMarkup(options){return '<aside class="session-index"><div class="index-heading">Sessions / '+String(options.sessions.length).padStart(2,'0')+'</div>'+options.sessions.map(s=>'<button data-session-tab="'+esc(s.id)+'" aria-pressed="'+(s.id===options.activeSession)+'" aria-label="Switch to '+esc(s.name)+'"><span class="session-mark">'+esc(s.mark)+'</span><span class="session-name">'+esc(s.mark)+' '+esc(s.name)+'</span><small>'+esc(sessionState(s))+' / '+esc(s.host)+'</small></button>').join('')+'<div class="index-tail">star / starmux<br>Sessions stay available<br>when a pane closes.</div></aside>'}
+function timelineMarkup(){return '<aside class="timeline"><h4>Activity / today</h4><div class="entry"><time>10:42</time>Codex inspected 3 files.<span>Working on session handoff.</span></div><div class="entry"><time>10:39</time>AGENTS.md delivered.<span>Staged on atlas.</span></div><div class="entry"><time>10:36</time>Review needs a decision.<span>Attachment retention.</span></div><div class="entry"><time>10:31</time>Session attached.<span>Existing process retained.</span></div></aside>'}
+function contextMarkup(){return '<aside class="context-pane"><header><strong>Session brief</strong><button data-context="toggle" aria-label="Close session brief">×</button></header><h3>Keep the work connected.</h3><p>Improve session handoff and remote attachment delivery.</p><div class="context-label">Working directory</div><p class="mono">/work/star/starmux</p><div class="context-label">In context</div><div class="context-file">AGENTS.md</div><div class="context-file">src/workspace.rs</div><div class="context-file">src/transfer.rs</div><div class="context-label">Decision</div><p style="color:var(--warning)">◇ Attachment retention needs review.</p><div class="context-label">Connection</div><p>atlas / SSH<br>Agent process retained.</p></aside>'}
+function splitControls(design,mini,count){const menu=!mini&&settings.menu===design.id;return '<div class="split-tools"><button data-launch-app="yes">Launch app ＋</button>'+(!mini&&settings.zoomed?'<button data-restore-split="yes">Restore split</button>':'')+'<button data-open-split="'+design.id+'" aria-expanded="'+menu+'">Split ⌄</button>'+(menu?'<div class="split-menu" role="menu"><button role="menuitem" data-split="row">Split right <span style="float:right">↔</span></button><button role="menuitem" data-split="column">Split below <span style="float:right">↕</span></button>'+(count>1?'<button role="menuitem" data-single="yes">Keep only focused pane</button>':'')+'<small>Each split opens another retained session. Drag a divider to resize.</small></div>':'')+'</div>'}
+function appMarkup(designId,size='hero'){
+ const design=DESIGNS.find(d=>d.id===designId)||DESIGNS[0],mini=size==='mini',t=resolve(settings),tree=mini?INITIAL_TREE:settings.tree,sessions=mini?INITIAL_SESSIONS:settings.sessions,all=leaves(tree),active=mini?'p1':settings.activePane;
+ const activeLeaf=all.find(p=>p.id===active)||all[0],activeSession=session(activeLeaf.session,sessions),options={sessions,activePane:active,activeSession:activeSession.id,count:all.length};
+ const context=design.context!==undefined&&(mini?design.context:settings.context===null?design.context:settings.context);
+ const visibleTree=!mini&&settings.zoomed?findNode(settings.zoomed)||tree:tree;
+ const navCollapsed=!mini&&settings.navCollapsed;
+ const nav=design.navigation==='index'?indexMarkup(options):design.navigation==='timeline'?timelineMarkup():'';
+ const toggles=(design.navigation?'<button data-navigation="toggle">'+(design.navigation==='index'?(navCollapsed?'Expand index':'Collapse index'):(navCollapsed?'Show activity':'Hide activity'))+'</button>':'')+(design.context!==undefined?'<button data-context="toggle" aria-pressed="'+context+'">Brief</button>':'');
+ return '<div class="workspace-prototype d-'+design.id+' '+size+(all.length>1?' has-splits':'')+(context?' context-open':'')+(navCollapsed?' nav-collapsed':'')+(settings.density==='compact'?' compact':'')+(settings.contrast?' high-contrast':'')+(!settings.sync?' independent-terminal':'')+'" data-design="'+design.id+'" style="'+cssTokens(t)+';--preview-font:'+settings.font+'px"><header class="app-top"><div class="app-brand">STAR<i> / </i>MUX</div><div class="app-project">star / starmux</div><span class="surface-name">'+design.name+'</span><div class="app-actions">'+toggles+'<span class="app-host">↗ '+esc(activeSession.host)+'</span></div></header><div class="app-body '+(context?'context-open':'')+'">'+nav+'<div class="main-well"><nav class="session-strip" aria-label="Retained sessions">'+tabsMarkup(options)+splitControls(design,mini,all.length)+'</nav><div class="canvas">'+treeMarkup(visibleTree,options)+'</div></div>'+(context?contextMarkup():'')+'</div><footer class="app-bottom"><span><strong>'+esc(activeSession.name)+'</strong> / '+(settings.zoomed&&!mini?'focused pane':all.length+' pane'+(all.length===1?'':'s'))+'</span><span>Sessions retained · terminals + virtual apps</span><span>'+(!mini&&all.length>1?'Drag dividers to resize':'Split only when you choose')+'</span></footer></div>';
+}
+function notify(text){$('toast').textContent=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').textContent='',3400)}
+function fillSelect(id,items){$(id).innerHTML=items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')}
+fillSelect('design',DESIGNS);fillSelect('design-b',DESIGNS);fillSelect('theme',PALETTES);
+function render(){
+ persist();const d=DESIGNS.find(d=>d.id===settings.design),t=resolve(settings);
+ for(const id of ['design','theme','appearance','density','font'])$(id).value=settings[id];$('design-b').value=settings.otherDesign;$('contrast').checked=settings.contrast;$('sync').checked=settings.sync;$('accent').value=settings.accent||PALETTES.find(p=>p.id===settings.theme).base16.base0D;
+ $('design-description').textContent=d.description;$('theme-name').textContent=t.palette;$('appearance-note').textContent=t.adapted?'Adapted '+t.variant+' study.':'Original '+t.variant+' palette.';
+ $('active-index').textContent='D'+String(DESIGNS.indexOf(d)+1).padStart(2,'0');$('active-title').textContent=d.name;$('a-label').textContent='A / '+d.name;$('variant-label').textContent=t.palette+' · '+t.variant;
+ $('hero-a').innerHTML=appMarkup(settings.design);$('hero-b').innerHTML=settings.compare?appMarkup(settings.otherDesign):'';$('compare-panel').hidden=!settings.compare;$('previews').classList.toggle('compare',settings.compare);$('compare').setAttribute('aria-pressed',String(settings.compare));
+ $('treatment-note').textContent=d.note;$('contrast-readout').textContent='Text '+ratio(t.fg,t.bg).toFixed(1)+':1';
+ $('swatches').innerHTML=[t.bg,t.panel,t.fg,t.accent,t.success,t.warning].map(c=>'<i style="background:'+c+'"></i>').join('');
+ $('gallery').innerHTML=DESIGNS.map((d,i)=>'<article class="study '+(d.id===settings.design?'chosen':'')+'"><div class="study-preview" role="button" tabindex="0" data-inspect="'+d.id+'" aria-label="Inspect '+d.name+'">'+appMarkup(d.id,'mini')+'</div><div class="study-copy"><div class="caption-row"><div class="study-name"><span>D'+String(i+1).padStart(2,'0')+'</span><h3>'+d.name+'</h3></div><span class="pill">'+d.tag+'</span></div><p>'+d.description+'</p><div class="tradeoff">'+d.tradeoff+'</div><div class="study-actions"><button data-inspect="'+d.id+'">Inspect ↗</button><button data-save-design="'+d.id+'">＋ Shortlist</button><button data-compare-design="'+d.id+'">Compare with A</button></div></div></article>').join('');
+ $('palette-grid').innerHTML=PALETTES.map(p=>'<button class="palette-card" data-palette="'+p.id+'" aria-pressed="'+(p.id===settings.theme)+'"><strong>'+esc(p.name)+'</strong><small>'+p.variant+'</small><span class="swatches">'+['base00','base01','base05','base0D','base0B','base0A'].map(k=>'<i style="background:'+p.base16[k]+'"></i>').join('')+'</span></button>').join('');
+ $('tokens').innerHTML=['bg','panel','fg','muted','accent','success','warning','error','border'].map(k=>'<span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+t[k]+';margin-right:5px"></i>'+k+' '+t[k]+'</span>').join('');
+ document.querySelectorAll('[data-state]').forEach(b=>b.setAttribute('aria-pressed',String(settings.state===b.dataset.state)));renderShortlist();
+}
+function renderShortlist(){$('count').textContent=saved.length;$('empty-shortlist').hidden=!!saved.length;$('shortlist-items').innerHTML=saved.map((s,i)=>'<div><button data-restore="'+i+'">'+esc(DESIGNS.find(d=>d.id===s.design).name)+' / '+leaves(s.tree).length+' pane'+(leaves(s.tree).length===1?'':'s')+' / '+esc(resolve(s).palette)+'</button><button data-remove="'+i+'" aria-label="Remove selection '+(i+1)+'">×</button></div>').join('');for(const id of ['export','copy','clear'])$(id).disabled=!saved.length}
+function saveDesign(id=settings.design){const entry=clone(settings);entry.design=id;entry.menu=null;entry.zoomed=null;entry.compare=false;entry.delivery=null;saved.push(entry);persist();renderShortlist();notify('Saved '+DESIGNS.find(d=>d.id===id).name+' with '+leaves().length+' pane'+(leaves().length===1?'':'s')+'.')}
+function inspectDesign(id){settings.design=id;settings.context=null;settings.navCollapsed=false;settings.menu=null;render();document.querySelector('.lab').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'})}
+for(const id of ['theme','appearance','density'])$(id).addEventListener('change',e=>{settings[id]=e.target.value;if(id==='theme')settings.accent=null;render()});$('font').addEventListener('change',e=>{settings.font=Number(e.target.value);render()});$('design').addEventListener('change',e=>inspectDesign(e.target.value));$('design-b').addEventListener('change',e=>{settings.otherDesign=e.target.value;settings.menu=null;render()});for(const id of ['contrast','sync'])$(id).addEventListener('change',e=>{settings[id]=e.target.checked;render()});$('accent').addEventListener('input',e=>{settings.accent=e.target.value;render()});$('compare').addEventListener('click',()=>{settings.compare=!settings.compare;settings.menu=null;render()});$('reset').addEventListener('click',()=>{settings=clone(defaults);render();notify('Reset to one terminal. Your shortlist is still saved.')});$('save').addEventListener('click',()=>saveDesign());
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button,[data-inspect]');if(!b)return;
+ if(b.dataset.launchApp)openLauncher(b);
+ if(b.dataset.appCapture){const app=session(b.dataset.appCapture).app,next=!app.capture;for(const s of settings.sessions)if(s.kind==='app')s.app.capture=false;app.capture=next;render()}
+ if(b.dataset.appConnection){const app=session(b.dataset.appConnection).app;app.disconnected=!app.disconnected;app.capture=false;render()}
+ if(b.dataset.inspect)inspectDesign(b.dataset.inspect);
+ if(b.dataset.saveDesign)saveDesign(b.dataset.saveDesign);
+ if(b.dataset.compareDesign){settings.otherDesign=b.dataset.compareDesign;settings.compare=true;render();document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.sessionTab)chooseSession(b.dataset.sessionTab);
+ if(b.dataset.openSplit){settings.menu=settings.menu===b.dataset.openSplit?null:b.dataset.openSplit;render()}
+ if(b.dataset.split){splitPane(b.dataset.split);if(b.dataset.jump)document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.closePane)closePane(b.dataset.closePane);
+ if(b.dataset.single)keepActive();
+ if(b.dataset.focus){settings.activePane=b.dataset.focus;settings.menu=null;render()}
+ if(b.dataset.zoom){settings.activePane=b.dataset.zoom;settings.zoomed=b.dataset.zoom;render()}
+ if(b.dataset.restoreSplit){settings.zoomed=null;render()}
+ if(b.dataset.context){const design=DESIGNS.find(d=>d.id===b.closest('.workspace-prototype').dataset.design);settings.context=!(settings.context===null?design.context:settings.context);render()}
+ if(b.dataset.navigation){settings.navCollapsed=!settings.navCollapsed;render()}
+ if(b.dataset.state){chooseSession('codex');settings.state=b.dataset.state;settings.delivery=b.dataset.state==='transfer'?{paneId:settings.activePane,name:'AGENTS.md'}:null;render()}
+ if(b.dataset.decision){settings.state='working';notify('Preview decision recorded.');chooseSession('codex')}
+ if(b.dataset.palette){settings.theme=b.dataset.palette;settings.accent=null;render()}
+ if(b.dataset.restore!==undefined){settings=clone(saved[Number(b.dataset.restore)]);settings.menu=null;settings.compare=false;settings.zoomed=null;render();document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.remove!==undefined){saved.splice(Number(b.dataset.remove),1);persist();renderShortlist()}
+});
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches?.('.study-preview')){e.preventDefault();e.target.click()}if(e.key==='Escape'&&settings.menu){settings.menu=null;render()}const divider=e.target.closest?.('[data-divider]');if(divider){const key=divider.dataset.axis==='row'?['ArrowLeft','ArrowRight']:['ArrowUp','ArrowDown'];if(key.includes(e.key)){e.preventDefault();const node=findNode(divider.dataset.divider);setRatio(node.id,node.ratio+(e.key===key[0]?-5:5));persist()}}});
+document.addEventListener('pointerdown',e=>{const handle=e.target.closest('.hero [data-divider]');if(!handle)return;const group=handle.closest('.split-node');dragState={id:handle.dataset.divider,axis:handle.dataset.axis,rect:group.getBoundingClientRect(),handle};handle.setPointerCapture(e.pointerId);e.preventDefault()});
+document.addEventListener('pointermove',e=>{if(!dragState)return;const d=dragState;const offset=d.axis==='row'?e.clientX-d.rect.left:e.clientY-d.rect.top;const extent=d.axis==='row'?d.rect.width:d.rect.height;setRatio(d.id,offset/extent*100)});
+document.addEventListener('pointerup',()=>{if(dragState){dragState=null;persist()}});document.addEventListener('pointercancel',()=>{dragState=null;persist()});
+window.addEventListener('dragover',e=>{e.preventDefault();const pane=e.target.closest('.hero .terminal-pane');document.querySelectorAll('.drop-target').forEach(p=>{if(p!==pane)p.classList.remove('drop-target')});if(pane){pane.classList.add('drop-target');e.dataTransfer.dropEffect='copy'}});document.addEventListener('dragleave',e=>{const p=e.target.closest('.terminal-pane');if(p&&!p.contains(e.relatedTarget))p.classList.remove('drop-target')});window.addEventListener('drop',e=>{e.preventDefault();const p=e.target.closest('.hero .terminal-pane');document.querySelectorAll('.drop-target').forEach(p=>p.classList.remove('drop-target'));const file=e.dataTransfer.files[0];if(!p||!file)return;if(session(p.dataset.session).kind==='app'){notify('App file delivery preview: stage on the app host, then deliver through its virtual desktop. No file uploaded.');return}settings.activePane=p.dataset.pane;settings.delivery={paneId:p.dataset.pane,name:file.name};settings.state='transfer';render();notify('Preview only: '+file.name+' was not opened or uploaded.')});
+$('clear').addEventListener('click',()=>{saved=[];persist();renderShortlist();notify('Shortlist cleared.')});
+function exportData(){return {product:'STAR/MUX',version:4,createdAt:new Date().toISOString(),scope:'Blueprint treatments, explicit splits and local/SSH virtual app panel prototype; not live application configuration',selections:saved.map(s=>Object.assign({},s,{name:DESIGNS.find(d=>d.id===s.design).name,paneCount:leaves(s.tree).length,tokens:resolve(s)}))}}
+$('export').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportData(),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='starmux-terminal-designs.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});$('copy').addEventListener('click',async()=>{const brief=exportData().selections.map((s,i)=>(i+1)+'. '+s.name+' / '+s.paneCount+' pane'+(s.paneCount===1?'':'s')+' / '+s.tokens.palette+' / '+s.font+'px').join('\n');try{await navigator.clipboard.writeText(brief);notify('Design brief copied.')}catch(e){const input=document.createElement('textarea');input.value=brief;document.body.append(input);input.select();const ok=document.execCommand('copy');input.remove();notify(ok?'Design brief copied.':'Export the shortlist to save your brief.')}});
+
+let launcherOrigin=null;
+function virtualMarkup(s,paneId){const a=s.app;return '<div class="virtual-surface"><div class="virtual-toolbar"><span>▧ Private desktop / '+esc(a.target==='ssh'?a.address:'local')+'</span><button data-app-capture="'+esc(s.id)+'" '+(a.disconnected?'disabled':'')+'>'+ (a.capture?'Release input · Ctrl+Esc':'Capture input')+'</button></div>'+(a.disconnected?'<div class="virtual-offline"><div>○ Connection interrupted<br><small>Reconnect to the same remote app session.</small></div></div>':'<div class="virtual-desktop"><div class="virtual-window"><div class="virtual-title"><strong>'+esc(s.name)+'</strong><span>− □ ×</span></div><div class="virtual-caption mono">'+esc(a.directory)+'</div>'+[['▸ src','Folder'],['▸ design','Folder'],['◇ AGENTS.md','Markdown'],['◇ Cargo.toml','Manifest']].map(([name,type])=>'<div class="virtual-file"><span>'+esc(name)+'</span><span>'+type+'</span></div>').join('')+'<div class="virtual-caption">Illustrative app surface · the actual application supplies its own pixels.<br><span class="mono">'+esc(a.command)+'</span></div></div></div>')+'<div class="virtual-status">'+(a.capture?'Input captured · Ctrl+Esc releases · ':'Input released · ')+(a.target==='ssh'?'SSH / '+esc(a.address)+' · remote process retained':'Local / private compositor')+' · <button data-app-connection="'+esc(s.id)+'">'+(a.disconnected?'Preview reconnect':'Preview disconnect')+'</button></div></div>'}
+function launcherRoute(){const remote=$('launch-target').value==='ssh';$('launch-address-label').hidden=!remote;$('launch-address').required=remote;$('launch-route').textContent=(remote?'SSH → '+($('launch-address').value||'user@host'):'This computer')+' → private compositor → virtual app panel. '+($('launch-placement').value==='tab'?'Uses the focused pane; other sessions stay in tabs.':'Creates an explicit split.');}
+function openLauncher(origin){launcherOrigin=origin;settings.menu=null;const dialog=$('app-launcher');dialog.setAttribute('style',cssTokens(resolve(settings)));launcherRoute();dialog.showModal();$('launch-command').focus()}
+$('launcher-close').addEventListener('click',()=>$('app-launcher').close());
+$('app-launcher').addEventListener('close',()=>{if(launcherOrigin?.isConnected)launcherOrigin.focus();else document.querySelector('#hero-a [data-launch-app]')?.focus()});
+for(const id of ['launch-target','launch-address','launch-placement'])$(id).addEventListener('input',launcherRoute);
+$('launch-form').addEventListener('submit',e=>{e.preventDefault();const form=e.currentTarget;if(!form.reportValidity())return;const target=$('launch-target').value,address=$('launch-address').value.trim(),command=$('launch-command').value.trim(),directory=$('launch-directory').value.trim(),placement=$('launch-placement').value;if(!command||!directory||(target==='ssh'&&(!address||address.startsWith('-')))){notify('Enter an application, working directory and valid SSH address.');return}const id=makeId('app'),name=command.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);const executable=(name?.[1]||name?.[2]||name?.[3]||'App').split('/').pop();settings.sessions.push({id,kind:'app',name:executable,detail:'Virtual app',host:target==='ssh'?address+' / SSH':'local',mark:'▧',app:{target,address:target==='ssh'?address:'',command,directory,capture:false,disconnected:false}});if(placement!=='tab')splitPane(placement,id);findNode(settings.activePane).session=id;settings.zoomed=null;settings.menu=null;$('app-launcher').close();render();document.querySelector('#hero-a .is-active .pane-identity')?.focus();notify('Virtual app preview opened. No application or SSH command was executed.')});
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Escape'){for(const s of settings.sessions)if(s.kind==='app')s.app.capture=false;render()}});
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(settings.appearance==='system')render()});render();
+</script></body></html>

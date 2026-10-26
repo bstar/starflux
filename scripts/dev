@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$app_root"
+if [[ -n "${STAR_KIT_CHECKOUT:-}" ]]; then
+  exec python3 "$app_root/scripts/dev-candidate.py" "$@"
+fi
+mkdir -p "$app_root/target/nix-shell"
+cp "$app_root/flake.nix" "$app_root/flake.lock" "$app_root/target/nix-shell/"
+exec nix --extra-experimental-features 'nix-command flakes' develop "path:$app_root/target/nix-shell" --profile "$app_root/target/dev-shell" -c cargo "$@"

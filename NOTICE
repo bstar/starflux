@@ -1,0 +1,13 @@
+STAR/MUX
+Copyright (c) 2026 bstar
+MIT License; see LICENSE.
+
+src/compositor is adapted from STAR/SCREEN, Copyright (c) 2026 bstar,
+under the MIT License. The original license terms are retained in LICENSE.
+
+vendor/crossterm is the existing extension-aware STAR/FOLD copy of Crossterm,
+Copyright (c) 2019 Timon, under the MIT License.
+See vendor/crossterm/LICENSE.
+
+STAR/KIT and other dependencies retain their own licenses.
+No Herdr implementation source is included in this demo.

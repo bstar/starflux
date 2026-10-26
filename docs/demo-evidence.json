@@ -1,0 +1,388 @@
+{
+  "passed": true,
+  "ssh": "authenticated loopback",
+  "real_desktop_drop": true,
+  "frontend_kill_and_reattach": true,
+  "codex_image_understanding": true,
+  "pids_preserved": [
+    755816,
+    755982
+  ],
+  "workspace": "proof-6b913cc6",
+  "verified_at": "2026-10-24T01:26:03.593052+00:00",
+  "codex_version": "0.162.1",
+  "kitty_version": "0.48.2",
+  "filename": "screen shot \u03bb.png",
+  "composer": "[Image #1]",
+  "question": "What color is the square in the attached image?",
+  "answer": "Green",
+  "command": "python3 scripts/test-desktop.py --inject-host-mouse --codex /absolute/path/to/codex --name \"screen shot \u03bb.png\" --output target/codex-proof-final",
+  "automated_checks": [
+    "python3 scripts/test-host.py",
+    "./scripts/dev test --release",
+    "./scripts/dev clippy --all-targets --release -- -D warnings -A dead_code"
+  ],
+  "limitations": [
+    "Authenticated loopback SSH, not a separate physical host or WAN",
+    "Single PNG accepted by Codex 0.162.1; other harness and file-type combinations need acceptance checks",
+    "Full production M0 and release tasks remain open"
+  ],
+  "demo_source_sha256": "b12ba971259ca6dc20f3dcf44bf44d022dc6a5d3e2560667511c464e5453ae14",
+  "input_proof": {
+    "passed": true,
+    "checks": [
+      "native pixel click focus",
+      "key press and release",
+      "shifted characters",
+      "Unicode bracketed paste without submission",
+      "explicit Enter",
+      "Ctrl+C interrupt",
+      "font resize"
+    ],
+    "artifact": "target/demo/input-proof.txt"
+  },
+  "installed_demo": {
+    "command": "starmux",
+    "path": "/home/bstar/.local/bin/starmux",
+    "state": "target/demo/final-state.json",
+    "screenshot": "target/demo/final.png"
+  },
+  "tab_isolation": {
+    "passed": true,
+    "independent_unnamed_tabs": true,
+    "duplicate_named_attachment_rejected": true,
+    "tab_switches": 8,
+    "controller_pids_preserved": [
+      771775,
+      772548
+    ],
+    "workspaces": [
+      "session-771737-1a16b93ba01",
+      "session-772504-1a16b93be71"
+    ]
+  },
+  "gpu_candidate": {
+    "verified_at": "2026-10-24T02:19:45.483434+00:00",
+    "backend": "gpu",
+    "framework": "local unreleased 0.13 candidate",
+    "tab_isolation": {
+      "passed": true,
+      "independent_unnamed_tabs": true,
+      "duplicate_named_attachment_rejected": true,
+      "tab_switches": 8,
+      "renderer": "gpu",
+      "gpu_libraries": [
+        [
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_asahi.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_dzn.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_lvp.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_nouveau.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_radeon.so",
+          "/nix/store/iahmf8kl215rjcvb3zz3l7i9w2sf9x5v-vulkan-loader-1.4.357.0/lib/libvulkan.so.1.4.357"
+        ],
+        [
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_asahi.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_dzn.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_lvp.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_nouveau.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_radeon.so",
+          "/nix/store/iahmf8kl215rjcvb3zz3l7i9w2sf9x5v-vulkan-loader-1.4.357.0/lib/libvulkan.so.1.4.357"
+        ]
+      ],
+      "controller_pids_preserved": [
+        841298,
+        842089
+      ],
+      "workspaces": [
+        "session-841271-1a16bac9a96",
+        "session-842043-1a16bac9f40"
+      ]
+    },
+    "codex_desktop_ssh": {
+      "passed": true,
+      "ssh": "authenticated loopback",
+      "real_desktop_drop": true,
+      "frontend_kill_and_reattach": true,
+      "codex_image_understanding": true,
+      "pids_preserved": [
+        847164,
+        847317
+      ],
+      "workspace": "proof-2786b41c"
+    },
+    "portable_lock_preserved": true
+  },
+  "gpu_text_redraw_regression": {
+    "verified_at": "2026-10-24T03:35:46.829886+00:00",
+    "passed": true,
+    "before_fix": {
+      "failure": "labels vanished at redraw 0",
+      "expected_label_pixels": 1744,
+      "actual_label_pixels": 0
+    },
+    "after_fix": {
+      "hardware_redraws": 120,
+      "interleaved_vector_only_scenes": true,
+      "active_live_canvas": true,
+      "real_kitty_header_ink_samples": [
+        394,
+        394,
+        394,
+        394
+      ],
+      "sample_interval_seconds": 3
+    },
+    "strict_all_features_clippy": "passed",
+    "portable_starmux_lock": "unchanged",
+    "all_features_library_tests": {
+      "passed": 634,
+      "failed": 0,
+      "ignored_hardware_and_platform": 5
+    }
+  },
+  "codex_focused_drop_and_exit_cleanup": {
+    "passed": true,
+    "ssh": "authenticated loopback",
+    "real_desktop_drop": true,
+    "frontend_kill_and_reattach": true,
+    "codex_image_understanding": true,
+    "no_protocol_in_agent_input": true,
+    "no_drag_reports_after_exit": true,
+    "pids_preserved": [
+      966429,
+      966579
+    ],
+    "workspace": "proof-9e68f64d",
+    "verified_at": "2026-10-24T03:51:31.645137+00:00",
+    "renderer": "gpu",
+    "codex_version": "0.162.1",
+    "focused_composer": true,
+    "composer": "[Image #1]",
+    "answer": "Green",
+    "filename": "screen shot \u03bb.png",
+    "term_restoration_unit_tests": 4,
+    "strict_all_features_clippy": "passed"
+  },
+  "held_drag_backpressure": {
+    "passed": true,
+    "ssh": "authenticated loopback",
+    "real_desktop_drop": true,
+    "frontend_kill_and_reattach": true,
+    "codex_image_understanding": true,
+    "hover_events_before_drop": 4000,
+    "viewport_test_size": [
+      1500,
+      1900
+    ],
+    "no_protocol_in_agent_input": true,
+    "no_drag_reports_after_exit": true,
+    "pids_preserved": [
+      984666,
+      984821
+    ],
+    "workspace": "proof-f8f2e058",
+    "verified_at": "2026-10-24T03:58:29.421213+00:00",
+    "renderer": "gpu",
+    "codex_version": "0.162.1",
+    "composer": "[Image #1]",
+    "answer": "Green",
+    "blocked_writer_hover_updates": 10000,
+    "queue_unit_tests_passed": 4,
+    "connection_stalled_writer_tests_passed": 2
+  },
+  "mixed_hover_markdown_drop": {
+    "passed": true,
+    "ssh": "authenticated loopback",
+    "real_desktop_drop": true,
+    "frontend_kill_and_reattach": true,
+    "codex_image_understanding": false,
+    "codex_markdown_read": true,
+    "hover_events_before_drop": 4000,
+    "viewport_test_size": [
+      1500,
+      1900
+    ],
+    "no_protocol_in_agent_input": true,
+    "no_drag_reports_after_exit": true,
+    "pids_preserved": [
+      1002765,
+      1002917
+    ],
+    "workspace": "proof-54b64baf",
+    "verified_at": "2026-10-24T04:07:07.854951+00:00",
+    "renderer": "gpu",
+    "source_app": "Nautilus",
+    "codex_version": "0.162.1",
+    "filename": "AGENTS.md",
+    "answer": "STARMUX_MARKDOWN_DROP_OK_8317",
+    "mixed_queue_regression": "10000 hover updates with mouse and presentation acknowledgments",
+    "queue_unit_tests_passed": 5,
+    "stalled_connection_tests_passed": 2,
+    "strict_all_features_clippy": "passed",
+    "limitation": "User-specific source route not yet reproduced"
+  },
+  "blueprint_implementation": {
+    "verified_at": "2026-10-24T04:42:39.856683+00:00",
+    "reference": "design/treatments.html / Blueprint",
+    "presentation": "pixel-aligned native primitives; no rounded panel edges",
+    "palette": "shared KIT built-ins; Kanagawa default",
+    "unit_tests_passed": 10,
+    "strict_clippy": "passed",
+    "portable_cpu_check": "passed with locked git dependency",
+    "live": {
+      "passed": true,
+      "renderer": "gpu",
+      "treatment": "blueprint",
+      "viewport": {
+        "columns": 120,
+        "generation": 2,
+        "height": 682,
+        "rows": 31,
+        "width": 1200
+      },
+      "live_theme_switch": true,
+      "inner_kitty_palette_synchronized": true,
+      "keyboard_theme_control": true,
+      "theme_button_hit_target": true,
+      "terminal_input": true,
+      "controller_pid": 1108401,
+      "agent_pids_preserved": [
+        1108422,
+        1108425
+      ],
+      "themes": [
+        "kanagawa",
+        "catppuccin-latte"
+      ]
+    },
+    "codex_markdown_drop": {
+      "passed": true,
+      "ssh": "authenticated loopback",
+      "real_desktop_drop": true,
+      "frontend_kill_and_reattach": true,
+      "codex_image_understanding": false,
+      "codex_markdown_read": true,
+      "hover_events_before_drop": 4000,
+      "viewport_test_size": [
+        1500,
+        1900
+      ],
+      "no_protocol_in_agent_input": true,
+      "no_drag_reports_after_exit": true,
+      "pids_preserved": [
+        1094977,
+        1095130
+      ],
+      "workspace": "proof-aff36624"
+    },
+    "tab_isolation": {
+      "passed": true,
+      "independent_unnamed_tabs": true,
+      "duplicate_named_attachment_rejected": true,
+      "tab_switches": 8,
+      "renderer": "gpu",
+      "gpu_libraries": [
+        [
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_asahi.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_dzn.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_lvp.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_nouveau.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_radeon.so",
+          "/nix/store/iahmf8kl215rjcvb3zz3l7i9w2sf9x5v-vulkan-loader-1.4.357.0/lib/libvulkan.so.1.4.357"
+        ],
+        [
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_asahi.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_dzn.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_lvp.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_nouveau.so",
+          "/nix/store/0f4ri4jl678q74i5z0h9f4pg2sj59slp-mesa-26.2.2/lib/libvulkan_radeon.so",
+          "/nix/store/iahmf8kl215rjcvb3zz3l7i9w2sf9x5v-vulkan-loader-1.4.357.0/lib/libvulkan.so.1.4.357"
+        ]
+      ],
+      "controller_pids_preserved": [
+        1105665,
+        1106477
+      ],
+      "workspaces": [
+        "session-1105638-1a16c369d71",
+        "session-1106424-1a16c36a205"
+      ]
+    },
+    "screenshots": [
+      "target/blueprint-proof/kanagawa.png",
+      "target/blueprint-proof/latte.png"
+    ],
+    "reference_geometry": "1200x700: terminal frames (183,116,420,479) and (617,116,568,479)",
+    "portable_lock_preserved": true
+  },
+  "codex_default_and_demo_removal": {
+    "verified_at": "2026-10-24T05:15:41.939020+00:00",
+    "default_agent": "codex",
+    "fixture_scope": "explicit internal tests only",
+    "migration": "verify exact fixture process arguments before replacement; preserve real processes",
+    "host_tests": "passed including live and exited fixtures and refusing to replace a real shell",
+    "unit_tests_passed": 10,
+    "strict_clippy": "passed",
+    "live_default": {
+      "passed": true,
+      "renderer": "gpu",
+      "treatment": "blueprint",
+      "default_agent": "codex",
+      "viewport": {
+        "columns": 120,
+        "generation": 2,
+        "height": 682,
+        "rows": 31,
+        "width": 1200
+      },
+      "live_theme_switch": true,
+      "inner_kitty_palette_synchronized": true,
+      "keyboard_theme_control": true,
+      "theme_button_hit_target": true,
+      "terminal_input": true,
+      "controller_pid": 1194579,
+      "agent_pids_preserved": [
+        1194600,
+        1194639
+      ],
+      "themes": [
+        "kanagawa",
+        "catppuccin-latte"
+      ]
+    },
+    "existing_workspace_changes": [
+      {
+        "workspace": "NAME",
+        "replaced_demo_pid": 953202,
+        "replacement": "bash -l",
+        "replacement_pid": 1189537,
+        "first_pane_pid_preserved": 953199,
+        "first_pane_command": "codex"
+      },
+      {
+        "workspace": "session-931446-1a16bf64b57",
+        "replaced_demo_pid": 931506,
+        "replacement": "bash -l",
+        "replacement_pid": 1189840,
+        "first_pane_pid_preserved": 931502,
+        "first_pane_command": "codex"
+      },
+      {
+        "workspace": "session-971857-1a16c09d92f",
+        "replaced_demo_pid": 971890,
+        "replacement": "bash -l",
+        "replacement_pid": 1190126,
+        "first_pane_pid_preserved": 971894,
+        "first_pane_command": "codex"
+      },
+      {
+        "workspace": "demo",
+        "replaced_demo_pid": 724921,
+        "replacement": "bash -l",
+        "replacement_pid": 1199356,
+        "first_pane_pid_preserved": 724917,
+        "first_pane_command": "codex"
+      }
+    ]
+  }
+}

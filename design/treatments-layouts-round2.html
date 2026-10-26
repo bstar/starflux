@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>STAR/MUX — Layout studies</title>
+<style>
+:root{color-scheme:light;--page:#f5f3ee;--ink:#292a27;--sub:#66665f;--line:#dcdad1;--orange:#c84325;--white:#fffefa;font-family:Inter,"Helvetica Neue",Arial,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink)}button,input,select{font:inherit}button,select,input[type=color]{cursor:pointer}button{color:inherit}button:focus-visible,select:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--orange);outline-offset:4px}button{border:1px solid var(--line);background:var(--white);border-radius:6px;padding:10px 13px}button:hover{border-color:var(--ink)}button[aria-pressed=true]{background:var(--ink);color:var(--white);border-color:var(--ink)}a{color:inherit}label{display:flex;gap:8px;align-items:center}select{border:1px solid var(--line);padding:9px 28px 9px 10px;border-radius:5px;background:var(--white);color:var(--ink);min-width:0}h1,h2,h3,p{margin:0}.eyebrow{font-size:10px;letter-spacing:.15em;text-transform:uppercase;font-weight:700}.mono{font-family:"Liberation Mono","DejaVu Sans Mono",monospace}.muted{color:var(--sub)}
+.mast{height:67px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:0 3vw;background:var(--page);position:sticky;top:0;z-index:20}.brand{font-weight:800;font-size:17px;letter-spacing:.03em}.brand b{color:var(--orange)}.mast nav{display:flex;gap:24px;font-size:12px}.mast a{text-decoration:none}.edition{font-size:10px;letter-spacing:.08em;color:var(--sub)}
+main{max-width:1760px;margin:auto;padding:50px 3vw 80px}.intro{display:flex;justify-content:space-between;align-items:flex-end;gap:40px;margin-bottom:30px}.intro h1{font-family:Georgia,serif;font-size:clamp(34px,4vw,65px);font-weight:400;letter-spacing:-.055em;line-height:1.04;margin:14px 0}.intro p{font-size:14px;line-height:1.7;max-width:590px;color:var(--sub)}.intro-note{font-size:11px;line-height:1.7;max-width:235px;border-left:2px solid var(--orange);padding:7px 0 7px 16px}
+.lab{display:grid;grid-template-columns:252px minmax(0,1fr);border:1px solid var(--line);border-radius:10px;background:var(--white);overflow:hidden}.controls{border-right:1px solid var(--line);padding:23px 20px;display:flex;flex-direction:column;gap:20px}.field{display:flex;flex-direction:column;gap:8px}.field>label,.field>.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:.09em;font-weight:700}.field small{font-size:11px;line-height:1.5;color:var(--sub)}.field select{width:100%}.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pair select{font-size:12px;padding:9px 5px}.palette-card[aria-pressed=true] small{color:#ddd}.check{font-size:12px;line-height:1.5}.check input{accent-color:var(--orange)}.controls hr{width:100%;border:0;border-top:1px solid var(--line);margin:0}.save{background:var(--orange);border-color:var(--orange);color:white;font-size:12px;font-weight:600}.save:hover{background:#a7371e}.swatches{display:flex;gap:4px}.swatches i{height:20px;flex:1;border-radius:3px;border:1px solid #0002}
+.stage{padding:20px;background:#eae8e1;min-width:0}.stage-head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:15px}.stage-title{display:flex;align-items:center;gap:12px}.index{font-size:11px;color:var(--orange)}.stage-title h2{font-size:17px;letter-spacing:-.03em}.stage-head small{font-size:10px;color:var(--sub)}.stage-actions{display:flex;gap:7px}.stage-actions button{font-size:11px;padding:7px 10px}.previews{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.previews.compare{grid-template-columns:repeat(2,minmax(0,1fr))}.preview-label{font-size:10px;margin:0 0 8px;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between}.hero{height:490px;min-width:0}.compare .hero{height:470px;font-size:11px}.stage-foot{display:flex;justify-content:space-between;gap:20px;font-size:11px;line-height:1.6;color:var(--sub);margin-top:15px}.stage-foot span{max-width:540px}.contrast-readout{white-space:nowrap}.state-controls{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0}.state-controls button{padding:7px 10px;font-size:10px}.prototype{margin-top:13px;font-size:10px;line-height:1.6;color:var(--sub)}
+.section-heading{margin:46px 0 22px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.section-heading h2{font:400 32px Georgia,serif;letter-spacing:-.035em}.section-heading p{font-size:12px;line-height:1.6;color:var(--sub);max-width:470px}.gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.study{min-width:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--white);transition:border-color .15s}.study.chosen{border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}.study-preview{height:225px;background:#e7e4db;padding:18px;cursor:pointer;position:relative}.study-preview:hover{background:#dedbd2}.mini{height:100%;font-size:7px!important;pointer-events:none}.study-copy{padding:17px 18px}.study-name{display:flex;align-items:center;gap:10px}.study-name h3{font-size:15px;letter-spacing:-.025em}.study-name span{font-size:10px;color:var(--orange)}.study-copy p{font-size:12px;line-height:1.6;color:var(--sub);min-height:39px;margin:9px 0 14px}.study-actions{display:flex;justify-content:space-between;gap:6px}.study-actions button{font-size:10px;padding:7px 10px}.study-actions button:last-child{background:transparent}.pill{font-size:9px;border:1px solid var(--line);border-radius:20px;padding:3px 7px;white-space:nowrap}.caption-row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.theme-section{border:1px solid var(--line);background:var(--white);padding:26px;border-radius:8px}.theme-intro{display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:13px;line-height:1.7;color:var(--sub);margin-bottom:24px}.theme-intro h3{font-size:15px;color:var(--ink);margin-bottom:8px}.palette-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.palette-card{text-align:left;padding:12px;border:1px solid var(--line);background:var(--page)}.palette-card .swatches{margin-top:10px}.palette-card strong{font-size:11px}.palette-card small{float:right;font-size:9px;color:var(--sub)}.tokens{display:flex;gap:6px;flex-wrap:wrap;margin-top:20px}.tokens span{font:10px "Liberation Mono",monospace;border:1px solid var(--line);border-radius:4px;padding:6px 8px}.shortlist{padding:24px;border:1px dashed #bab8ae;min-height:100px;border-radius:8px;font-size:13px;color:var(--sub)}.shortlist-items{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:15px}.shortlist-items button{font-size:11px}.footer{margin-top:30px;font-size:11px;line-height:1.6;color:var(--sub);display:flex;justify-content:space-between;gap:30px}.toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--white);padding:12px 20px;border-radius:6px;font-size:12px;z-index:100;box-shadow:0 6px 24px #0002}.toast:empty{display:none}
+/* The mock application: all treatments consume the same semantic palette. */
+.workspace{--radius:.65em;--edge:1px;--gap:.85em;--rail:13em;--shadow:none;--ui-font:Inter,"Helvetica Neue",Arial,sans-serif;--term-bg:var(--bg);--term-fg:var(--fg);font-family:var(--ui-font);font-size:14px;line-height:1.45;background:var(--bg);color:var(--fg);border:var(--edge) solid var(--border);border-radius:var(--radius);overflow:hidden;display:grid;grid-template-rows:3.6em minmax(0,1fr) 2.35em;box-shadow:var(--shadow);position:relative;min-width:0;color-scheme:dark}
+.ws-top{display:flex;align-items:center;justify-content:space-between;padding:0 1.3em;background:var(--panel);border-bottom:var(--edge) solid var(--border);gap:1em;min-width:0}.ws-logo{font-weight:800;letter-spacing:.04em;white-space:nowrap;font-size:.95em}.ws-logo span{color:var(--accent)}.ws-project{font-size:.78em;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ws-project b{font-weight:500;color:var(--fg)}.ws-chips{display:flex;gap:.65em;align-items:center;font-size:.68em;white-space:nowrap}.ws-chip{padding:.3em .7em;border:1px solid var(--border);border-radius:1.3em;color:var(--muted)}.ws-main{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);min-height:0}.ws-rail{padding:1.4em .9em;border-right:var(--edge) solid var(--border);background:var(--panel);display:flex;flex-direction:column;gap:1em;overflow:hidden}.ws-eyebrow{font-size:.62em;text-transform:uppercase;letter-spacing:.13em;color:var(--muted);font-weight:700}.session{padding:.85em .8em;border:1px solid transparent;border-radius:calc(var(--radius)*.75);font-size:.78em;background:var(--raised)}.session.selected{border-color:var(--accent);background:var(--selection)}.session-name{display:flex;justify-content:space-between;gap:.5em;font-weight:650}.session-meta{font-size:.8em;color:var(--muted);margin-top:.6em}.status-dot{width:.5em;height:.5em;display:inline-block;background:var(--success);border-radius:50%;margin-right:.45em}.session.wait .status-dot{background:var(--warning)}.rail-bottom{margin-top:auto;font-size:.65em;color:var(--muted);line-height:1.9}.rail-bottom strong{font-weight:500;color:var(--fg)}.rail-line{height:1px;background:var(--border);margin:.9em 0}.ws-body{padding:var(--gap);display:grid;grid-template-rows:2.65em minmax(0,1fr) auto;gap:var(--gap);min-width:0;min-height:0}.workspace-title{display:flex;justify-content:space-between;align-items:center;gap:.5em}.workspace-title h3{font-size:.95em;font-weight:600;letter-spacing:-.02em}.workspace-title small{font-size:.62em;color:var(--muted)}.ws-tabs{display:flex;gap:.6em;font-size:.67em}.ws-tabs span{padding:.4em .7em;border-radius:.3em;color:var(--muted)}.ws-tabs span:first-child{background:var(--raised);color:var(--fg)}.terminal-grid{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:var(--gap);min-height:0}.term{background:var(--term-bg);color:var(--term-fg);border:var(--edge) solid var(--border);border-radius:var(--radius);display:grid;grid-template-rows:2.8em minmax(0,1fr);overflow:hidden;min-width:0;box-shadow:var(--panel-shadow,none)}.term.focused{border-color:var(--accent)}.term-title{padding:0 1em;display:flex;align-items:center;justify-content:space-between;font-size:.7em;color:var(--muted);border-bottom:var(--edge) solid var(--border);background:var(--panel);gap:.5em}.term-title strong{font-weight:500;color:var(--fg)}.term-host{font-size:.82em;white-space:nowrap;color:var(--success)}.term-text{padding:1.3em;font-family:"Liberation Mono","DejaVu Sans Mono",monospace;font-size:.73em;line-height:1.75;overflow:hidden;min-width:0}.term-text p{margin:0 0 .85em;overflow-wrap:anywhere}.term-text .dim{color:var(--muted)}.term-text .good{color:var(--success)}.term-text .accent{color:var(--accent)}.term-text .warn{color:var(--warning)}.term-text .code-row{white-space:nowrap}.prompt{border:1px solid var(--border);border-radius:.4em;padding:.7em .85em;background:var(--raised);margin-top:1.5em;min-height:3.2em}.cursor{background:var(--accent);width:.55em;height:1.1em;display:inline-block;vertical-align:middle}.diff{border-left:2px solid var(--success);padding:.6em .8em;background:var(--selection);margin:1em 0}.activity{display:grid;grid-template-columns:1fr auto;align-items:center;gap:1em;padding:.75em 1em;border:var(--edge) solid var(--border);background:var(--panel);border-radius:var(--radius);font-size:.7em}.activity .meta{color:var(--muted);font-size:.87em}.activity strong{font-weight:500}.bar{height:.25em;width:6em;background:var(--border);border-radius:1em;overflow:hidden}.bar i{display:block;height:100%;width:72%;background:var(--accent)}.ws-bottom{display:flex;align-items:center;justify-content:space-between;font-size:.62em;color:var(--muted);padding:0 1.4em;background:var(--panel);border-top:var(--edge) solid var(--border);gap:1em;white-space:nowrap}.ws-bottom b{color:var(--fg);font-weight:400}.agent-portrait{width:1.5em;height:1.5em;background:var(--selection);border:1px solid var(--accent);color:var(--accent);display:inline-grid;place-items:center;border-radius:.4em;font-size:.8em;margin-right:.5em}.ws-rail .secondary{opacity:.75}.approval-box{padding:.8em;border:1px solid var(--warning);background:var(--panel);border-radius:.4em;margin-top:1em}.mock-buttons{display:flex;gap:.7em;margin-top:.7em}.mock-buttons button{background:var(--selection);border:1px solid var(--border);color:var(--fg);font-size:1em;padding:.3em .7em;border-radius:.3em}.drop-well{position:absolute;inset:3.6em .9em 3.4em calc(var(--rail) + .9em);display:none;border:2px dashed var(--accent);border-radius:var(--radius);background:var(--panel);opacity:.97;z-index:3;align-items:center;justify-content:center;text-align:center;padding:2em;pointer-events:none}.workspace.dragging .drop-well{display:flex}.drop-well h4{font-size:1.2em;margin:0 0 .5em}.drop-well p{font-size:.8em;color:var(--muted)}.drop-icon{font-size:3em;color:var(--accent);margin-bottom:.15em}.ws-announcement{display:none}
+/* Distinct geometry, materials, typography and hierarchy. */
+.t-atelier{--radius:.25em;--gap:1.25em;--rail:14em;--edge:0px}.t-atelier .ws-logo,.t-atelier .workspace-title h3{font-family:Georgia,serif;font-weight:400;font-size:1.35em;letter-spacing:-.04em}.t-atelier .ws-top{border-bottom:1px solid var(--border);background:var(--bg)}.t-atelier .ws-rail{background:var(--bg);border-right:1px solid var(--border)}.t-atelier .session{background:transparent;border-bottom:1px solid var(--border);padding:1.2em .5em;border-radius:0}.t-atelier .session.selected{border:0;border-left:2px solid var(--accent);padding-left:1em}.t-atelier .term{border-top:1px solid var(--border);border-bottom:1px solid var(--border);border-radius:0}.t-atelier .term-title{background:transparent;border-bottom:1px solid var(--border)}
+.t-vector{--radius:0em;--gap:0em;--edge:1px;--rail:11.5em}.t-vector .ws-body{padding:0}.t-vector .workspace-title{padding:.5em 1em;border-bottom:1px solid var(--border)}.t-vector .term{border:0;border-right:1px solid var(--border)}.t-vector .term.focused{border-top:2px solid var(--accent)}.t-vector .session{border:0;border-left:2px solid transparent;background:transparent}.t-vector .session.selected{border-left-color:var(--accent)}.t-vector .activity{border-width:1px 0 0}.t-vector .ws-top{background:var(--bg)}
+.t-orbit{--radius:1.1em;--gap:1em;--edge:1px;--rail:4.4em;--shadow:0 15px 45px #0003}.t-orbit .ws-rail{padding:1em .55em;align-items:center;background:var(--bg);border:0}.t-orbit .ws-rail>.ws-eyebrow,.t-orbit .session-meta,.t-orbit .session-name>span:last-child,.t-orbit .rail-bottom{display:none}.t-orbit .session{width:2.8em;height:2.8em;padding:.5em;display:grid;place-items:center;font-size:1em;overflow:hidden}.t-orbit .session-name{display:block;font-size:0}.t-orbit .agent-portrait{font-size:12px;margin:0;width:1.6em;height:1.6em}.mini.t-orbit .agent-portrait{font-size:6px}.t-orbit .ws-top{background:var(--bg);border:0}.t-orbit .ws-body{padding-left:.1em}.t-orbit .term{--panel-shadow:0 8px 25px #0002}.t-orbit .term-title{background:var(--raised)}
+.t-mission{--radius:.35em;--gap:.7em;--rail:12em}.t-mission .terminal-grid{grid-template-columns:1fr 1.65fr}.t-mission .term.focused{border-top:3px solid var(--accent)}.t-mission .ws-rail{border-right:2px solid var(--border)}.t-mission .session{border-left:3px solid var(--success);background:var(--bg)}.t-mission .session.wait{border-left-color:var(--warning)}.t-mission .ws-top{height:3.6em}.t-mission .ws-logo{letter-spacing:.13em;font-size:.8em}.t-mission .workspace-title small{color:var(--warning)}.t-mission .activity{border-left:3px solid var(--accent)}
+.t-titanium{--radius:.45em;--gap:.8em;--rail:12em;--shadow:0 8px 25px #0003;--panel-shadow:inset 0 1px 0 #ffffff12,0 2px 3px #0002}.t-titanium .ws-top{background:linear-gradient(180deg,var(--raised),var(--panel));box-shadow:inset 0 1px 0 #ffffff25,0 1px 3px #0004;z-index:1}.t-titanium .term-title{background:linear-gradient(180deg,var(--raised),var(--panel));box-shadow:inset 0 1px 0 #ffffff1c}.t-titanium .session{box-shadow:inset 0 1px 0 #ffffff18,0 1px 2px #0003}.t-titanium .ws-body{background:linear-gradient(135deg,var(--panel),var(--bg))}.t-titanium .ws-logo{font-size:.85em;text-shadow:0 1px 0 #0005}.t-titanium .term{border-bottom:2px solid var(--border)}.t-titanium .ws-chip{border-radius:.35em}
+.t-blueprint{--radius:0em;--gap:1em;--rail:12em;--ui-font:"Liberation Mono",monospace}.t-blueprint .ws-body{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:1.2em 1.2em}.t-blueprint .term{border-style:dashed}.t-blueprint .term.focused{border-style:solid;box-shadow:0 0 0 2px var(--bg),0 0 0 3px var(--accent)}.t-blueprint .ws-top{background:var(--bg);border-bottom-style:dashed}.t-blueprint .ws-eyebrow{letter-spacing:0}.t-blueprint .ws-logo{font-size:.85em}.t-blueprint .activity{border-style:dashed}.t-blueprint .session.selected{border-style:dashed}
+.t-quiet{--radius:.3em;--gap:1.3em;--rail:11em;--edge:0px}.t-quiet .ws-top{background:var(--bg);padding-top:.4em}.t-quiet .ws-rail{background:var(--bg);padding-top:2em}.t-quiet .session{background:transparent;padding:.8em .6em}.t-quiet .session.selected{background:var(--selection);border:0}.t-quiet .terminal-grid{gap:1.6em}.t-quiet .term{border-radius:0;border-top:1px solid var(--border)}.t-quiet .term-title{background:var(--bg)}.t-quiet .activity{background:var(--bg);padding:.7em 0;border-top:1px solid var(--border);border-radius:0}.t-quiet .ws-bottom{background:var(--bg)}.t-quiet .ws-chip{border:0}.t-quiet .ws-logo{font-weight:500;letter-spacing:-.04em}.t-quiet .ws-tabs{display:none}
+.t-mosaic{--radius:.8em;--gap:.8em;--rail:12em}.t-mosaic .ws-main{grid-template-columns:minmax(0,1fr);grid-template-rows:5em minmax(0,1fr)}.t-mosaic .ws-rail{display:flex;flex-direction:row;align-items:center;padding:.6em 1em;border:0;background:var(--bg);gap:1em}.t-mosaic .ws-rail>.ws-eyebrow{width:7em}.t-mosaic .session{width:16em;padding:.5em .8em}.t-mosaic .session-meta{margin-top:.2em}.t-mosaic .rail-bottom,.t-mosaic .ws-rail>.secondary{display:none}.t-mosaic .ws-body{padding-top:0;grid-template-rows:0 minmax(0,1fr) auto}.t-mosaic .workspace-title{visibility:hidden}.t-mosaic .terminal-grid{grid-template-columns:.75fr 1.25fr}.t-mosaic .term:not(.focused){margin-bottom:2em}.t-mosaic .term.focused{background:var(--panel)}.t-mosaic .drop-well{left:1em;top:8em}
+.t-phosphor{--radius:.25em;--gap:.7em;--rail:12em;--ui-font:"Liberation Mono",monospace}.t-phosphor .ws-logo{color:var(--accent);text-shadow:0 0 .8em var(--accent)}.t-phosphor .term.focused{box-shadow:inset 0 0 30px var(--grid),0 0 10px var(--grid)}.t-phosphor .term-text{background-image:repeating-linear-gradient(transparent 0px,transparent 3px,var(--grid) 4px);text-shadow:0 0 .6em var(--grid)}.t-phosphor .ws-eyebrow{color:var(--accent)}.t-phosphor .session.selected{border-left:3px solid var(--accent)}.t-phosphor .ws-top{background:var(--bg)}.t-phosphor .ws-chip{border-radius:0}
+.workspace.terminal-independent .term-text{--fg:#d6deeb;--muted:#9baabe;--accent:#99bfff;--success:#98be89;--warning:#e5c285;--raised:#202b3a;--panel:#192330;--border:#526079;--selection:#263750}.workspace.compact{--gap:.5em}.workspace.compact .ws-rail{padding:.7em}.workspace.compact .term-text{padding:.8em}.workspace.compact .session{padding:.55em}.workspace.compact .ws-body{grid-template-rows:2em minmax(0,1fr) auto}.workspace.high-contrast{--edge:2px;--panel-shadow:none;--shadow:none}.workspace.high-contrast .term-text{background-image:none;text-shadow:none}
+@media(min-width:1500px){.hero{height:550px}.study-preview{height:245px}}@media(max-width:1100px){.gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.lab{grid-template-columns:210px 1fr}.controls{padding:18px 14px}.hero{font-size:11px}.previews.compare{grid-template-columns:1fr}.palette-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:740px){main{padding-top:28px}.intro{display:block}.intro-note{margin-top:20px;max-width:none}.mast{height:58px}.edition{display:none}.mast nav{gap:12px;font-size:11px}.lab{grid-template-columns:1fr}.controls{border-right:0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr}.controls hr,.controls>.eyebrow,.controls>.check{display:none}.gallery{grid-template-columns:1fr}.stage{padding:13px}.hero{height:440px;font-size:9px}.stage-head{flex-wrap:wrap}.palette-grid{grid-template-columns:repeat(2,1fr)}.theme-intro{grid-template-columns:1fr;gap:15px}.section-heading{display:block}.section-heading p{margin-top:10px}.footer{display:block}.stage-foot{display:block}.contrast-readout{margin-top:5px}.theme-section{padding:18px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+/* Layout studies: structure is independent of surface treatment and palette. */
+html{scroll-padding-top:82px}.lab{scroll-margin-top:82px}.layout-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.layout-gallery .study-preview{height:280px}.layout-gallery .mini{font-size:8px!important}.layout-gallery .study-copy p{min-height:0}.layout-gallery .study-actions{justify-content:flex-start;flex-wrap:wrap}.layout-gallery .pill{margin-left:auto}.surface-archive{margin-top:40px;border-top:1px solid var(--line);padding-top:22px}.surface-archive>summary{cursor:pointer;font:400 25px Georgia,serif;letter-spacing:-.03em}.surface-archive .section-heading{margin-top:22px}.layout-tradeoff{font-size:11px;color:var(--sub);line-height:1.6;margin:10px 0 16px;border-left:2px solid var(--line);padding-left:10px}.layout-tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.layout-tools button{font-size:10px;padding:7px 9px}.layout-note{background:#ebe8df;border:1px solid var(--line);padding:12px 14px;font-size:11px;line-height:1.6;color:var(--sub);border-radius:5px}.stage-title{min-width:0}.stage-title h2{white-space:normal}.new-layout.hero{height:590px;font-size:var(--preview-font,16px)}.previews.compare .new-layout.hero{height:590px;font-size:calc(var(--preview-font,16px) - 3px)}.new-layout{--lay-gap:.8em;grid-template-rows:3.25em minmax(0,1fr) 2em}.new-layout .ws-top{padding:0 1em;gap:1em}.new-layout .ws-logo{font-size:.8em}.new-layout .ws-project{font-size:.65em}.new-layout .ws-chips{font-size:.65em}.new-layout button{color:var(--fg);background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;padding:.4em .65em;font-size:.72em;white-space:nowrap}.new-layout button:hover{border-color:var(--accent);color:var(--accent)}.new-layout button[aria-pressed=true]{background:var(--selection);color:var(--accent);border-color:var(--accent)}.new-layout .lay-main{min-width:0;min-height:0;display:grid;position:relative;overflow:hidden;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:17px 17px}.lay-content{display:grid;grid-template-rows:auto minmax(0,1fr);gap:var(--lay-gap);padding:var(--lay-gap);min-height:0;min-width:0}.lay-toolbar{display:flex;justify-content:space-between;gap:1em;align-items:center;min-width:0;font-size:.68em;min-height:2.3em}.lay-toolbar strong{font-size:1.1em;font-weight:500}.lay-toolbar small{color:var(--muted);font-size:.9em}.lay-toolbar button{font-size:1em}.lay-tabs{display:flex;align-items:center;gap:.45em;min-width:0;overflow:auto;scrollbar-width:thin}.lay-tabs button{font-size:1em;padding:.5em .8em}.lay-panearea{display:grid;grid-template-rows:minmax(0,1fr);min-width:0;min-height:0;gap:var(--lay-gap);position:relative}.lay-terminalgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--lay-gap);min-width:0;min-height:0}.new-layout .term{min-width:0;min-height:0;position:relative;grid-template-rows:2.35em minmax(0,1fr)}.new-layout .term-title{font-size:.67em;padding:0 1em;gap:.7em}.new-layout .term-title button{font-size:1em;padding:.15em .5em}.new-layout .term-title .pane-actions{display:flex;align-items:center;gap:.6em}.new-layout .term-text{font-size:.78em;line-height:1.7;padding:1.25em;overflow:auto;scrollbar-width:thin}.new-layout .term-text p{max-width:80ch}.new-layout .term-text .prompt{max-width:85ch}.new-layout .ws-bottom{font-size:.6em;padding:0 1.2em;background:var(--panel)}.new-layout .mini-note{font-size:.65em;color:var(--muted)}.lay-nav{min-width:0;min-height:0;overflow:auto;padding:1em .7em;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;gap:.6em}.lay-nav .ws-eyebrow{margin-bottom:.8em}.lay-nav button{width:100%;text-align:left;padding:.8em .7em;font-size:.7em;white-space:normal}.lay-nav button strong{display:block;font-size:1em;font-weight:500}.lay-nav button small{display:block;color:var(--muted);font-size:.85em;margin-top:.5em}.lay-nav .nav-tail{margin-top:auto;color:var(--muted);font-size:.6em;line-height:1.9}.lay-nav.slim{padding:.8em .4em;align-items:center}.lay-nav.slim button{width:2.8em;height:2.8em;padding:0;text-align:center;font-size:.9em}.lay-nav.slim .ws-eyebrow{font-size:.55em;letter-spacing:0}.inspector{min-width:0;min-height:0;background:var(--panel);border-left:1px solid var(--border);padding:1em;overflow:auto}.inspector header{display:flex;align-items:center;justify-content:space-between;font-size:.7em;margin-bottom:1.3em}.inspector header strong{font-weight:500}.inspector .inspector-tabs{display:flex;gap:.4em;margin-bottom:1.7em;flex-wrap:wrap}.inspector-tabs button{font-size:.58em}.inspector h4{font-size:.63em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:1.7em 0 .9em}.inspector p{font-size:.7em;line-height:1.7;overflow-wrap:anywhere;margin:.7em 0}.inspector .file-row{font:.65em/1.8 "Liberation Mono",monospace;padding:.6em 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}.inspector .file-row span{float:right;color:var(--success)}.inspector .context-block{padding:.8em;border:1px dashed var(--border);font-size:.7em;line-height:1.7}.new-layout .drawer{min-height:0}.new-layout .drawer .term-text{padding:.6em 1em}.new-layout .drawer .term-text .shell-extra{display:none}.new-layout .drawer .prompt{display:none}.focus-label{font-size:.7em;color:var(--muted);line-height:1.6}.focus-label strong{color:var(--fg);font-weight:500}.l-focus .lay-content{padding:1em 1.2em}.l-focus .lay-panearea.with-shell{grid-template-rows:minmax(0,1fr) 29%}.l-focus .term.agent-pane{border-color:var(--border)}.l-focus .lay-toolbar{margin-bottom:.2em}.l-focus .agent-pane .term-title{display:none}.l-focus .agent-pane{grid-template-rows:minmax(0,1fr)}.l-focus .agent-pane .term-text{padding:1.6em 1.8em}.l-focus .agent-pane .term-text p{max-width:80ch}.l-focus .ws-bottom{background:var(--bg);border-top:0}.l-focus .agent-pane .prompt{margin-top:2.5em}.l-sidecar .lay-terminalgrid.with-shell{grid-template-columns:minmax(0,1fr) 29%}.l-sidecar .shell-pane .term-text{font-size:.7em}.l-sidecar .lay-main{grid-template-rows:minmax(0,1fr)}.l-sidecar .lay-content{gap:.6em}.l-stack .lay-main{grid-template-columns:3.5em minmax(0,1fr)}.l-stack .lay-terminalgrid.with-shell{grid-template-rows:minmax(0,1fr) 30%}.l-stack .drawer .term-text{font-size:.72em}.l-inspector .lay-main{grid-template-columns:11.5em minmax(0,1fr) 15em}.l-inspector.inspector-hidden .lay-main{grid-template-columns:11.5em minmax(0,1fr)}.l-inspector .lay-panearea.with-shell{grid-template-rows:minmax(0,1fr) 29%}.l-deck .lay-main{grid-template-rows:5.2em minmax(0,1fr)}.deck-strip{display:flex;gap:.7em;padding:.8em var(--lay-gap) .3em;overflow:auto}.deck-strip button{min-width:13em;text-align:left;font-size:.7em;display:grid;grid-template-columns:1fr auto;align-items:center;gap:.6em}.deck-strip button strong{font-weight:500}.deck-strip button small{grid-column:1/-1;color:var(--muted);font-size:.85em}.deck-strip .status-dot{width:.5em;height:.5em}.l-deck .lay-content{padding-top:0}.l-deck .lay-panearea.with-shell{grid-template-rows:minmax(0,1fr) 27%}.l-board .lay-content{grid-template-rows:auto minmax(0,1fr) auto}.l-board .lay-terminalgrid{grid-template-columns:repeat(3,minmax(0,1fr))}.l-board .term-title{display:block;padding:.75em 1em;font-size:.75em;line-height:1.6}.l-board .term{grid-template-rows:4.5em minmax(0,1fr)}.l-board .term-host{display:block;margin-top:.35em}.l-board .term-text{font-size:.7em;padding:1em;line-height:1.8}.board-foot{font-size:.62em;color:var(--muted);display:flex;justify-content:space-between;padding:.3em}.l-ide .lay-main{grid-template-columns:13em minmax(0,1fr)}.l-ide .lay-panearea.with-shell{grid-template-rows:minmax(0,1fr) 29%}.project-tree{padding:1em .8em;background:var(--panel);border-right:1px solid var(--border);min-width:0;overflow:hidden}.project-tree .tree-row{font:.67em/1.8 "Liberation Mono",monospace;padding:.4em .5em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.project-tree .tree-row.selected{background:var(--selection);color:var(--fg)}.project-tree .tree-row.indent{padding-left:1.7em}.project-tree .tree-head{display:flex;justify-content:space-between;font-size:.67em;margin-bottom:1.3em}.project-tree .ws-eyebrow{margin:2em .5em 1em}.project-tree .tree-state{font-size:.62em;color:var(--muted);margin:1em .5em;line-height:1.8}.l-floating .lay-content{padding:.75em}.floating-shell{position:absolute;left:55%;top:54%;width:43%;height:42%;z-index:4;box-shadow:0 8px 30px #0004;resize:both;overflow:hidden;min-width:13em;min-height:8em;max-width:95%;max-height:95%;background:var(--bg)}.floating-shell .term-title{cursor:grab;touch-action:none;user-select:none}.floating-shell .term-text{font-size:.68em;padding:1em}.floating-shell .shell-extra{display:none}.floating-tip{position:absolute;right:1.2em;top:.7em;color:var(--muted);font-size:.58em;pointer-events:none}.floating-shell.dragging-window .term-title{cursor:grabbing}.new-layout.dragging .drop-well{inset:3.3em .8em 2.2em .8em}.new-layout .drop-well{border-radius:var(--radius)}.new-layout .ws-top button{font-size:1em;padding:.35em .6em}.new-layout .agent-pane .prompt{font-size:1em}.new-layout .term-title .status-dot{margin-right:.6em}.new-layout .ws-top .layout-badge{color:var(--muted);font-size:.62em;letter-spacing:.04em;white-space:nowrap}.new-layout .mock-buttons button{font-size:1em}.field input[type=range]{accent-color:var(--orange);width:100%}.layout-gallery .study.chosen{border-color:var(--orange)}.new-layout .term-text .review-heading{color:var(--accent);font-weight:600}.new-layout .term-text .test-line{color:var(--success)}
+@media(min-width:1500px){.new-layout.hero{height:640px}.previews.compare .new-layout.hero{height:600px}.layout-gallery .study-preview{height:300px}}@media(max-width:1100px){.previews.compare{grid-template-columns:1fr}.previews.compare .new-layout.hero{font-size:var(--preview-font,16px)}.new-layout.hero{font-size:14px}.l-inspector .lay-main{grid-template-columns:9em minmax(0,1fr) 12em}.layout-gallery .mini{font-size:7px!important}}@media(max-width:740px){.layout-gallery{grid-template-columns:1fr}.layout-gallery .study-preview{height:280px}.new-layout.hero,.previews.compare .new-layout.hero{font-size:11px;height:500px}.l-inspector .lay-main{grid-template-columns:7em minmax(0,1fr)}.l-inspector .inspector{display:none}.l-ide .lay-main{grid-template-columns:8em minmax(0,1fr)}.new-layout .ws-project{display:none}.new-layout .ws-top{padding:0 .8em}.new-layout .ws-top .layout-badge{font-size:.65em}.lay-toolbar{gap:.5em;flex-wrap:wrap}.l-board .term-text{font-size:.8em}.l-board .lay-terminalgrid{grid-template-columns:1fr;grid-template-rows:repeat(3,minmax(0,1fr))}.l-board .term{grid-template-rows:2em minmax(0,1fr)}.l-board .term-title{display:flex;padding:.2em .8em;font-size:.75em}.l-board .term-host{margin:0}.l-board .term-text{padding:.5em .8em}.l-board .term-text p{margin-bottom:.4em}.layout-note{margin-top:12px}}
+
+.agent-picker{position:absolute;z-index:8;top:6.2em;right:1.5em;width:15em;box-shadow:0 8px 28px #0004;border:1px solid var(--border)}.agent-picker .lay-nav{border:0}.l-sidecar .lay-terminalgrid.with-shell{grid-template-columns:minmax(0,calc(var(--agent-share,70%) - .4em)) minmax(0,1fr)}.l-stack .lay-terminalgrid.with-shell{grid-template-rows:minmax(0,calc(var(--agent-share,70%) - .4em)) minmax(0,1fr)}.workspace.hero:not(.new-layout){font-size:var(--preview-font,16px)}
+
+.theme-options>summary{font-size:12px;cursor:pointer;line-height:1.8}.theme-options>summary small{display:block;color:var(--sub);font-size:10px}.theme-options .field,.theme-options .pair{margin-top:16px}.theme-options .check{margin-top:14px}
+[hidden]{display:none!important}.previews.compare .workspace.hero:not(.new-layout){font-size:calc(var(--preview-font,16px) - 3px)}@media(max-width:1100px){.previews.compare .workspace.hero:not(.new-layout){font-size:var(--preview-font,16px)}}
+.new-layout .floating-shell{position:absolute;min-width:13em;min-height:8em}
+</style>
+</head>
+<body>
+<header class="mast"><a class="brand" href="#top">STAR<span style="color:#999">/</span>MUX <b>↗</b></a><nav aria-label="Sections"><a href="#layouts">Layouts</a><a href="#studies">Surfaces</a><a href="#themes">Themes</a><a href="#selection">Shortlist <span id="count">0</span></a></nav><span class="edition">LAYOUT STUDIES / 02</span></header>
+<main id="top">
+<section class="intro"><div><div class="eyebrow" style="color:var(--orange)">A different shape for the work</div><h1>Make room for the work.</h1><p>Eight new layouts, plus the current screen for comparison. Start with Blueprint’s styling and change what actually takes up space: the shell, the navigation, and the number of visible agents.</p></div><div class="intro-note">Interactive design studies.<br>These previews are simulated and are not connected to your running agents.</div></section>
+<section class="lab" aria-label="Treatment workbench">
+<aside class="controls">
+<div class="eyebrow">The workbench</div>
+<div class="field"><label for="layout">Layout</label><select id="layout"></select><small id="layout-description"></small></div><div class="field"><label for="treatment">Surface treatment</label><select id="treatment"></select><small id="description"></small></div>
+<div class="field"><label for="font">Preview text size</label><select id="font"><option value="14">14 px / compact</option><option value="16">16 px / readable</option><option value="18">18 px / larger</option></select></div><div class="field" id="split-field" hidden><label for="split">Agent space <span id="split-value">70%</span></label><input id="split" type="range" min="50" max="85" value="70"></div><details class="theme-options"><summary>Theme &amp; appearance <small id="theme-details-name">Kanagawa</small></summary><div class="field"><label for="theme">Palette</label><select id="theme"></select><div class="swatches" id="swatches" aria-hidden="true"></div></div>
+<div class="field"><label for="appearance">Appearance</label><select id="appearance"><option value="palette">Palette default</option><option value="system">Follow browser system preference</option><option value="dark">Dark study</option><option value="light">Light study</option></select><small id="appearance-note"></small></div>
+<div class="pair"><div class="field"><label for="density">Density</label><select id="density"><option value="comfortable">Relaxed</option><option value="compact">Compact</option></select></div><div class="field"><label for="accent">Accent</label><input id="accent" type="color" value="#7e9cd8" style="width:100%;height:36px;padding:3px;border:1px solid var(--line);border-radius:5px;background:var(--white)"></div></div>
+<label class="check"><input id="contrast" type="checkbox"> Stronger contrast</label>
+<label class="check"><input id="sync" type="checkbox" checked> Match terminal palette</label>
+</details><hr>
+<button class="save" id="save">＋ Save this layout</button>
+<small class="muted" style="font-size:10px;line-height:1.6">Selections stay in this browser. Export your shortlist to share an exact direction.</small>
+</aside>
+<div class="stage">
+<div class="stage-head"><div class="stage-title"><span class="index" id="active-index">01</span><h2 id="active-title">Signal</h2></div><div class="stage-actions"><button id="compare" aria-pressed="false">Compare two</button><button id="reset">Reset</button></div></div>
+<div class="previews" id="previews"><div><div class="preview-label"><span id="a-label">A / Signal</span><span id="variant-label"></span></div><div id="hero-a"></div></div><div id="compare-panel" hidden><div class="preview-label"><label for="layout-b">B / <select id="layout-b" style="font-size:10px;padding:3px 7px"></select></label><span>Same surface + theme</span></div><div id="hero-b"></div></div></div>
+<div class="state-controls" aria-label="Preview agent state"><button data-state="working" aria-pressed="true">● Working</button><button data-state="approval">◇ Needs approval</button><button data-state="transfer">↗ File transfer</button><button data-state="offline">○ Disconnected</button></div>
+<div class="stage-foot"><span id="treatment-note"></span><div class="contrast-readout" id="contrast-readout"></div></div>
+<p class="prototype">Try dragging a file over a preview to see the drop treatment. A drop simulates the transfer state; this page does not upload files or read their contents.</p>
+</div></section>
+<section id="layouts"><div class="section-heading"><h2>Give the agent more room.</h2><p>These are different arrangements, not just different borders. Try the shell and inspector buttons inside each large preview.</p></div><div class="layout-note">Use <strong>Compare with A</strong> to compare layouts in the same treatment and palette. The previews use simulated sessions. Save the layout, text size, split, and panel choices you like.</div><div style="height:18px"></div><div class="gallery layout-gallery" id="layout-gallery"></div></section><details class="surface-archive" id="studies"><summary>Keep exploring the original surface treatments</summary><section><div class="section-heading"><h2>Ten ways to frame the work.</h2><p>The original ten treatments are still available. Apply one without changing the layout you are comparing.</p></div><div class="gallery" id="gallery"></div></section>
+</details><section id="themes"><div class="section-heading"><h2>One theme. Every surface.</h2><p>Layout, treatment, palette, text size, and accessibility are independent choices.</p></div><div class="theme-section"><div class="theme-intro"><div><h3>Shared color language</h3><p>These twelve palettes come from STAR/KIT’s complete Base16 themes. Chrome, terminal colors, focus, approval, errors, and transfer feedback resolve from semantic roles. A custom accent is checked for readable contrast.</p></div><div><h3>System-aware, with explicit overrides</h3><p>Follow your browser’s light/dark preference, keep the original palette, or explore adapted light and dark studies. Adapted variants are design studies, not additional official KIT themes. “Match terminal palette” previews coordinated Kitty colors.</p></div></div><div class="palette-grid" id="palette-grid"></div><div class="tokens" id="tokens"></div><p style="font-size:11px;color:var(--sub);margin-top:15px;line-height:1.6">Blueprint and shared palette selection are implemented in STAR/MUX. These layouts are design proposals; shortlist exports describe your choices for the next implementation.</p></div></section>
+<section id="selection"><div class="section-heading"><h2>Keep the good ones.</h2><p>Save a few arrangements, then export the layout, panel choices, type size, and theme together.</p></div><div class="shortlist"><div id="shortlist-items" class="shortlist-items"></div><div id="empty-shortlist">No selections yet. Save a layout from the workbench, or use “Shortlist” on a study.</div><div style="display:flex;gap:9px;flex-wrap:wrap"><button id="export" disabled>Export selections ↓</button><button id="copy" disabled>Copy brief</button><button id="clear" disabled>Clear shortlist</button></div></div></section>
+<footer class="footer"><p>STAR/MUX · Layout studies<br>Local HTML · no external fonts, scripts, uploads, or analytics.</p><p>Choose the geometry first. Tune the color next.<br>Built for terminals, agents, and the space between them.</p></footer>
+</main><div class="toast" role="status" aria-live="polite" id="toast"></div>
+<script id="palette-data" type="application/json">[
+  {
+    "id": "ayu-dark",
+    "name": "Ayu Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#0f1419",
+      "base01": "#131721",
+      "base02": "#272d38",
+      "base03": "#3e4b59",
+      "base04": "#bfbdb6",
+      "base05": "#e6e1cf",
+      "base06": "#e6e1cf",
+      "base07": "#f3f4f5",
+      "base08": "#f07178",
+      "base09": "#ff8f40",
+      "base0A": "#ffb454",
+      "base0B": "#b8cc52",
+      "base0C": "#95e6cb",
+      "base0D": "#59c2ff",
+      "base0E": "#d2a6ff",
+      "base0F": "#e6b673"
+    }
+  },
+  {
+    "id": "catppuccin-latte",
+    "name": "Catppuccin Latte",
+    "variant": "light",
+    "base16": {
+      "base00": "#eff1f5",
+      "base01": "#e6e9ef",
+      "base02": "#ccd0da",
+      "base03": "#bcc0cc",
+      "base04": "#acb0be",
+      "base05": "#4c4f69",
+      "base06": "#dc8a78",
+      "base07": "#7287fd",
+      "base08": "#d20f39",
+      "base09": "#fe640b",
+      "base0A": "#df8e1d",
+      "base0B": "#40a02b",
+      "base0C": "#179299",
+      "base0D": "#1e66f5",
+      "base0E": "#8839ef",
+      "base0F": "#dd7878"
+    }
+  },
+  {
+    "id": "catppuccin-mocha",
+    "name": "Catppuccin Mocha",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1e1e2e",
+      "base01": "#181825",
+      "base02": "#313244",
+      "base03": "#45475a",
+      "base04": "#585b70",
+      "base05": "#cdd6f4",
+      "base06": "#f5e0dc",
+      "base07": "#b4befe",
+      "base08": "#f38ba8",
+      "base09": "#fab387",
+      "base0A": "#f9e2af",
+      "base0B": "#a6e3a1",
+      "base0C": "#94e2d5",
+      "base0D": "#89b4fa",
+      "base0E": "#cba6f7",
+      "base0F": "#f2cdcd"
+    }
+  },
+  {
+    "id": "dracula",
+    "name": "Dracula",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282a36",
+      "base01": "#44475a",
+      "base02": "#44475a",
+      "base03": "#6272a4",
+      "base04": "#6272a4",
+      "base05": "#f8f8f2",
+      "base06": "#f8f8f2",
+      "base07": "#ffffff",
+      "base08": "#ff5555",
+      "base09": "#ffb86c",
+      "base0A": "#f1fa8c",
+      "base0B": "#50fa7b",
+      "base0C": "#8be9fd",
+      "base0D": "#bd93f9",
+      "base0E": "#ff79c6",
+      "base0F": "#ff5555"
+    }
+  },
+  {
+    "id": "everforest",
+    "name": "Everforest Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#2d353b",
+      "base01": "#343f44",
+      "base02": "#3d484d",
+      "base03": "#475258",
+      "base04": "#859289",
+      "base05": "#d3c6aa",
+      "base06": "#e6e2cc",
+      "base07": "#fdf6e3",
+      "base08": "#7fbbb3",
+      "base09": "#dbbc7f",
+      "base0A": "#e69875",
+      "base0B": "#a7c080",
+      "base0C": "#83c092",
+      "base0D": "#7fbbb3",
+      "base0E": "#d699b6",
+      "base0F": "#9da9a0"
+    }
+  },
+  {
+    "id": "gruvbox-dark",
+    "name": "Gruvbox Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282828",
+      "base01": "#3c3836",
+      "base02": "#504945",
+      "base03": "#665c54",
+      "base04": "#bdae93",
+      "base05": "#d5c4a1",
+      "base06": "#ebdbb2",
+      "base07": "#fbf1c7",
+      "base08": "#fb4934",
+      "base09": "#fe8019",
+      "base0A": "#fabd2f",
+      "base0B": "#b8bb26",
+      "base0C": "#8ec07c",
+      "base0D": "#83a598",
+      "base0E": "#d3869b",
+      "base0F": "#d65d0e"
+    }
+  },
+  {
+    "id": "kanagawa",
+    "name": "Kanagawa",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1f1f28",
+      "base01": "#2a2a37",
+      "base02": "#223249",
+      "base03": "#363646",
+      "base04": "#727169",
+      "base05": "#dcd7ba",
+      "base06": "#c8c093",
+      "base07": "#717c7c",
+      "base08": "#c34043",
+      "base09": "#ffa066",
+      "base0A": "#c0a36e",
+      "base0B": "#76946a",
+      "base0C": "#6a9589",
+      "base0D": "#7e9cd8",
+      "base0E": "#957fb8",
+      "base0F": "#d27e99"
+    }
+  },
+  {
+    "id": "nord",
+    "name": "Nord",
+    "variant": "dark",
+    "base16": {
+      "base00": "#2e3440",
+      "base01": "#3b4252",
+      "base02": "#434c5e",
+      "base03": "#4c566a",
+      "base04": "#d8dee9",
+      "base05": "#e5e9f0",
+      "base06": "#eceff4",
+      "base07": "#8fbcbb",
+      "base08": "#bf616a",
+      "base09": "#d08770",
+      "base0A": "#ebcb8b",
+      "base0B": "#a3be8c",
+      "base0C": "#88c0d0",
+      "base0D": "#81a1c1",
+      "base0E": "#b48ead",
+      "base0F": "#5e81ac"
+    }
+  },
+  {
+    "id": "one-dark",
+    "name": "One Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#282c34",
+      "base01": "#353b45",
+      "base02": "#3e4451",
+      "base03": "#545862",
+      "base04": "#565c64",
+      "base05": "#abb2bf",
+      "base06": "#b6bdca",
+      "base07": "#c8ccd4",
+      "base08": "#e06c75",
+      "base09": "#d19a66",
+      "base0A": "#e5c07b",
+      "base0B": "#98c379",
+      "base0C": "#56b6c2",
+      "base0D": "#61afef",
+      "base0E": "#c678dd",
+      "base0F": "#be5046"
+    }
+  },
+  {
+    "id": "rose-pine",
+    "name": "Rose Pine",
+    "variant": "dark",
+    "base16": {
+      "base00": "#191724",
+      "base01": "#1f1d2e",
+      "base02": "#26233a",
+      "base03": "#6e6a86",
+      "base04": "#908caa",
+      "base05": "#e0def4",
+      "base06": "#e0def4",
+      "base07": "#524f67",
+      "base08": "#eb6f92",
+      "base09": "#f6c177",
+      "base0A": "#ebbcba",
+      "base0B": "#31748f",
+      "base0C": "#9ccfd8",
+      "base0D": "#c4a7e7",
+      "base0E": "#f6c177",
+      "base0F": "#524f67"
+    }
+  },
+  {
+    "id": "solarized-dark",
+    "name": "Solarized Dark",
+    "variant": "dark",
+    "base16": {
+      "base00": "#002b36",
+      "base01": "#073642",
+      "base02": "#586e75",
+      "base03": "#657b83",
+      "base04": "#839496",
+      "base05": "#93a1a1",
+      "base06": "#eee8d5",
+      "base07": "#fdf6e3",
+      "base08": "#dc322f",
+      "base09": "#cb4b16",
+      "base0A": "#b58900",
+      "base0B": "#859900",
+      "base0C": "#2aa198",
+      "base0D": "#268bd2",
+      "base0E": "#6c71c4",
+      "base0F": "#d33682"
+    }
+  },
+  {
+    "id": "tokyo-night",
+    "name": "Tokyo Night",
+    "variant": "dark",
+    "base16": {
+      "base00": "#1a1b26",
+      "base01": "#16161e",
+      "base02": "#2f3549",
+      "base03": "#444b6a",
+      "base04": "#787c99",
+      "base05": "#a9b1d6",
+      "base06": "#c0caf5",
+      "base07": "#cfc9c2",
+      "base08": "#f7768e",
+      "base09": "#ff9e64",
+      "base0A": "#e0af68",
+      "base0B": "#9ece6a",
+      "base0C": "#7dcfff",
+      "base0D": "#7aa2f7",
+      "base0E": "#bb9af7",
+      "base0F": "#d5d6db"
+    }
+  }
+]</script>
+<script>
+'use strict';
+const PALETTES=JSON.parse(document.getElementById('palette-data').textContent);
+const studies=[
+{id:'signal',name:'Signal',tag:'Balanced / native',description:'Soft panels, precise focus, and an understated application shell.',note:'A quiet default. Terminal content leads; agent state and transfer feedback stay easy to find.'},
+{id:'atelier',name:'Atelier',tag:'Editorial / spacious',description:'An editorial workspace with generous air and serif landmarks.',note:'Strong separation through spacing and typography. Try Catppuccin Latte for a warm paper direction.'},
+{id:'vector',name:'Vector',tag:'Dense / structural',description:'An edge-to-edge instrument: sharp seams and compact hierarchy.',note:'Efficient use of screen space. Few decorative surfaces and an unmistakable active-pane edge.'},
+{id:'orbit',name:'Orbit',tag:'Floating / focused',description:'A small session dock and floating terminal surfaces.',note:'More room for the work. The reduced rail favors recognition over detailed session descriptions.'},
+{id:'mission',name:'Mission Control',tag:'Agents / operational',description:'Explicit agent lanes, strong state markers, and a larger active agent.',note:'A control-room direction. Agent identity and approval states take precedence over chrome.'},
+{id:'titanium',name:'Titanium',tag:'Raised / tactile',description:'Machined panels, restrained bevels, and a tangible title bar.',note:'Subtle raised materials echo the STAR family’s classic chrome without hiding terminal content.'},
+{id:'blueprint',name:'Blueprint',tag:'Technical / outlined',description:'Monospaced labels, drafting lines, and deliberate construction.',note:'An engineering-workbench character. The grid lives between panels and never behind ordinary terminal text.'},
+{id:'quiet',name:'Quiet',tag:'Minimal / borderless',description:'Almost no shell: typography, whitespace, and a single focus cue.',note:'Useful when the terminals are the entire job. Low ornament, with visible status text rather than color alone.'},
+{id:'mosaic',name:'Mosaic',tag:'Cards / horizontal',description:'Session cards above an asymmetric working canvas.',note:'A different layout, not just a skin. The horizontal session strip suits a small set of active agents.'},
+{id:'phosphor',name:'Phosphor',tag:'Instrument / luminous',description:'A restrained terminal instrument with luminous focus and fine texture.',note:'A nod to older instruments. No flicker or animation; stronger contrast removes the scanline texture.'}
+];
+const LAYOUTS=[
+{id:'focus',name:'Focus',tag:'One agent / no permanent sidebar',description:'One large agent canvas. The shell is a drawer you open only when you need it.',tradeoff:'Maximum space for the conversation. Other sessions live in a compact chooser.',note:'Start here if the current screen feels like too much chrome and too little agent.',shell:false},
+{id:'sidecar',name:'Sidecar',tag:'Agent first / narrow shell',description:'A large agent on the left, with a smaller shell alongside it. No session rail.',tradeoff:'Keep commands visible without giving the shell half your screen. Adjust the split above.',note:'The agent gets 70% of the canvas by default. Use the split control to find your balance.',shell:true},
+{id:'stack',name:'Stack',tag:'Full-width panes / vertical split',description:'A full-width agent above a shallow shell, with a thin session switcher at the edge.',tradeoff:'Long prompts and diffs have room to breathe; the shell uses vertical space instead.',note:'Useful on wide screens or whenever narrow terminal columns are the problem.',shell:true},
+{id:'inspector',name:'Workbench',tag:'Sessions / agent / context',description:'A focused agent between a session list and a collapsible context inspector.',tradeoff:'Best for tracking files and approvals. Both side columns cost terminal width.',note:'Toggle the inspector and switch Context, Files, or Activity to judge whether the extra structure helps.',shell:false},
+{id:'deck',name:'Agent Deck',tag:'Session cards / one live canvas',description:'Horizontal session cards replace the left sidebar. One agent gets the rest of the screen.',tradeoff:'Fast agent switching, without shrinking all agents into little simultaneous panes.',note:'Pick a session card. Keep the shell closed, or open it as a shallow drawer.',shell:false},
+{id:'board',name:'Agent Board',tag:'Three agents / no permanent shell',description:'Three agent lanes show implementation, review, and checks side by side.',tradeoff:'Good situational awareness across agents; less comfortable for long conversations.',note:'Click an agent header or its tab to focus it. This is a multi-agent study, with simulated sessions.',shell:false},
+{id:'ide',name:'Project Desk',tag:'Files / agent / terminal shelf',description:'A project tree on the left, a wide agent in the center, and an optional shell shelf.',tradeoff:'Context stays visible. The file tree earns its space only if you use it frequently.',note:'Choose a file in the tree, switch agents, and hide the terminal shelf to compare the footprint.',shell:true},
+{id:'floating',name:'Floating Shell',tag:'Full canvas / movable utility window',description:'A full-size agent with a shell window you can drag out of the way or close.',tradeoff:'Flexible use of space, but the floating shell can obscure the conversation.',note:'Drag the shell by its title bar, resize it from the lower-right corner, or hide it.',shell:true},
+{id:'current',name:'Current split',tag:'Baseline / existing arrangement',description:'The current rail and two permanent terminals, kept here as a control for comparison.',tradeoff:'Both panes are always available, but the shell and sidebar permanently consume space.',note:'Compare this against Focus, Stack, or Sidecar to identify exactly what you want to remove.',shell:true}
+];
+const AGENTS=[{id:'codex',name:'Codex',role:'Implementation',status:'Working',mark:'*'},{id:'review',name:'Review',role:'Review changes',status:'Needs approval',mark:'◇'},{id:'tests',name:'Checks',role:'Run checks',status:'Complete',mark:'✓'}];
+const $=id=>document.getElementById(id);
+const defaults={treatment:'blueprint',other:'atelier',layout:'focus',otherLayout:'inspector',theme:'kanagawa',appearance:'palette',density:'comfortable',contrast:false,sync:true,accent:null,compare:false,state:'working',font:16,split:70,showShell:null,inspector:true,inspectorTab:'context',activeAgent:'codex',selectedFile:'src/workspace.rs',showAgents:false,floatPos:null};
+let settings=Object.assign({},defaults),saved=[];
+try{const old=JSON.parse(localStorage.getItem('starmux-studies-settings-v1')||'null')||{};settings=Object.assign(settings,old);if(!old.layout)settings.treatment='blueprint';saved=JSON.parse(localStorage.getItem('starmux-studies-shortlist-v1')||'[]');if(!Array.isArray(saved))saved=[]}catch(e){}
+if(!studies.some(s=>s.id===settings.treatment))settings.treatment=defaults.treatment;
+if(!PALETTES.some(p=>p.id===settings.theme))settings.theme=defaults.theme;
+if(!LAYOUTS.some(l=>l.id===settings.layout))settings.layout='focus';
+if(!LAYOUTS.some(l=>l.id===settings.otherLayout))settings.otherLayout='inspector';
+if(!AGENTS.some(a=>a.id===settings.activeAgent))settings.activeAgent='codex';
+if(!['palette','system','light','dark'].includes(settings.appearance))settings.appearance='palette';
+if(!['comfortable','compact'].includes(settings.density))settings.density='comfortable';
+if(settings.accent&&!/^#[0-9a-f]{6}$/i.test(settings.accent))settings.accent=null;
+settings.font=[14,16,18].includes(Number(settings.font))?Number(settings.font):16;
+settings.split=Math.max(50,Math.min(85,Number(settings.split)||70));
+saved=saved.filter(s=>s&&studies.some(t=>t.id===s.treatment)&&PALETTES.some(p=>p.id===s.theme)).map(s=>Object.assign({},defaults,s,{layout:LAYOUTS.some(l=>l.id===s.layout)?s.layout:'current'}));
+let droppedName='AGENTS.md',toastTimer;
+function persist(){try{localStorage.setItem('starmux-studies-settings-v1',JSON.stringify(settings));localStorage.setItem('starmux-studies-shortlist-v1',JSON.stringify(saved))}catch(e){}}
+function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function rgb(hex){return hex.replace('#','').match(/../g).map(x=>parseInt(x,16))}
+function mix(a,b,f){return '#'+rgb(a).map((v,i)=>Math.round(v*(1-f)+rgb(b)[i]*f).toString(16).padStart(2,'0')).join('')}
+function lum(hex){return rgb(hex).map(x=>{x/=255;return x<=.04045?x/12.92:Math.pow((x+.055)/1.055,2.4)}).reduce((a,x,i)=>a+x*[.2126,.7152,.0722][i],0)}
+function ratio(a,b){const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+function readable(color,bg,target){if(ratio(color,bg)>=target)return color;const end=ratio('#ffffff',bg)>ratio('#000000',bg)?'#ffffff':'#000000';for(let i=1;i<=100;i++){const c=mix(color,end,i/100);if(ratio(c,bg)>=target)return c}return end}
+function readableOn(color,backgrounds,target){const end=lum(backgrounds[0])>.45?'#000000':'#ffffff';for(let i=0;i<=100;i++){const c=mix(color,end,i/100);if(backgrounds.every(bg=>ratio(c,bg)>=target))return c}return end}
+function resolve(s){
+ const p=PALETTES.find(p=>p.id===s.theme)||PALETTES[0],b=p.base16,systemDark=matchMedia('(prefers-color-scheme: dark)').matches;
+ const variant=s.appearance==='system'?(systemDark?'dark':'light'):s.appearance==='palette'?p.variant:s.appearance;
+ const adapted=variant!==p.variant,light=variant==='light';
+ const bg=adapted?(light?'#f4f3ee':'#191c23'):b.base00,panel=adapted?(light?'#eae9e3':'#232732'):b.base01;
+ const fg=readable(adapted?(light?'#34373d':'#dce0e8'):b.base05,bg,s.contrast?7:4.5);
+ const raised=mix(panel,'#ffffff',light?.48:.06),surfaces=[bg,panel,raised],border=readable(mix(bg,fg,.19),bg,s.contrast?3:1.35);
+ const accent=readableOn(s.accent||b.base0D,surfaces,s.contrast?7:4.5),muted=readableOn(mix(bg,fg,.58),surfaces,s.contrast?7:4.5);
+ return {bg,panel,raised,fg:readableOn(fg,surfaces,s.contrast?7:4.5),muted,border,accent,selection:mix(bg,accent,light?.10:.16),success:readableOn(b.base0B,surfaces,4.5),warning:readableOn(b.base0A,surfaces,4.5),error:readableOn(b.base08,surfaces,4.5),grid:mix(bg,accent,.09),variant,adapted,palette:p.name};
+}
+function cssTokens(t){return Object.entries(t).filter(([k,v])=>v[0]==='#').map(([k,v])=>'--'+k+':'+v).join(';')}
+function terminalContent(tiny){
+ const state=settings.state;
+ let body='<p><span class="accent">✦ Codex</span> <span class="dim">/ workspace assistant</span></p><p>Reviewing the session handoff and<br>remote file delivery.</p><p class="dim">• Read workspace.rs<br>• Checked transfer.rs<br>• Inspected session ownership</p><div class="diff"><span class="good">+ keep agent processes alive</span><br><span class="good">+ verify destination checksum</span></div><p><span class="good">✓</span> Checks passed. Preparing changes.</p><div class="prompt"><span class="dim">›</span> Ask a follow-up <span class="cursor"></span></div>';
+ if(state==='approval')body='<p><span class="accent">✦ Codex</span> <span class="dim">/ waiting for you</span></p><p>I’m ready to run the workspace checks.</p><div class="approval-box"><span class="warn">◇ Approval requested</span><br><span class="dim">Run the project test command?</span><p class="code-row">cargo test --workspace</p><div class="mock-buttons"><button data-approve="yes">Allow once</button><button data-approve="no">Reject</button></div></div><p class="dim" style="margin-top:1em">The agent is paused. Your session stays open.</p>';
+ if(state==='transfer')body='<p><span class="accent">✦ Codex</span> <span class="dim">/ remote session</span></p><p class="good">✓ File delivered to atlas</p><p class="dim">The remote path is in the composer.<br>The prompt has not been submitted.</p><div class="prompt">› <span class="accent">~/.local/share/starmux/<br>attachments/…/'+esc(droppedName)+'</span><br><span class="cursor"></span></div><p class="dim" style="margin-top:1em">Add your instructions, then press Enter.</p>';
+ if(state==='offline')body='<p><span class="accent">✦ Codex</span> <span class="dim">/ connection lost</span></p><p class="warn">○ SSH connection interrupted</p><p>Your agent process is retained on atlas.<br>Reconnecting to the existing session…</p><p class="dim">Last response: 8 seconds ago<br>Unsaved composer text is retained.</p><div class="prompt dim">Waiting for the remote host.</div>';
+ return body;
+}
+function legacyWorkspace(id,size){
+ const t=resolve(settings),light=t.variant==='light',independent='--term-bg:#151c27;--term-fg:#d6deeb;';
+ const stateText={working:'Working',approval:'Needs approval',transfer:'File delivered',offline:'Disconnected'}[settings.state]||'Working';
+ const activity=settings.state==='transfer'?'<strong>↗ '+esc(droppedName)+' → atlas</strong><div class="meta">Copied · checksum verified · ready in composer</div>':settings.state==='approval'?'<strong>◇ Codex needs your approval</strong><div class="meta">Review the request in the agent pane</div>':settings.state==='offline'?'<strong>○ Reconnecting to atlas</strong><div class="meta">Remote process retained · no new agent started</div>':'<strong>Agent activity</strong><div class="meta">Reviewing session handoff · 3 files inspected</div>';
+ return '<div class="workspace t-'+id+' '+size+(settings.density==='compact'?' compact':'')+(settings.contrast?' high-contrast':'')+(!settings.sync?' terminal-independent':'')+'" style="'+cssTokens(t)+';'+(!settings.sync?independent:'')+'" data-treatment="'+id+'">'+
+ '<div class="ws-top"><div class="ws-logo">STAR<span> / </span>MUX</div><div class="ws-project"><b>star / workspace</b> <span> / agent sessions</span></div><div class="ws-chips"><span class="ws-chip">⌘ K</span><span class="ws-chip">2 sessions</span></div></div>'+
+ '<div class="ws-main"><aside class="ws-rail"><div class="ws-eyebrow">Sessions / 02</div><div class="session"><div class="session-name"><span><i class="agent-portrait">~</i>Shell</span><span>01</span></div><div class="session-meta"><i class="status-dot"></i>Ready <span> · local</span></div></div><div class="session selected '+(settings.state==='approval'?'wait':'')+'"><div class="session-name"><span><i class="agent-portrait">✦</i>Codex</span><span>02</span></div><div class="session-meta"><i class="status-dot"></i>'+stateText+' <span> · atlas</span></div></div><div class="ws-eyebrow secondary">＋ New session</div><div class="rail-bottom"><div class="ws-eyebrow">Connection</div><strong>atlas / SSH</strong><br>user@atlas<div class="rail-line"></div>Ctrl+Esc · release keys<br>Sessions survive closing</div></aside>'+
+ '<div class="ws-body"><div class="workspace-title"><div><h3>Workspace</h3><small>Persistent sessions · local + remote</small></div><div class="ws-tabs"><span>Terminals</span><span>Artifacts <b>3</b></span></div></div>'+
+ '<div class="terminal-grid"><section class="term"><div class="term-title"><strong>01 / Shell</strong><span class="term-host">LOCAL</span></div><div class="term-text"><p><span class="good">~/projects/star</span> <span class="accent">❯</span> git status --short</p><p class="dim"> M src/workspace.rs<br> M src/transfer.rs<br>?? tests/ssh_handoff.rs</p><p><span class="good">~/projects/star</span> <span class="accent">❯</span></p><p class="dim" style="margin-top:3em">A shell that stays yours.</p></div></section>'+
+ '<section class="term focused"><div class="term-title"><strong>02 / Codex</strong><span class="term-host">'+(settings.state==='offline'?'○ OFFLINE':'↗ ATLAS / SSH')+'</span></div><div class="term-text">'+terminalContent(size==='mini')+'</div></section></div>'+
+ '<div class="activity"><div>'+activity+'</div><div>'+(settings.state==='working'?'<div class="bar"><i></i></div>':'<span style="color:var(--accent)">'+(settings.state==='transfer'?'✓ Delivered':settings.state==='approval'?'Waiting':'Retained')+'</span>')+'</div></div></div></div>'+
+ '<div class="ws-bottom"><span><b>●</b> '+(settings.state==='offline'?'Remote reconnecting':'Workspace connected')+'</span><span>Drop onto a pane <b>·</b> No automatic submission</span><span>Ctrl+Esc <b>release</b></span></div><div class="drop-well"><div><div class="drop-icon">↗</div><h4>Copy to Codex on atlas</h4><p>Deliver to the remote host.<br>Keep your prompt editable.</p></div></div></div>';
+}
+function agentTabs(){return '<div class="lay-tabs">'+AGENTS.map(a=>'<button data-agent="'+a.id+'" aria-pressed="'+(settings.activeAgent===a.id)+'">'+a.mark+' '+a.name+'</button>').join('')+'</div>'}
+function shellVisible(layout,size){return size==='mini'?layout.shell:settings.showShell===null?layout.shell:settings.showShell}
+function shellToggle(shown){return '<button data-shell="toggle">'+(shown?'Hide shell':'Show shell')+'</button>'}
+function agentContent(id){
+ if(id==='codex')return terminalContent(false);
+ if(id==='review')return '<p class="review-heading">◇ Review / agent</p><p>Reviewing the changes in this workspace.</p><p class="dim">• Compared session ownership<br>• Checked remote attachment paths<br>• Inspected cancellation handling</p><div class="approval-box"><span class="warn">One decision needs you</span><p>Keep staged attachments after the session closes?</p><div class="mock-buttons"><button data-approve="yes">Keep files</button><button data-approve="no">Review later</button></div></div>';
+ return '<p class="review-heading">✓ Checks / agent</p><p class="dim">Running the workspace checks.</p><p class="test-line">PASS  session reattachment<br>PASS  remote path delivery<br>PASS  checksum verification<br>PASS  transfer cancellation</p><p class="good">28 checks passed.</p><p class="dim">Waiting for the next change.</p>';
+}
+function pane(kind,classes=''){
+ const shell=kind==='shell',agent=AGENTS.find(a=>a.id===kind)||AGENTS[0],name=shell?'Shell':agent.name;
+ const content=shell?'<p><span class="good">~/projects/star</span> <span class="accent">❯</span> git status --short</p><p class="dim"> M src/workspace.rs<br> M src/transfer.rs<br>?? tests/ssh_handoff.rs</p><p><span class="good">~/projects/star</span> <span class="accent">❯</span> <span class="cursor"></span></p><p class="dim shell-extra" style="margin-top:2em">Local shell / retained session<br>Separate from the remote agent.</p>':agentContent(kind);
+ return '<section class="term '+(shell?'shell-pane':'agent-pane')+' '+(!shell&&settings.activeAgent===kind?'focused ':'')+classes+'" data-pane="'+kind+'"><div class="term-title" '+(!shell?'data-focus-agent="'+kind+'"':'')+'><strong>'+(shell?'~ / Shell':agent.mark+' / '+name)+'</strong><span class="pane-actions"><span class="term-host">'+(shell?'LOCAL':kind==='codex'?'ATLAS / SSH':agent.status.toUpperCase())+'</span>'+(shell?'<button data-shell="toggle" aria-label="Hide shell">×</button>':'')+'</span></div><div class="term-text">'+content+'</div></section>';
+}
+function navigator(slim=false){return '<aside class="lay-nav '+(slim?'slim':'')+'"><div class="ws-eyebrow">'+(slim?'AGENTS':'Sessions / 03')+'</div>'+AGENTS.map(a=>'<button data-agent="'+a.id+'" aria-label="Switch to '+a.name+'" aria-pressed="'+(settings.activeAgent===a.id)+'">'+(slim?a.mark:'<strong>'+a.mark+' '+a.name+'</strong><small>'+a.status+' / atlas</small>')+'</button>').join('')+(!slim?'<div class="nav-tail">star / workspace<br>atlas · SSH<br>Sessions are retained.</div>':'')+'</aside>'}
+function inspector(){
+ const tab=settings.inspectorTab;let content=tab==='files'?'<h4>Changed files</h4><div class="file-row">workspace.rs <span>M</span></div><div class="file-row">transfer.rs <span>M</span></div><div class="file-row">ssh_handoff.rs <span>+</span></div><h4>Attachment</h4><div class="context-block">AGENTS.md<br>Delivered to atlas<br><span style="color:var(--success)">Checksum verified</span></div>':tab==='activity'?'<h4>Latest activity</h4><p>Codex inspected 3 files.</p><p>Review is waiting for a decision.</p><p>Checks completed.</p><h4>Connection</h4><div class="context-block">atlas / SSH<br>Agent process retained.</div>':'<h4>Current task</h4><p>Improve session handoff and remote attachment delivery.</p><h4>Working directory</h4><div class="context-block mono">/work/star/starmux</div><h4>Selected file</h4><p class="mono">'+esc(settings.selectedFile)+'</p><h4>Approval</h4><div class="context-block"><span style="color:var(--warning)">◇ 1 request needs review</span><br>See the Review session.</div>';
+ return '<aside class="inspector"><header><strong>Inspector</strong><button data-inspector="toggle" aria-label="Close inspector">×</button></header><div class="inspector-tabs">'+['context','files','activity'].map(t=>'<button data-inspector-tab="'+t+'" aria-pressed="'+(t===tab)+'">'+t[0].toUpperCase()+t.slice(1)+'</button>').join('')+'</div>'+content+'</aside>';
+}
+function tree(){return '<aside class="project-tree"><div class="tree-head"><strong>star / starmux</strong><span>⌄</span></div><div class="tree-row">▾ src</div>'+['src/workspace.rs','src/transfer.rs','src/session.rs'].map(f=>'<button class="tree-row indent '+(settings.selectedFile===f?'selected':'')+'" data-file="'+f+'">'+f.split('/')[1]+'</button>').join('')+'<div class="tree-row">▾ tests</div><button class="tree-row indent '+(settings.selectedFile==='tests/ssh_handoff.rs'?'selected':'')+'" data-file="tests/ssh_handoff.rs">ssh_handoff.rs</button><div class="tree-row">Cargo.toml</div><div class="ws-eyebrow">Selected context</div><div class="tree-state">'+esc(settings.selectedFile)+'<br>Available to the active agent.</div></aside>'}
+function toolbar(content,right=''){return '<div class="lay-toolbar">'+content+'<div style="display:flex;gap:.5em;align-items:center">'+right+'</div></div>'}
+function workspace(treatment,size,layoutId=settings.layout){
+ const l=LAYOUTS.find(l=>l.id===layoutId)||LAYOUTS[0];
+ if(l.id==='current')return legacyWorkspace(treatment,size).replace('data-treatment=','data-layout="current" data-treatment=').replace('style="','style="--preview-font:'+settings.font+'px;');
+ const t=resolve(settings),shown=shellVisible(l,size),inspectOpen=size==='mini'?true:settings.inspector,agent=settings.activeAgent,active=pane(agent),shell=pane('shell','drawer');let inner='';
+ const content=(bar,body,cls='')=>'<div class="lay-content '+cls+'">'+bar+body+'</div>';
+ if(l.id==='focus')inner=content(toolbar('<div class="focus-label"><strong>'+AGENTS.find(a=>a.id===agent).name+'</strong> / star workspace <span class="dim">· atlas</span></div>','<button data-agents="toggle">Switch agent ⌄</button>'+shellToggle(shown)),'<div class="lay-panearea '+(shown?'with-shell':'')+'">'+active+(shown?shell:'')+'</div>');
+ if(l.id==='sidecar')inner=content(toolbar(agentTabs(),shellToggle(shown)),'<div class="lay-terminalgrid '+(shown?'with-shell':'')+'">'+active+(shown?pane('shell'):'')+'</div>');
+ if(l.id==='stack')inner=navigator(true)+content(toolbar('<strong>star / workspace</strong>',shellToggle(shown)),'<div class="lay-terminalgrid '+(shown?'with-shell':'')+'">'+active+(shown?shell:'')+'</div>');
+ if(l.id==='inspector')inner=navigator()+content(toolbar('<strong>'+AGENTS.find(a=>a.id===agent).name+' / atlas</strong>',shellToggle(shown)+'<button data-inspector="toggle">'+(inspectOpen?'Hide':'Show')+' inspector</button>'),'<div class="lay-panearea '+(shown?'with-shell':'')+'">'+active+(shown?shell:'')+'</div>')+(inspectOpen?inspector():'');
+ if(l.id==='deck')inner='<div class="deck-strip">'+AGENTS.map(a=>'<button data-agent="'+a.id+'" aria-pressed="'+(agent===a.id)+'"><strong>'+a.mark+' '+a.name+'</strong><i class="status-dot" style="background:var(--'+(a.id==='review'?'warning':'success')+')"></i><small>'+a.role+' / '+a.status+'</small></button>').join('')+'</div>'+content(toolbar('<span class="mini-note">One selected agent. Full terminal width.</span>',shellToggle(shown)),'<div class="lay-panearea '+(shown?'with-shell':'')+'">'+active+(shown?shell:'')+'</div>');
+ if(l.id==='board')inner='<div class="lay-content">'+toolbar('<strong>Agents / star workspace</strong>',agentTabs())+'<div class="lay-terminalgrid">'+AGENTS.map(a=>pane(a.id)).join('')+'</div><div class="board-foot"><span>3 retained sessions / atlas</span><span>One project, parallel work.</span></div></div>';
+ if(l.id==='ide')inner=tree()+content(toolbar(agentTabs(),shellToggle(shown)),'<div class="lay-panearea '+(shown?'with-shell':'')+'">'+active+(shown?shell:'')+'</div>');
+ if(l.id==='floating'){
+  const pos=settings.floatPos&&Number.isFinite(settings.floatPos.x)&&Number.isFinite(settings.floatPos.y)?'left:'+(Math.max(0,Math.min(.57,settings.floatPos.x))*100)+'%;top:'+(Math.max(0,Math.min(.58,settings.floatPos.y))*100)+'%;':'';
+  const floating=shown?pane('shell','floating-shell').replace('class="term shell-pane','style="'+pos+'" class="term shell-pane'):'';
+  inner=content(toolbar(agentTabs(),shellToggle(shown)),'<div class="lay-panearea">'+active+floating+'</div>');
+ }
+ return '<div class="workspace new-layout t-'+treatment+' l-'+l.id+' '+size+(settings.density==='compact'?' compact':'')+(settings.contrast?' high-contrast':'')+(!settings.sync?' terminal-independent':'')+(!inspectOpen?' inspector-hidden':'')+'" data-layout="'+l.id+'" data-treatment="'+treatment+'" style="'+cssTokens(t)+';--preview-font:'+settings.font+'px;--agent-share:'+settings.split+'%;'+(!settings.sync?'--term-bg:#151c27;--term-fg:#d6deeb;':'')+'"><div class="ws-top"><div class="ws-logo">STAR<span> / </span>MUX</div><div class="ws-project">star / workspace</div><div class="layout-badge">'+l.name+'</div><div class="ws-chips"><span class="ws-chip">↗ atlas / SSH</span></div></div><div class="lay-main">'+inner+'</div><div class="ws-bottom"><span>● Sessions retained</span><span>Drop onto a pane / prompt stays editable</span><span>Ctrl+Esc / release</span></div>'+(settings.showAgents&&l.id==='focus'&&size==='hero'?'<div class="agent-picker">'+navigator()+'</div>':'')+'<div class="drop-well"><div><div class="drop-icon">↗</div><h4>Copy to the selected pane</h4><p>Stage on its host. Keep the prompt editable.<br>Preview only / no file is uploaded.</p></div></div></div>';
+}
+function notify(text){$('toast').textContent=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').textContent='',3200)}
+function fillSelect(id,items){$(id).innerHTML=items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')}
+fillSelect('treatment',studies);fillSelect('layout',LAYOUTS);fillSelect('layout-b',LAYOUTS);fillSelect('theme',PALETTES);
+function render(){
+ persist();AGENTS[0].status=({working:'Working',approval:'Needs approval',transfer:'File delivered',offline:'Disconnected'})[settings.state]||'Working';const layout=LAYOUTS.find(l=>l.id===settings.layout),t=resolve(settings),study=studies.find(s=>s.id===settings.treatment);
+ for(const id of ['layout','treatment','theme','appearance','density'])$(id).value=settings[id];$('layout-b').value=settings.otherLayout;$('font').value=settings.font;$('split').value=settings.split;$('split-value').textContent=settings.split+'%';$('split-field').hidden=!['sidecar','stack'].includes(settings.layout);
+ $('contrast').checked=settings.contrast;$('sync').checked=settings.sync;$('accent').value=settings.accent||PALETTES.find(p=>p.id===settings.theme).base16.base0D;
+ $('theme-details-name').textContent=t.palette;$('layout-description').textContent=layout.description;$('description').textContent=study.description;
+ $('active-index').textContent='L'+String(LAYOUTS.indexOf(layout)+1).padStart(2,'0');$('active-title').textContent=layout.name;$('a-label').textContent='A / '+layout.name;$('variant-label').textContent=study.name+' · '+t.palette+' · '+t.variant;
+ $('treatment-note').textContent=layout.note;$('appearance-note').textContent=t.adapted?'Adapted '+t.variant+' study.':'Original '+t.variant+' palette.';
+ $('hero-a').innerHTML=workspace(settings.treatment,'hero');$('hero-b').innerHTML=settings.compare?workspace(settings.treatment,'hero',settings.otherLayout):'';
+ $('compare-panel').hidden=!settings.compare;$('previews').classList.toggle('compare',settings.compare);$('compare').setAttribute('aria-pressed',String(settings.compare));
+ $('contrast-readout').textContent='Text '+ratio(t.fg,t.bg).toFixed(1)+':1 · accent '+ratio(t.accent,t.bg).toFixed(1)+':1';
+ $('swatches').innerHTML=[t.bg,t.panel,t.fg,t.accent,t.success,t.warning].map(c=>'<i style="background:'+c+'"></i>').join('');
+ $('layout-gallery').innerHTML=LAYOUTS.map((l,i)=>'<article class="study '+(settings.layout===l.id?'chosen':'')+'"><div class="study-preview" tabindex="0" role="button" aria-label="Inspect '+l.name+' layout" data-choose-layout="'+l.id+'">'+workspace(settings.treatment,'mini',l.id)+'</div><div class="study-copy"><div class="caption-row"><div class="study-name"><span>L'+String(i+1).padStart(2,'0')+'</span><h3>'+l.name+'</h3></div><span class="pill">'+l.tag+'</span></div><p>'+l.description+'</p><div class="layout-tradeoff">'+l.tradeoff+'</div><div class="study-actions"><button data-choose-layout="'+l.id+'">Inspect ↗</button><button data-save-layout="'+l.id+'">＋ Shortlist</button><button data-compare-layout="'+l.id+'">Compare with A</button></div></div></article>').join('');
+ $('gallery').innerHTML=studies.map((s,i)=>'<article class="study '+(s.id===settings.treatment?'chosen':'')+'"><div class="study-preview" tabindex="0" role="button" aria-label="Inspect '+s.name+' surface" data-inspect="'+s.id+'">'+legacyWorkspace(s.id,'mini')+'</div><div class="study-copy"><div class="study-name"><span>'+String(i+1).padStart(2,'0')+'</span><h3>'+s.name+'</h3></div><p>'+s.description+'</p><div class="study-actions"><button data-inspect="'+s.id+'">Use surface ↗</button><button data-shortlist="'+s.id+'">＋ Shortlist</button></div></div></article>').join('');
+ $('palette-grid').innerHTML=PALETTES.map(p=>'<button class="palette-card" data-palette="'+p.id+'" aria-pressed="'+(p.id===settings.theme)+'"><strong>'+esc(p.name)+'</strong><small>'+p.variant+'</small><span class="swatches">'+['base00','base01','base05','base0D','base0B','base0A'].map(k=>'<i style="background:'+p.base16[k]+'"></i>').join('')+'</span></button>').join('');
+ $('tokens').innerHTML=['bg','panel','raised','fg','muted','accent','success','warning','error','border'].map(k=>'<span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+t[k]+';margin-right:5px"></i>'+k+' '+t[k]+'</span>').join('');
+ document.querySelectorAll('[data-state]').forEach(b=>b.setAttribute('aria-pressed',String(settings.state===b.dataset.state)));renderShortlist();
+}
+function renderShortlist(){
+ $('count').textContent=saved.length;$('empty-shortlist').hidden=!!saved.length;
+ $('shortlist-items').innerHTML=saved.map((s,i)=>'<div><button data-restore="'+i+'">'+esc(LAYOUTS.find(l=>l.id===s.layout).name)+' / '+esc(studies.find(x=>x.id===s.treatment).name)+' / '+esc(resolve(s).palette)+'</button><button data-remove="'+i+'" aria-label="Remove selection '+(i+1)+'">×</button></div>').join('');
+ ['export','copy','clear'].forEach(id=>$(id).disabled=!saved.length);
+}
+function shortlist(treatment=settings.treatment,layout=settings.layout){
+ const selection=Object.assign({},settings,{treatment,layout});for(const key of ['compare','state','other','otherLayout','showAgents'])delete selection[key];
+ const key=JSON.stringify(selection);if(saved.some(s=>JSON.stringify(s)===key)){notify('That combination is already saved.');return}saved.push(selection);persist();renderShortlist();notify('Saved '+LAYOUTS.find(l=>l.id===layout).name+' / '+studies.find(s=>s.id===treatment).name+'.');
+}
+function selectLayout(id){settings.layout=id;settings.showShell=null;settings.showAgents=false;render();document.querySelector('.lab').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'})}
+for(const id of ['treatment','theme','appearance','density'])$(id).addEventListener('change',e=>{settings[id]=e.target.value;if(id==='theme')settings.accent=null;render()});
+$('layout').addEventListener('change',e=>selectLayout(e.target.value));$('layout-b').addEventListener('change',e=>{settings.otherLayout=e.target.value;render()});
+for(const id of ['contrast','sync'])$(id).addEventListener('change',e=>{settings[id]=e.target.checked;render()});
+$('accent').addEventListener('input',e=>{settings.accent=e.target.value;render()});$('font').addEventListener('change',e=>{settings.font=Number(e.target.value);render()});$('split').addEventListener('input',e=>{settings.split=Number(e.target.value);render()});
+$('compare').addEventListener('click',()=>{settings.compare=!settings.compare;render()});$('reset').addEventListener('click',()=>{settings=Object.assign({},defaults);render();notify('Workbench reset. Your shortlist is still saved.')});$('save').addEventListener('click',()=>shortlist());
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button,[data-inspect],[data-choose-layout],[data-focus-agent]');if(!b)return;
+ if(b.dataset.chooseLayout)selectLayout(b.dataset.chooseLayout);
+ if(b.dataset.saveLayout)shortlist(settings.treatment,b.dataset.saveLayout);
+ if(b.dataset.compareLayout){settings.otherLayout=b.dataset.compareLayout;settings.compare=true;render();document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.inspect){settings.treatment=b.dataset.inspect;render();document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.shortlist)shortlist(b.dataset.shortlist);
+ if(b.dataset.palette){settings.theme=b.dataset.palette;settings.accent=null;render()}
+ if(b.dataset.state){settings.state=b.dataset.state;settings.activeAgent='codex';render()}
+ if(b.dataset.agent||b.dataset.focusAgent){settings.activeAgent=b.dataset.agent||b.dataset.focusAgent;settings.showAgents=false;render()}
+ if(b.dataset.agents){settings.showAgents=!settings.showAgents;render()}
+ if(b.dataset.shell){const layoutId=b.closest('.workspace')?.dataset.layout||settings.layout;settings.showShell=!shellVisible(LAYOUTS.find(l=>l.id===layoutId)||LAYOUTS[0],'hero');render()}
+ if(b.dataset.inspector){settings.inspector=!settings.inspector;render()}
+ if(b.dataset.inspectorTab){settings.inspectorTab=b.dataset.inspectorTab;render()}
+ if(b.dataset.file){settings.selectedFile=b.dataset.file;render()}
+ if(b.dataset.restore!==undefined){settings=Object.assign({},defaults,settings,saved[Number(b.dataset.restore)]);render();document.querySelector('.lab').scrollIntoView({behavior:'smooth',block:'start'})}
+ if(b.dataset.remove!==undefined){saved.splice(Number(b.dataset.remove),1);persist();renderShortlist()}
+ if(b.dataset.approve){settings.state='working';settings.activeAgent='codex';render();notify('Preview: decision recorded.')}
+});
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.study-preview')){e.preventDefault();e.target.click()}});
+let floatingDrag=null;
+document.addEventListener('pointerdown',e=>{
+ const header=e.target.closest('.hero .floating-shell .term-title');if(!header||e.target.closest('button'))return;
+ const frame=header.closest('.floating-shell'),area=frame.parentElement,rect=frame.getBoundingClientRect(),parent=area.getBoundingClientRect();
+ floatingDrag={header,frame,area,parent,dx:e.clientX-rect.left,dy:e.clientY-rect.top};header.setPointerCapture(e.pointerId);frame.classList.add('dragging-window');e.preventDefault();
+});
+document.addEventListener('pointermove',e=>{if(!floatingDrag)return;const d=floatingDrag;const x=Math.max(0,Math.min(d.parent.width-d.frame.offsetWidth,e.clientX-d.parent.left-d.dx)),y=Math.max(0,Math.min(d.parent.height-d.frame.offsetHeight,e.clientY-d.parent.top-d.dy));d.frame.style.left=x+'px';d.frame.style.top=y+'px'});
+document.addEventListener('pointerup',()=>{if(!floatingDrag)return;const d=floatingDrag;settings.floatPos={x:d.frame.offsetLeft/d.parent.width,y:d.frame.offsetTop/d.parent.height};d.frame.classList.remove('dragging-window');floatingDrag=null;persist()});
+document.addEventListener('dragover',e=>{const w=e.target.closest('.hero');if(w){e.preventDefault();e.dataTransfer.dropEffect='copy';w.classList.add('dragging')}});
+document.addEventListener('dragleave',e=>{const w=e.target.closest('.hero');if(w&&!w.contains(e.relatedTarget))w.classList.remove('dragging')});
+window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>{e.preventDefault();document.querySelectorAll('.dragging').forEach(w=>w.classList.remove('dragging'));if(!e.target.closest('.hero'))return;const file=e.dataTransfer.files[0];if(file){droppedName=file.name;settings.state='transfer';settings.activeAgent='codex';render();notify('Preview only: '+file.name+' was not uploaded or opened.')}});
+$('clear').addEventListener('click',()=>{saved=[];persist();renderShortlist();notify('Shortlist cleared.')});
+function exportData(){return {product:'STAR/MUX',version:2,createdAt:new Date().toISOString(),scope:'layout and surface selections; not live application configuration',selections:saved.map(s=>Object.assign({},s,{name:LAYOUTS.find(l=>l.id===s.layout).name+' / '+studies.find(t=>t.id===s.treatment).name,layoutName:LAYOUTS.find(l=>l.id===s.layout).name,tokens:resolve(s)}))}}
+$('export').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportData(),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='starmux-layout-shortlist.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
+$('copy').addEventListener('click',async()=>{const brief=exportData().selections.map((s,i)=>(i+1)+'. '+s.name+' / '+s.tokens.palette+' / '+s.tokens.variant+' / '+s.font+'px / '+s.density).join('\n');try{await navigator.clipboard.writeText(brief);notify('Layout brief copied.')}catch(e){const a=document.createElement('textarea');a.value=brief;document.body.append(a);a.select();const ok=document.execCommand('copy');a.remove();notify(ok?'Layout brief copied.':'Clipboard unavailable. Export selections instead.')}});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(settings.appearance==='system')render()});render();
+
+</script>
+</body>
+</html>
