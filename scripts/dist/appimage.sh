@@ -81,7 +81,7 @@ GStreamer source archive URLs and SHA-256 hashes are in build-sources.sh.
 Runtime libraries remain dynamically linked; the packaged shared objects can be replaced.
 NOTICE
 # Hash the payload, so changed dependency bytes never reuse an older cache.
-build=$(find "$appdir/usr" -type f -exec sha256sum {} + | sed "s|$appdir/||" | sort | sha256sum | cut -c1-24)
+build=$({ find "$appdir/usr" -type f -exec sha256sum {} + | sed "s|$appdir/||"; sha256sum packaging/AppRun; } | sort | sha256sum | cut -c1-24)
 sed "s/@BUILD@/$ver-$arch-$build/g" packaging/AppRun > "$appdir/AppRun"
 chmod +x "$appdir/AppRun"
 case "$arch" in

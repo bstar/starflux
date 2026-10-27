@@ -40,6 +40,15 @@ if [ "${1-}" = --check-bundle ]; then
     starmux-pty-proxy --help
     python3 -c 'import ctypes, fcntl, hashlib, json, socket, ssl, termios; print("Bundled Python ready")'
     tmux -V
+    # Private fake terminal only: no GUI and no existing workspace/server.
+    PROOF=starmux-bundle-proof-$$
+    trap 'tmux -L "$PROOF" kill-server 2>/dev/null || true' EXIT HUP INT TERM
+    tmux -L "$PROOF" -f /dev/null new-session -d -s proof 'sleep 10'
+    tmux -L "$PROOF" set-option -g allow-passthrough on
+    tmux -L "$PROOF" set-option -g extended-keys on
+    tmux -L "$PROOF" kill-server
+    trap - EXIT HUP INT TERM
+    dbus-run-session -- python3 -c 'import os; assert os.environ.get("DBUS_SESSION_BUS_ADDRESS"); print("Private D-Bus ready")'
     pactl --version
     parec --version
     gst-inspect-1.0 x264enc >/dev/null
