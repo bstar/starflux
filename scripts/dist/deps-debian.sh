@@ -11,7 +11,7 @@ apt-get install -y -qq --no-install-recommends \
   libglib2.0-dev libx264-dev liborc-0.4-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-bad gstreamer1.0-libav \
   python3 python3-pip python3-dev ninja-build patchelf squashfs-tools \
-  tmux openssh-client pulseaudio-utils dbus dbus-x11 xkb-data
+  libevent-dev libncurses-dev bison tmux openssh-client pulseaudio-utils dbus dbus-x11 xkb-data
 # Lock both the Rust compiler and the source dependencies in the portable build.
 if ! command -v rustup >/dev/null; then
   curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --no-modify-path
@@ -32,6 +32,7 @@ while read -r component digest; do
   curl --retry 5 -fsSL "https://gstreamer.freedesktop.org/src/$component/$archive" -o "$source_work/$archive"
   printf '%s  %s\n' "$digest" "$source_work/$archive" | sha256sum -c -
   tar -xJf "$source_work/$archive" -C "$source_work"
+  install -Dm644 "$source_work/$component-1.24.13/COPYING" "/usr/local/share/licenses/starmux/$component.COPYING"
   extra=()
   case "$component" in
     gstreamer) extra=(-Dtools=enabled) ;;
@@ -50,3 +51,11 @@ gst-plugins-base 31a4a34e02df0471274fd0e8016495475b670320d20a3349faf0634340166c4
 gst-plugins-ugly dc08bb11dce0a43453466fb9034e4fe06709fb5af68475bcf6d288693b661a5d
 SOURCES
 rm -rf "$source_work"
+
+# Native terminal transport needs extended-keys and allow-passthrough (tmux >=3.3).
+tmux_work=$(mktemp -d)
+curl --retry 5 -fsSL https://github.com/tmux/tmux/releases/download/3.5a/tmux-3.5a.tar.gz -o "$tmux_work/tmux.tar.gz"
+printf '%s  %s\n' 16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951 "$tmux_work/tmux.tar.gz" | sha256sum -c -
+tar -xzf "$tmux_work/tmux.tar.gz" -C "$tmux_work"
+(cd "$tmux_work/tmux-3.5a" && ./configure --prefix=/usr/local && make -j "$(nproc)" && make install)
+rm -rf "$tmux_work"

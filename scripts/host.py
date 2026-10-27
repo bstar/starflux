@@ -58,6 +58,15 @@ def main():
     if not re.fullmatch(r'starmux-[a-zA-Z0-9_-]{1,88}',server):raise ValueError('Invalid terminal server')
     target=pane+':0.0'
     tm=['tmux','-L',server,'-f','/dev/null']
+    def shell_command(argv):
+        # The AppImage's tools are private to its controller. Project commands
+        # must find the host's Python, codecs and audio configuration.
+        if 'STARMUX_SYSTEM_PATH' in os.environ:
+            clean=['/usr/bin/env']
+            for key in ['GST_PLUGIN_SYSTEM_PATH_1_0','GST_PLUGIN_SCANNER','GST_REGISTRY','ALSA_CONFIG_DIR','ALSA_CONFIG_PATH','ALSA_PLUGIN_DIR']:
+                clean+=['-u',key]
+            argv=clean+['PATH='+os.environ['STARMUX_SYSTEM_PATH']]+argv
+        return shlex.join(argv)
     def run(*args,**kw):
         result=subprocess.run(tm+list(args),stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kw)
         if result.returncode:
@@ -80,14 +89,17 @@ def main():
             try:
                 old=shlex.split(info[2]) if info[1]=='1' else [s.decode() for s in pathlib.Path('/proc/'+info[0]+'/cmdline').read_bytes().split(b'\0') if s]
                 if info[1]=='1' and len(old)==1:old=shlex.split(old[0])
+                if info[1]=='1' and 'STARMUX_SYSTEM_PATH' in os.environ:
+                    prefix=shlex.split(shell_command([]))
+                    if old[:len(prefix)]==prefix:old=old[len(prefix):]
             except (OSError,ValueError,UnicodeError):old=[]
             # Never replace a shell or real harness, even in a legacy workspace.
             if len(old)==3 and pathlib.Path(old[0]).name=='starmux' and old[1:]==['--fixture',workspace]:
-                run('respawn-pane','-k','-t',target,'-c',cwd,shlex.join(argv))
+                run('respawn-pane','-k','-t',target,'-c',cwd,shell_command(argv))
                 run('set-option','-p','-u','-t',target,'@starmux_state')
                 replaced=True
         if not exists():
-            run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',shlex.join(argv))
+            run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',shell_command(argv))
             run('set-option','-g','status','off')
             run('set-option','-g','mouse','off')
             run('set-option','-g','history-limit','20000')
@@ -106,7 +118,7 @@ def main():
         dead=run('display-message','-p','-t',target,'#{pane_dead}').decode().strip()
         if dead!='1':raise ValueError('The existing session is still running; it was not restarted')
         argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']
-        run('respawn-pane','-t',target,'-c',os.path.expanduser(req.get('directory') or '~'),shlex.join(argv))
+        run('respawn-pane','-t',target,'-c',os.path.expanduser(req.get('directory') or '~'),shell_command(argv))
         print(json.dumps({'restarted':True}))
     elif action=='attach':
         run('set-option','-w','-t',target,'window-size','smallest')

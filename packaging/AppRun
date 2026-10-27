@@ -23,7 +23,9 @@ if [ "$HERE" != "$DEST" ]; then
     fi
     exec "$DEST/AppRun" "$@"
 fi
-export PATH="$HERE/usr/bin:$PATH"
+export STARMUX_SYSTEM_PATH="${STARMUX_SYSTEM_PATH:-$PATH}"
+export PATH="$HERE/usr/bin:$STARMUX_SYSTEM_PATH"
+export TERMINFO_DIRS="$HERE/usr/share/terminfo${TERMINFO_DIRS:+:$TERMINFO_DIRS}:/usr/share/terminfo:/lib/terminfo"
 export GST_PLUGIN_SYSTEM_PATH_1_0="$HERE/usr/lib/gstreamer-1.0"
 export GST_PLUGIN_SCANNER="$HERE/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
 export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/starmux/gst-$BUILD.bin"

@@ -890,6 +890,19 @@ impl State {
             let args = shell_words::split(&launch.command).context("Invalid command quoting")?;
             let program = args.first().context("Enter an application command")?;
             let mut command = Command::new(program);
+            if let Some(path) = std::env::var_os("STARMUX_SYSTEM_PATH") {
+                command.env("PATH", path);
+                for key in [
+                    "GST_PLUGIN_SYSTEM_PATH_1_0",
+                    "GST_PLUGIN_SCANNER",
+                    "GST_REGISTRY",
+                    "ALSA_CONFIG_DIR",
+                    "ALSA_CONFIG_PATH",
+                    "ALSA_PLUGIN_DIR",
+                ] {
+                    command.env_remove(key);
+                }
+            }
             command
                 .args(&args[1..])
                 .current_dir(if launch.directory == std::path::Path::new("~") {

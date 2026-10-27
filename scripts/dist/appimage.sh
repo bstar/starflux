@@ -19,9 +19,19 @@ for executable in starmux starmux-terminal-client starmux-pty-proxy; do
     install -m755 "$bin/$executable" "$appdir/usr/bin/"
 done
 # Internal process management and audio capture work without distro packages.
-for executable in tmux pactl parec dbus-run-session dbus-daemon dbus-launch; do
+for executable in tmux pactl parec dbus-daemon dbus-launch; do
     install -m755 "$(command -v "$executable")" "$appdir/usr/bin/"
 done
+install -m755 /usr/bin/dbus-run-session "$appdir/usr/libexec/dbus-run-session"
+cat > "$appdir/usr/bin/dbus-run-session" <<'DBUS'
+#!/bin/sh
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+exec "$HERE/libexec/dbus-run-session" --dbus-daemon="$HERE/bin/dbus-daemon" --config-file="$HERE/share/dbus-1/session.conf" "$@"
+DBUS
+chmod +x "$appdir/usr/bin/dbus-run-session"
+install -Dm644 /usr/share/dbus-1/session.conf "$appdir/usr/share/dbus-1/session.conf"
+mkdir -p "$appdir/usr/share/terminfo"
+for directory in /usr/share/terminfo /lib/terminfo; do cp -a "$directory/." "$appdir/usr/share/terminfo/"; done
 install -m755 /usr/bin/python3.9 "$appdir/usr/libexec/python3.9"
 cp -a /usr/lib/python3.9 "$appdir/usr/lib/"
 find "$appdir/usr/lib/python3.9" -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -48,6 +58,8 @@ cp "$appdir/starmux.svg" "$appdir/.DirIcon"
 install -Dm644 packaging/starmux.desktop "$appdir/usr/share/applications/starmux.desktop"
 install -Dm644 packaging/starmux.svg "$appdir/usr/share/icons/hicolor/scalable/apps/starmux.svg"
 cp -a /usr/share/alsa "$appdir/usr/share/"
+cp -R /usr/local/share/licenses/starmux/. "$appdir/usr/share/doc/starmux/third-party/"
+curl --retry 5 -fsSL https://raw.githubusercontent.com/bstar/starkit/f60a8fb3ffb41a5625c0c3d43e97394f2249ce61/LICENSE -o "$appdir/usr/share/doc/starmux/third-party/STAR-KIT-LICENSE"
 cp README.md LICENSE "$appdir/usr/share/doc/starmux/"
 cp -R docs "$appdir/usr/share/doc/starmux/"
 python3 scripts/dist/bundle-libraries.py "$appdir"
