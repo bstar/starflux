@@ -1,4 +1,5 @@
 /target/
 /.cargo/
 /result
+/dist/
 __pycache__/

@@ -1,6 +1,12 @@
 # S T A R / M U X
 
+[![CI](https://github.com/bstar/starmux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bstar/starmux/actions/workflows/ci.yml)
+[![Release builds](https://github.com/bstar/starmux/actions/workflows/release.yml/badge.svg)](https://github.com/bstar/starmux/actions/workflows/release.yml)
+[![Arch package](https://github.com/bstar/starmux/actions/workflows/arch.yml/badge.svg)](https://github.com/bstar/starmux/actions/workflows/arch.yml)
+
 An agent workspace built with STAR/KIT, with Kitty-rendered terminal panes, persistent local and SSH sessions, and private graphical app desktops.
+
+Download packaged builds from [GitHub Releases](https://github.com/bstar/starmux/releases). See the [release and installation notes](docs/releases/0.1.0.md) for platform requirements.
 
 The App Shelf workspace keeps a project’s agent, terminal tabs and application desktops together, with a persistent project sidebar instead of a paged tab strip. It uses single borders, a drafting grid and shared chrome/terminal themes. New projects open a shell. Run Codex or another supported agent in any terminal; STAR/MUX tracks it automatically.
 

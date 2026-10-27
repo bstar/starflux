@@ -1,0 +1,52 @@
+name: Arch package
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: archlinux:latest
+    steps:
+      - name: Install native toolchain and runtime dependencies
+        run: >-
+          pacman -Syu --needed --noconfirm base-devel rust git clang pkgconf python
+          ffmpeg alsa-lib alsa-plugins gstreamer gst-plugins-base gst-plugins-good
+          gst-plugins-bad gst-plugins-ugly gst-libav glib2 wayland libxkbcommon libdrm
+          mesa libglvnd libpulse tmux openssh xorg-xwayland dbus kitty
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare private unprivileged builder
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+      - name: Build and test package
+        run: runuser -u builder -- scripts/dist/arch.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: starmux-arch
+          path: |
+            dist/*.pkg.tar.zst
+            dist/PKGBUILD
+            dist/starmux-*.tar.gz
+          if-no-files-found: error
+  install:
+    needs: package
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: starmux-arch
+      - name: Install in a clean distribution
+        run: |
+          pacman -Syu --noconfirm
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          starmux --version
+          starmux --themes
+          starmux-terminal-client --help
+          starmux-pty-proxy --help
+          test -f /usr/share/applications/starmux.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/starmux.svg
+          test -f /usr/share/licenses/starmux/LICENSE

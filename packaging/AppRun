@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+umask 077
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+# Controllers and PTY brokers survive the frontend. Run from a durable private
+# cache, never from the temporary AppImage FUSE mount/extraction directory.
+BUILD=@BUILD@
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/starmux/appimage
+DEST=$CACHE/$BUILD
+if [ "$HERE" != "$DEST" ]; then
+    mkdir -p "$CACHE"
+    if [ ! -f "$DEST/.complete" ]; then
+        STAGE=$(mktemp -d "$CACHE/.stage-XXXXXXXX")
+        trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
+        cp -a "$HERE/." "$STAGE/"
+        touch "$STAGE/.complete"
+        # Atomic publication; another frontend may have populated this build.
+        if ! mv -T "$STAGE" "$DEST" 2>/dev/null; then
+            test -f "$DEST/.complete"
+            rm -rf "$STAGE"
+        fi
+        trap - EXIT HUP INT TERM
+    fi
+    exec "$DEST/AppRun" "$@"
+fi
+export PATH="$HERE/usr/bin:$PATH"
+export GST_PLUGIN_SYSTEM_PATH_1_0="$HERE/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SCANNER="$HERE/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
+export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/starmux/gst-$BUILD.bin"
+export ALSA_CONFIG_DIR="$HERE/usr/share/alsa"
+export ALSA_CONFIG_PATH="$HERE/usr/share/alsa/alsa.conf"
+export ALSA_PLUGIN_DIR="$HERE/usr/lib/alsa-lib"
+unset APPDIR
+# A safe headless diagnostic of the actual bundled tools and codec plugins.
+if [ "${1-}" = --check-bundle ]; then
+    starmux --version
+    starmux-terminal-client --help
+    starmux-pty-proxy --help
+    python3 -c 'import ctypes, fcntl, hashlib, json, socket, ssl, termios; print("Bundled Python ready")'
+    tmux -V
+    pactl --version
+    parec --version
+    gst-inspect-1.0 x264enc >/dev/null
+    gst-inspect-1.0 appsrc >/dev/null
+    gst-inspect-1.0 appsink >/dev/null
+    gst-launch-1.0 -q videotestsrc num-buffers=2 ! video/x-raw,width=64,height=64,framerate=60/1 ! videoconvert ! x264enc tune=zerolatency ! fakesink
+    exec starmux --themes
+fi
+exec "$HERE/usr/bin/starmux" "$@"
