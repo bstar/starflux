@@ -3,7 +3,12 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) exit 1 ;; esac
-. scripts/dist/deps-debian.sh
+if [ "${STARMUX_DIST_DEPS_READY:-0}" = 1 ]; then
+    # shellcheck source=/dev/null
+    . "$HOME/.cargo/env"
+else
+    . scripts/dist/deps-debian.sh
+fi
 ver=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
 mkdir -p dist
 work=$(mktemp -d)

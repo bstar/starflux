@@ -32,8 +32,22 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends ca-certificates curl git
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install frozen native dependencies
+        shell: bash
+        run: |
+          . scripts/dist/deps-debian.sh
+          printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          for key in PKG_CONFIG_PATH LD_LIBRARY_PATH GST_PLUGIN_SYSTEM_PATH_1_0 LIBCLANG_PATH; do
+            printf '%s=%s\n' "$key" "${!key}" >> "$GITHUB_ENV"
+          done
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: appimage-${{ matrix.arch }}-${{ hashFiles('scripts/dist/deps-debian.sh') }}
+          cache-on-failure: true
       - name: Build, test and package
         shell: bash
+        env:
+          STARMUX_DIST_DEPS_READY: '1'
         run: scripts/dist/appimage.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
