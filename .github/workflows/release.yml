@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   guard:
