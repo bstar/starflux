@@ -18,7 +18,12 @@
         package = pkgs.rustPlatform.buildRustPackage {
           pname = "starmux";
           version = cargoToml.package.version;
-          src = pkgs.lib.cleanSource ./.;
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            # Workflow-only edits cannot change the shipped program.
+            filter = path: type: pkgs.lib.cleanSourceFilter path type
+              && builtins.baseNameOf path != ".github";
+          };
           cargoLock.lockFile = ./Cargo.lock;
           cargoLock.allowBuiltinFetchGit = true;
           nativeBuildInputs = with pkgs; [ pkg-config clang makeWrapper ];
