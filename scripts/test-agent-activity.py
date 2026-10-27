@@ -23,18 +23,20 @@ ctypes.CDLL(None).prctl(15,ctypes.c_char_p(b'codex'),0,0,0)
 tty.setraw(0)
 def draw(state):
  height=os.get_terminal_size().lines
- status={'w':'Working (1s · esc to interrupt)','i':'› Type a request','a':'Would you like to run the following command?  Esc to cancel'}[state]
+ status={'w':'Working (1s · esc to interrupt)','i':'› Type a request','q':'Question 1/1\\n1. Option A\\n2. Option B\\nEnter to submit','h':'Press Enter to continue; Esc to cancel','a':'Would you like to run the following command?\\n1. Yes, proceed (y)\\n2. No, and tell Codex (esc)'}[state]
  os.write(1,('\\x1b[2J\\x1b[%d;1H%s'%(max(1,height-2),status)).encode())
 draw('w')
 while True:
  key=os.read(0,1).decode()
- if key in 'wia':draw(key)
+ if key in 'wiaqh':draw(key)
 ''')
     try:
         call('ensure',directory=str(temp),argv=['bash','-c','exec -a codex python3 '+shlex.quote(str(program))])
         working=wait('working');pid=working['pid']
-        for key,state in [('i','idle'),('a','waiting_for_input'),('w','working')]:
+        for key,state in [('i','idle'),('h','idle'),('a','waiting_for_approval'),('q','needs_input'),('w','working'),('i','idle')]:
             subprocess.run(['tmux','-L','starmux-'+name,'send-keys','-t','p1:0.0',key],check=True)
             assert wait(state)['pid']==pid
-        print(json.dumps({'passed':True,'working_idle_waiting_detected':True,'same_live_process':True,'conversation_text_not_exported':set(working)=={'alive','pid','command','state'}}))
+        allowed={'alive','exited','pid','command','agent','agent_pid','state','output_fingerprint'}
+        assert set(working)==allowed, 'Inspector exported unexpected fields: '+repr(set(working)-allowed)
+        print(json.dumps({'passed':True,'working_idle_waiting_detected':True,'same_live_process':True,'conversation_text_not_exported':True}))
     finally:call('stop')

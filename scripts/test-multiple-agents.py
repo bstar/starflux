@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real GPU terminal case handling and independent local/SSH agent sessions.
+"""Terminal-first local/SSH tracking of agents launched from ordinary shells.
 
 Only disposable projects and a private authenticated loopback SSH server are used.
 """
@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shlex
 import subprocess
 import tempfile
 import time
@@ -54,6 +55,10 @@ with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
     temp = Path(temp)
     address = 'unix:'+str(temp/'kitty.sock')
     def rc(*args, data=None):
+        if args[0]=='send-text' and data and not data.startswith(b'\x1b['):
+            data=b'\x1b[200~'+data+b'\x1b[201~'
+        if args[0] in ['send-text','send-key']:
+            args=(args[0],'--match','state:focused',*args[1:])
         return subprocess.check_output(['kitten', '@', '--to', address, *args], input=data, stderr=subprocess.PIPE, timeout=12)
     def click(x, y, right=False):
         b = 2 if right else 0
@@ -69,6 +74,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
         subprocess.run(['grim', '-g', f'{x},{y} {w}x{h}', str(out/name)], check=True)
     def rename(text):
         wait(lambda: state()['modal_open'], 'Rename dialog missing')
+        focus_cycle()
         rc('send-key', 'end', 'ctrl+u')
         rc('send-text', '--stdin', data=('\x1b[200~'+text+'\x1b[201~').encode())
         rc('send-key', 'enter')
@@ -86,86 +92,139 @@ with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
         daemon=subprocess.Popen(['/usr/bin/sshd', '-D', '-e', '-f', str(temp/'sshd_config')], stdout=subprocess.DEVNULL, stderr=(out/'sshd.log').open('w'), env={k:v for k,v in os.environ.items() if k!='NOTIFY_SOCKET'})
         children.append(daemon)
         wait(lambda: subprocess.run(['ssh','-F',str(sshconfig),'tools-host','true'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'SSH unavailable')
-        fixture=temp/'agent.py'
-        fixture.write_text('''import json,os,sys,termios,tty
+        fixture=temp/'codex'
+        fixture.write_text('''import json,os,sys,termios,tty,signal
 old=termios.tcgetattr(0);tty.setraw(0)
 def record(value):
  with open(sys.argv[1],'a') as f:f.write(json.dumps(dict(pid=os.getpid(),cwd=os.getcwd(),**value))+'\\n')
-record({'kind':'ready'})
-print('Agent input fixture '+str(os.getpid())+'\\r',flush=True)
+mode=False
+def draw(waiting=None):
+ global mode
+ if waiting is not None:mode=waiting
+ height=os.get_terminal_size().lines
+ status='Would you like to run this command?\\n1. Yes, proceed (y)\\n2. No, and tell Codex (esc)' if mode else 'Working (1s · esc to interrupt)'
+ os.write(1,('\\x1b[2J\\x1b[%d;1H%s'%(max(1,height-2),status)).encode())
+signal.signal(signal.SIGWINCH,lambda *_:draw())
+record({'kind':'ready'});os.write(1,b'\\x1b[?1049h');draw()
 try:
  while True:
   chunk=os.read(0,4096)
   if not chunk:break
   record({'kind':'input','hex':chunk.hex()})
-finally:termios.tcsetattr(0,termios.TCSANOW,old)
+  if b'\\x04' in chunk:break
+  if b'NEEDS_ATTENTION' in chunk:draw(True)
+  if b'WORKING_AGAIN' in chunk:draw(False)
+finally:
+ os.write(1,b'\\x1b[?1049l');termios.tcsetattr(0,termios.TCSANOW,old)
 ''')
         for i,name in enumerate(names):
             folder=temp/str(i);folder.mkdir()
-            cfg={'workspace':name,'collection':prefix,'label':'Local agents' if i==0 else 'SSH agents','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(folder),'agent':f'python3 {fixture} {temp}/{i}-input.jsonl','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+            cfg={'workspace':name,'collection':prefix,'label':'Local agents' if i==0 else 'SSH agents','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(folder),'agent':None,'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
             path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
         kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-agents-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER=os.environ.get('STAR_TERMINAL_RENDERER','kitty')),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
         children.append(kitty)
+        sink=subprocess.Popen(['/usr/bin/kitty','--class','starmux-focus-sink','--title','STAR/MUX focus acceptance','sleep','300'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        children.append(sink)
+        def focus_cycle(resize=False):
+            for process in [sink,kitty]:
+                def client():
+                    return next((c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['pid']==process.pid),None)
+                c=wait(client,'Focus test window missing')
+                subprocess.run(['hyprctl','eval',f'hl.dispatch(hl.dsp.focus({{window="address:{c["address"]}"}}))'],stdout=subprocess.DEVNULL,check=True)
+                wait(lambda:json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('pid')==process.pid,'Tiler did not change focus')
+                if resize:
+                    rc('set-font-size','--','+1' if process==sink else '-1')
+                time.sleep(.25)
         def records(i):
             path=temp/f'{i}-input.jsonl'
             return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
         def data(i,pid):
             return b''.join(bytes.fromhex(e['hex']) for e in records(i) if e['pid']==pid and e['kind']=='input')
         def agents():
-            return {e['pane']:e['health']['pid'] for e in state()['sessions'] if e['agent'] and e.get('health',{}).get('pid')}
-        identities={}
+            return {e['pane']:e['health']['agent_pid'] for e in state()['sessions'] if e['agent'] and (e.get('health') or {}).get('agent_pid')}
+        identities={};shells={}
         for i,name in enumerate(names):
             if i:action('project:'+name)
-            s=wait(lambda:state() if state()['active_project']==name and len(agents())==1 and (state().get('desktop',{}).get('project_windows') or state().get('direct_terminals')) else None,'Initial agent missing')
-            first=agents()[1]
-            wait(lambda:any(e['pid']==first for e in records(i)),'Agent fixture not ready')
+            s=wait(lambda:state() if state()['active_project']==name and len(state()['sessions'])==1 and (state()['sessions'][0].get('health') or {}).get('alive') else None,'Initial shell missing')
+            assert s['project_state']['terminal_first'] and s['project_state']['space']=='terminals'
+            assert s['project_state']['agents']==[] and agents()=={}
             side=s['project_navigation']['sidebar_width']
-            rc('send-key','ctrl+escape');click(side+80,250)
+            shell=state()['sessions'][0]['health']['pid']
+            command='python3 '+shlex.quote(str(fixture))+' '+shlex.quote(str(temp/f'{i}-input.jsonl'))+'\r'
+            rc('send-key','ctrl+escape');click(side+70,250)
+            rc('send-text','--stdin',data=command.rstrip('\r').encode());time.sleep(.8);rc('send-key','enter')
+            wait(lambda:0 in agents(),'Shell-launched Codex was not detected')
+            first=agents()[0]
+            assert first!=shell
+            wait(lambda:any(e['pid']==first for e in records(i)),'Agent fixture not ready')
+            wait(lambda:state()['project_activity'][name]['working']==1,'Shell agent did not drive project activity')
             payload=b'Case:aAzZ!@#$%^&*()_+{}:<>?END'
             rc('send-text','--stdin',data=payload)
             wait(lambda:payload in data(i,first),'Uppercase or punctuation bytes changed')
-            rc('send-key','shift+a','shift+z','shift+1')
-            wait(lambda:b'AZ!' in data(i,first),'Explicit Shift key events lost their level')
-            rc('send-key','ctrl+a','alt+x','ctrl+c')
-            wait(lambda:b'\x01\x1bx\x03' in data(i,first),'Control/Alt shortcuts changed')
-            # An uppercase letter must not leave synthetic Shift stuck for later text.
-            rc('send-text','--stdin',data=b'Abc_123z')
-            wait(lambda:b'Abc_123z' in data(i,first),'Shift remained stuck after uppercase input')
+            rc('send-key','shift+a','shift+z','shift+1','ctrl+a','alt+x','ctrl+c')
+            wait(lambda:b'AZ!' in data(i,first) and b'\x01\x1bx\x03' in data(i,first),'Shift/Control/Alt forwarding changed')
+            focus_cycle(resize=True)
+            rc('send-text','--stdin',data=b'AFTER_WINDOW_SWITCH')
+            wait(lambda:b'AFTER_WINDOW_SWITCH' in data(i,first),'Terminal did not regain focus')
             before=data(i,first)
-            rc('send-key','ctrl+escape');click(s['viewport']['width']-65,183)
-            s=wait(lambda:state() if len(agents())==2 and state()['project_state']['agent']!=1 else None,'+ Agent did not create another agent')
-            second_id=s['project_state']['agent'];second=agents()[second_id]
-            assert second!=first and s['project_state']['agents']==[1,second_id]
-            wait(lambda:any(e['pid']==second for e in records(i)),'Second agent fixture not ready')
-            assert all(e['cwd']==str(temp/str(i)) for e in records(i))
-            click(side+80,250);rc('send-text','--stdin',data=b'SECOND_ONLY')
-            wait(lambda:b'SECOND_ONLY' in data(i,second),'Second agent did not receive input')
-            assert data(i,first)==before,'New agent input reached the original session'
-            action('agent:1');wait(lambda:state()['project_state']['agent']==1,'First agent could not be selected')
-            rc('send-key','ctrl+escape');click(side+80,250);rc('send-text','--stdin',data=b'FIRST_ONLY')
+            rc('send-key','ctrl+escape');click(state()['viewport']['width']-140,183)
+            wait(lambda:state()['project_state']['terminal']==1 and len(state()['sessions'])==2,'+ Tab did not open a shell')
+            wait(lambda:any(e['pane']==1 and (e.get('health') or {}).get('alive') for e in state()['sessions']),'Second shell missing')
+            assert 1 not in agents()
+            rc('send-key','ctrl+escape');click(side+70,250)
+            rc('send-text','--stdin',data=command.rstrip('\r').encode());time.sleep(.8);rc('send-key','enter')
+            wait(lambda:len(agents())==2,'Codex launched in the second terminal was not detected')
+            second=agents()[1];assert second!=first
+            assert data(i,first)==before,'Second terminal input reached the first agent'
+            rc('send-text','--stdin',data=b'SECOND_ONLY')
+            wait(lambda:b'SECOND_ONLY' in data(i,second),'Second Codex session lost input')
+            action('terminal:0');focus_cycle()
+            rc('send-text','--stdin',data=b'FIRST_ONLY')
             wait(lambda:b'FIRST_ONLY' in data(i,first),'First agent input missing')
             assert b'FIRST_ONLY' not in data(i,second)
-            action('agent:'+str(second_id));wait(lambda:state()['project_state']['agent']==second_id,'Second agent could not be selected')
-            # Rename the second agent using its context menu.
-            rc('send-key','ctrl+escape');click(side+210,183,right=True)
-            wait(lambda:state().get('context_menu'),'Agent context menu missing')
+            # Every tab uses the same menu, regardless of its current process.
+            rc('send-key','ctrl+escape');click(side+70,183,right=True)
+            menu=wait(lambda:state().get('context_menu'),'Terminal menu missing')
+            assert not any('agent' in item['label'].lower() for item in menu['items'])
             rc('send-key','down','enter');rename('Review / test')
-            wait(lambda:state()['project_state']['agent_labels'].get(str(second_id))=='Review / test','Agent label missing')
-            action('terminal:new')
-            s=wait(lambda:state() if len(state()['project_state']['terminals'])==2 else None,'Terminal creation failed')
-            assert not set(s['project_state']['terminals']) & set(s['project_state']['agents'])
-            action('view:agent');wait(lambda:state()['project_state']['space']=='agent','Agent view missing')
-            identities[name]=dict(agents());assert len(identities[name])==2
+            assert state()['project_state']['terminal_labels']['0']=='Review / test'
+            focus_cycle();rc('send-text','--stdin',data=b'NEEDS_ATTENTION')
+            wait(lambda:any(e['pane']==0 and (e.get('health') or {}).get('state')=='waiting_for_approval' for e in state()['sessions']),'Waiting agent status missing')
+            rc('send-text','--stdin',data=b'WORKING_AGAIN')
+            wait(lambda:state()['project_activity'][name]['working']==2,'Both shell agents were not tracked')
+            action('terminal:split');wait(lambda:state()['project_state']['split'],'Split missing')
+            focus_cycle();rc('send-text','--stdin',data=b'SPLIT_SELECTED_ONLY')
+            wait(lambda:b'SPLIT_SELECTED_ONLY' in data(i,first),'Selected split terminal lost focus')
+            assert b'SPLIT_SELECTED_ONLY' not in data(i,second)
+            action('terminal:close-pane');wait(lambda:not state()['project_state']['split'],'Close pane failed')
+            assert len(agents())==2
+            action('terminal:0');focus_cycle();rc('send-key','ctrl+d')
+            wait(lambda:any(e['pane']==0 and (e.get('health') or {}).get('alive') and e['health'].get('agent') is None for e in state()['sessions']),'Agent badge did not clear after Codex returned to its shell')
+            assert next(e['health']['pid'] for e in state()['sessions'] if e['pane']==0)==shell
+            rc('send-text','--stdin',data=command.rstrip('\r').encode());time.sleep(.8);rc('send-key','enter')
+            wait(lambda:0 in agents() and agents()[0]!=first,'Agent was not rediscovered in the same shell')
+            first=agents()[0]
+            assert state()['project_state']['agents']==[], 'Detection created designated agent slots'
+            assert all(e['cwd']==str(temp/str(i)) for e in records(i))
+            identities[name]=dict(agents())
+            shells[name]={e['pane']:e['health']['pid'] for e in state()['sessions']}
             screenshot('local-agents.png' if i==0 else 'ssh-agents.png')
-        controller=state()['controller_pid'];invoke(names[0],'--close');time.sleep(.5)
+        # Reopen an authentic legacy layout over the existing live terminals.
+        action('project:'+names[0]);action('terminal:1')
+        old=state()['controller_pid'];invoke(names[0],'--close');time.sleep(.6)
+        layout=data_root/(names[0]+'.layout.json');legacy=json.loads(layout.read_text())
+        legacy.pop('terminal_first',None);legacy.update(space='agent',agent=1,agents=[1],terminal=0,terminals=[0],agent_labels={'1':'Legacy conversation'})
+        layout.write_text(json.dumps(legacy))
+        for root in [runtime,data_root]:
+            path=root/(names[0]+'.json');cfg=json.loads(path.read_text());cfg['agent']='python3 '+shlex.quote(str(fixture))+' '+shlex.quote(str(temp/'0-input.jsonl'));path.write_text(json.dumps(cfg))
         rc('launch','--type=tab',str(app),'--workspace',names[0])
-        wait(lambda:state()['controller_pid']!=controller,'Controller did not reopen')
-        for i,name in enumerate(names):
-            action('project:'+name)
-            wait(lambda:state()['active_project']==name and agents()==identities[name],'Agent processes changed after restart')
-            assert state()['project_state']['agent_labels']['2']=='Review / test'
-            assert {e['pid'] for e in records(i) if e['kind']=='ready'}==set(identities[name].values())
-        result={'passed':True,'terminal_renderer':state()['terminal_renderer'],'uppercase_and_shifted_punctuation':True,'control_alt_shortcuts':True,'synthetic_shift_released':True,'two_independent_agents_per_project':True,'same_project_directory':True,'agent_context_menu_and_rename':True,'session_ids_and_pids_survive_restart':True,'local_and_ssh_agent_pids':identities,'ssh_scope':'authenticated loopback SSH','original_herdr_sessions_touched':False}
+        wait(lambda:state()['controller_pid']!=old and state()['project_state']['terminal_first'],'Legacy layout did not migrate')
+        assert state()['project_state']['space']=='terminals' and state()['project_state']['terminal']==1
+        for name in names:
+            action('project:'+name);wait(lambda:state()['active_project']==name and len(agents())==2,'Retained agents missing')
+            assert dict(agents())==identities[name],'Migration/reopen replaced a running agent'
+            assert {e['pane']:e['health']['pid'] for e in state()['sessions']}==shells[name]
+        result={'passed':True,'new_project_starts_in_one_shell':True,'no_designated_agent_controls':True,'shell_launched_agents_detected_in_any_tab':True,'independent_codex_sessions_in_same_directory':True,'working_and_waiting_status':True,'agent_exit_clears_badge_and_shell_survives':True,'agent_restart_in_same_shell_detected':True,'uppercase_and_modifiers':True,'window_focus_and_split_input':True,'terminal_rename_and_close_pane':True,'legacy_layout_migration_preserves_live_pids':True,'local_and_authenticated_ssh':True,'original_herdr_sessions_touched':False}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
     except BaseException:
         try:(out/'failure-state.json').write_text(json.dumps(state(),indent=2))

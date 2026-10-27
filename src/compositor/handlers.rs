@@ -110,7 +110,11 @@ impl SeatHandler for State {
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
-    fn cursor_image(&mut self, _: &Seat<Self>, _: CursorImageStatus) {}
+    fn cursor_image(&mut self, _: &Seat<Self>, status: CursorImageStatus) {
+        let hidden = !matches!(status, CursorImageStatus::Named(_));
+        self.cursor_status = status;
+        let _ = self.events.send(DesktopEvent::CursorHidden(hidden));
+    }
     fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&WlSurface>) {
         set_data_device_focus(
             &self.dh,

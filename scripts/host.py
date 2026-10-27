@@ -1,13 +1,52 @@
 """One-shot host helper. Payload is base64 JSON, file bytes use stdin."""
-import base64, hashlib, json, os, pathlib, re, shlex, subprocess, sys, tempfile
+import base64, fcntl, hashlib, json, os, pathlib, re, shlex, subprocess, sys, tempfile
+
+def agent_family(args):
+    families={'codex':'codex','claude':'claude','claude-code':'claude','gemini':'gemini','gemini-cli':'gemini','opencode':'opencode','aider':'aider'}
+    for arg in args[:2]:
+        path=pathlib.PurePath(arg)
+        names=[path.name]
+        if 'node_modules' in path.parts:
+            names.extend(path.parts[path.parts.index('node_modules')+1:])
+        for name in names:
+            name=name.removesuffix('.js').removesuffix('.mjs').lower()
+            if name in families:return families[name]
+    return None
+
+def foreground_agent(pid, tty, command):
+    # Follow this terminal's process tree, filtering out background jobs. The
+    # command line is inspected on its host; only the family name is exported.
+    try:
+        foreground=int((pathlib.Path('/proc')/str(pid)/'stat').read_text().rsplit(')',1)[1].split()[5])
+        pending=[int(pid)];seen=set()
+        while pending and len(seen)<64:
+            current=pending.pop()
+            if current in seen:continue
+            seen.add(current);root=pathlib.Path('/proc')/str(current)
+            try:
+                info=(root/'stat').read_text();stat=info.rsplit(')',1)[1].split()
+                if int(stat[2])==foreground:
+                    args=[s.decode(errors='replace') for s in (root/'cmdline').read_bytes().split(b'\0') if s]
+                    family=agent_family(args) or agent_family([info.partition('(')[2].rsplit(')',1)[0]])
+                    if family:return family,current
+                pending.extend(map(int,(root/'task'/str(current)/'children').read_text().split()))
+            except (OSError,ValueError,IndexError):continue
+    except (OSError,ValueError):pass
+    return agent_family([command]),None
 
 def activity_from_screen(text):
     # Only inspect the status footer, never publish conversation contents.
-    footer='\n'.join(text.splitlines()[-12:]).lower()
-    if 'esc to interrupt' in footer:
+    footer='\n'.join(text.splitlines()[-32:]).lower()
+    choice=r'(?m)^\s*[│┃|>›❯●* ]*(?:\d+[.)]|[yn]\))\s*'
+    yes=re.search(choice+r'(?:yes\b|allow once\b)',footer)
+    no=re.search(choice+r"(?:no\b|don't allow\b|deny this\b)",footer)
+    question=re.search(r'(?m)^\s*[│┃|>›❯●* ]*(?:question[ :]|user input requested)',footer)
+    if question and re.search(choice,footer) and any(hint in footer for hint in ['enter to submit','enter to confirm','enter to select']):
+        return 'needs_input'
+    if yes and no and ('esc' in footer or 'enter' in footer):
+        return 'waiting_for_approval'
+    if re.search(r'\([0-9.]+[hms0-9. ]*[^)\n]{0,48}esc to interrupt\)',footer):
         return 'working'
-    if any(hint in footer for hint in ['would you like to run', 'needs your approval', 'approve this', 'esc to cancel', 'press enter to confirm']):
-        return 'waiting_for_input'
     return 'idle'
 
 def main():
@@ -15,12 +54,24 @@ def main():
     workspace=req['workspace']; pane=req.get('pane','p0')
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,32}',workspace) or not re.fullmatch(r'p(?:[0-9]|[12][0-9]|3[01])',pane):
         raise ValueError('Invalid workspace or pane')
-    server='starmux-'+workspace; target=pane+':0.0'
+    server=req.get('server') or 'starmux-'+workspace
+    if not re.fullmatch(r'starmux-[a-zA-Z0-9_-]{1,88}',server):raise ValueError('Invalid terminal server')
+    target=pane+':0.0'
     tm=['tmux','-L',server,'-f','/dev/null']
-    def run(*args,**kw):return subprocess.run(tm+list(args),check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kw).stdout
+    def run(*args,**kw):
+        result=subprocess.run(tm+list(args),stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kw)
+        if result.returncode:
+            raise RuntimeError('tmux '+args[0]+': '+result.stderr.decode(errors='replace').strip())
+        return result.stdout
     def exists():return subprocess.run(tm+['has-session','-t',pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
     action=req['action']
-    if action=='ensure':
+    lifecycle_lock=None
+    if action in ['ensure','restart','reap','stop'] or (action=='attach' and req.get('ensure_shell')):
+        lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starmux-host-'+str(os.getuid()))
+        lock_root.mkdir(mode=0o700,exist_ok=True)
+        lifecycle_lock=(lock_root/(workspace+'-'+pane+'.lock')).open('a')
+        fcntl.flock(lifecycle_lock,fcntl.LOCK_EX)
+    if action=='ensure' or (action=='attach' and req.get('ensure_shell')):
         replaced=False
         cwd=os.path.expanduser(req.get('directory') or '~')
         argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']
@@ -45,30 +96,45 @@ def main():
             run('set-option','-g','remain-on-exit','on')
             run('set-option','-g','set-clipboard','on')
             run('set-option','-g','default-terminal','tmux-256color')
+        run('set-option','-w','-t',target,'window-size','smallest')
+        if action=='attach':
+            lifecycle_lock.close()
+            os.execvp('tmux',tm+['attach-session','-t',pane])
         print(json.dumps({'session':pane,'server':server,'replaced_fixture':replaced}))
     elif action=='restart':
         if not exists():raise ValueError('Session is missing; attach it first')
         dead=run('display-message','-p','-t',target,'#{pane_dead}').decode().strip()
         if dead!='1':raise ValueError('The existing session is still running; it was not restarted')
-        argv=req.get('argv') or ['codex']
+        argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']
         run('respawn-pane','-t',target,'-c',os.path.expanduser(req.get('directory') or '~'),shlex.join(argv))
         print(json.dumps({'restarted':True}))
     elif action=='attach':
+        run('set-option','-w','-t',target,'window-size','smallest')
         os.execvp('tmux',tm+['attach-session','-t',pane])
     elif action=='inspect':
         if not exists():print(json.dumps({'alive':False,'state':'missing'}));return
-        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{@starmux_state}\t#{pane_height}').decode().strip().split('\t')
-        state=fields[3] if fields[3] else 'unknown'
-        if state=='unknown' and fields[1]=='0' and any(h in fields[2].lower() for h in ['codex','claude']):
-            height=int(fields[4])
-            footer=run('capture-pane','-p','-t',target,'-S',str(max(0,height-12)),'-E',str(height-1)).decode(errors='replace')
-            state=activity_from_screen(footer)
-        print(json.dumps({'alive':fields[1]=='0','pid':int(fields[0]),'command':fields[2],'state':state}))
+        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{@starmux_state}\t#{pane_height}\t#{pane_tty}').decode().strip().split('\t')
+        screen=run('capture-pane','-p','-t',target) if fields[1]=='0' else b''
+        agent,agent_pid=foreground_agent(fields[0],fields[5],fields[2]) if fields[1]=='0' else (None,None)
+        state=fields[3] if fields[3] and agent else 'unknown'
+        if agent in ['codex','claude'] or (state=='unknown' and agent):
+            state=activity_from_screen(screen.decode(errors='replace'))
+        print(json.dumps({'alive':fields[1]=='0','exited':fields[1]=='1','pid':int(fields[0]),'command':fields[2],'agent':agent,'agent_pid':agent_pid,'state':state,'output_fingerprint':hashlib.sha256(screen).hexdigest()}))
+    elif action=='reap':
+        # Reclaim only a terminal whose process has already exited. A live
+        # session is never killed, including if another client revived it.
+        if not exists():print(json.dumps({'reaped':True}));return
+        if run('display-message','-p','-t',target,'#{pane_dead}').decode().strip()!='1':
+            print(json.dumps({'reaped':False}));return
+        run('if-shell','-F','-t',target,'#{pane_dead}','kill-session -t '+pane)
+        print(json.dumps({'reaped':not exists()}))
     elif action=='capture':
         sys.stdout.buffer.write(run('capture-pane','-p','-t',target,'-S','-100'))
     elif action=='paste':
         text=req['text'].encode()
         if len(text)>1024*1024:raise ValueError('Paste exceeds 1 MiB')
+        if not text:
+            print(json.dumps({'delivered':True,'submitted':False}));return
         name='starmux-'+os.urandom(8).hex()
         run('load-buffer','-b',name,'-',input=text)
         try:run('paste-buffer','-b',name,'-d','-p','-t',target)

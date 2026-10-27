@@ -10,31 +10,37 @@ starmux --workspace remote-app --host buildbox --directory /work/project \
   --app 'starfold .' --desktop-helper /home/you/.local/bin/starmux
 ```
 
-The default agent is real Codex. `--agent 'bash -l'` or another command selects a different session command. New projects put their shells and agent on the project host. Existing workspaces keep their original session IDs and host assignments, including legacy local shells beside SSH agents. Migration does not respawn running agents.
+New projects open a login shell. Run Codex, Claude, Gemini, OpenCode or Aider in any terminal; foreground process detection tracks the agent and clears its role when it returns to the shell. `--agent COMMAND` remains available for explicit startup commands and older workspaces. New projects put their shells and agent on the project host. Existing workspaces keep their original session IDs and host assignments, including legacy local shells beside SSH agents. Migration does not respawn running agents.
 
 Project metadata is saved privately under `$XDG_DATA_HOME/starmux/projects` (normally `~/.local/share/starmux/projects`). Runtime sockets and inspection snapshots remain under `$XDG_RUNTIME_DIR/starmux`.
 
 ## Work inside the project
 
-- **Agent** opens the project's agent terminal. **Attach agent** reconnects to it, or restarts an exited agent after an explicit click.
-- **Terminals** keeps shells in tabs. **+ Tab** adds a shell in the project directory. **Split** explicitly shows two shells; **Unsplit** retains both sessions. **Close pane** dismisses the focused half and leaves its terminal available in its tab; right-click a terminal tab for the same action. To end the shell itself, use `exit` or Ctrl+D at its prompt. Drag the separator to resize it. The ratio and selected tab are saved with the project.
-- **Run app** executes the saved project app command. If no command is saved, it opens an editable dialog first.
-- **Launch app** adds another application. Its command, directory, host and remote helper are editable. A supporting app can run locally or on another SSH host.
+- The terminal view keeps all shells and agents in the same tab strip. **+ Tab** adds a shell in the project directory. **Split** opens and focuses a fresh shell beside the current terminal, even when other tabs already exist. Setup and attachment share one connection on local and SSH projects. **Unsplit** retains both sessions. **Close pane** dismisses the focused half and leaves its terminal available in its tab; right-click a terminal tab for the same action. To end the shell itself, use `exit` or Ctrl+D at its prompt. Confirmed terminal exits remove their tabs and collapse the affected split; the last exit leaves an empty project until **+ Tab** is chosen. Connection failures do not remove tabs. Drag the separator to resize it. The ratio and selected tab are saved with the project.
+- Open the virtual desktop using the bottom **Open app space** card. Use **‹ Terminals** in the app header to return to the selected terminal and its split layout.
+- **Refresh** in the top header reloads the installed UI build while retaining terminal sessions and app workers.
+- **+ Launch app** inside app space adds another application. Its command, directory, host and remote helper are editable. A supporting app can run locally or on another SSH host.
 - App cards remain in the shelf while working with the agent or shells. Select a card to open that app's host desktop and focus its window.
 - The virtual app space offers **Tile**, **Maximize**, **Close** and **Reconnect**. Application title bars and Alt-drag support moving windows; Alt-right-drag resizes. Each host has its own private desktop, so selecting an app also selects the correct host and input route.
-- The persistent **Projects** sidebar lists project names and hosts in stable order, with the active container marked by an accent strip. Twenty projects fit at normal window heights; shorter windows use a scrollable list with a visible count and scrollbar. Switching keeps sessions alive. After releasing embedded input, `[` and `]` cycle saved projects. **+ New project** or `p` opens the new-project dialog.
+- The persistent **Projects** sidebar lists project names and hosts in the saved manual or activity order, with the active container marked by an accent strip. Twenty projects fit at normal window heights; shorter windows use a scrollable list with a visible count and scrollbar. Switching keeps sessions alive. After releasing embedded input, `[` and `]` cycle saved projects. **+ New project** or `p` opens the new-project dialog.
 
-Click a terminal or app to capture its input. **Ctrl+Esc** releases it. With input released: `1` selects Agent, `2` selects Terminals, `3` selects Apps, `n` adds a terminal, `a` launches another app, `r` runs the project app, `t` cycles themes, and `q` closes the workspace. Project and space changes release embedded keys and pointer buttons.
+Click a terminal or app to capture its input. **Ctrl+Esc** releases it. With input released: `1` or `2` selects Terminals, `3` selects Apps, `n` adds a terminal, `a` launches another app, `r` runs the project app, `t` cycles themes, and `q` closes the workspace. Project and space changes release embedded keys and pointer buttons.
 
 Dialogs support mouse field selection, Tab/Shift+Tab, ordinary editing, pasted text, Escape to cancel and Ctrl+Enter to accept. Commands are parsed as argument vectors. Use an explicit shell such as `bash -lc '...'` when shell syntax is needed.
 
 ## Working-project color wave
 
-Working project names use bold accent text with a broad, brighter wave that sweeps back and forth across the letters. The working count also uses the accent color, so activity remains recognizable between wave peaks. Idle, completed and disconnected agents do not animate; a project that needs input has a static amber subtitle. The grid remains visible behind every row.
+**Manual** is the default sidebar mode. Drag a project row up or down; a thin accent line previews its new position. Dropping reorders without selecting the project. Escape or dropping outside the list cancels. Short lists can scroll while dragging near their edges. The saved arrangement survives restart; new projects append to it. Click **Manual ↕** to switch to **Activity**; click **Activity** to restore the manual arrangement.
+
+Activity mode groups working projects first, then pending requests, live idle agents and other projects. Recent activity sorts each group. **High ↓** uses that order; **Low ↑** reverses the entire list, including ties and unknown activity, putting the busiest projects at the bottom. The text control has a border only on hover. Sorting retains the active project, sessions and split selection, and persists across restarts.
+
+Recency updates from terminal output changes, state changes and typing/pasting. Native helpers return output fingerprints; imported Herdr panes use bounded current-footer fingerprints and backend state-change sequences to seed historical order. The first fingerprint sample for each pane establishes a baseline. Opening a project can resize or redraw its terminal; the initial presentation changes establish a new baseline without updating recency. Selecting a project, dragging rows and changing sort modes do not count as work. Terminal contents are not saved with navigation preferences.
+
+Working project names use bold accent text with a broad, brighter wave that sweeps back and forth across the letters. The working count also uses the accent color, so activity remains recognizable between wave peaks. Idle, completed and disconnected agents do not animate; a confirmed pending question shows a static amber **?**, and an approval request shows **!**. Idle or completed agents have no icon. Generic blocked lifecycle flags do not request attention. The grid remains visible behind every row.
 
 A small orbiting star appears beside each working project: a steady central spark with a bright point and fading trail moving around it. It uses the current theme and the same animation clock as the text. Reduced motion keeps the icon static; it disappears when the project is no longer working.
 
-Imported Herdr activity is queried in one read-only batch per session, including projects that have not been selected. Native agents use explicit terminal state when available; Codex/Claude activity can also be read from their status footer on the project host. Only state metadata is returned, never terminal conversation contents. Footer recognition depends on the harness keeping its current status wording; unrecognized agents stay static rather than being marked busy just because their process is alive. Summaries refresh in the background, roughly every two seconds.
+Imported Herdr metadata is queried in read-only batches per session, including projects that have not been selected. Known Codex/Claude panes also use a bounded 32-line current detection footer to override stale lifecycle flags. Native agents use explicit terminal state when available; Codex/Claude activity can also be read from their status footer on the project host. Native helpers return state metadata and a fingerprint; imported footer text is discarded after classification and hashing. Footer recognition depends on the harness keeping its current status wording; unrecognized agents stay static rather than being marked busy just because their process is alive. Summaries refresh in the background, roughly every two seconds.
 
 The wave completes a back-and-forth cycle in about 5.3 seconds only while a project is working. Decorative updates pause for 150 ms after typing, and stop entirely when no projects are busy. `STARMUX_REDUCED_MOTION=1` keeps the working count and a static text tint without animation. Unicode names retain their full text shaping and use a whole-name color pulse.
 
@@ -42,11 +48,9 @@ The wave completes a back-and-forth cycle in about 5.3 seconds only while a proj
 
 ## Terminal response time
 
-Terminal panes use a 60 Hz offscreen compositor. A short input-driven burst can capture newly committed output every 8 ms, avoiding the extra complete refresh interval between Kitty's frame callback and the compositor's capture. The burst ends after 150 ms. Unchanged frames are not copied. Graphical app desktops retain their independent 30 fps transport limit.
+The default terminal path polls PTY updates independently of chrome and sends only changed styled rows. The presenting Kitty renders real character cells, using its own fonts and text engine. Terminal scrolling has no GPU readback, screenshot encoder, image upload or per-frame round-trip acknowledgment. App space retains its independent 60 Hz compositor and negotiated video transport.
 
-Embedded Kitty uses `sync_to_monitor=no`, `repaint_delay=4` and `input_delay=1`: its output is offscreen, while the presenting Kitty remains responsible for physical monitor synchronization. Font configuration and native pixel dimensions still come from Kitty. The path still includes GPU readback, bounded local frame files, and the outer terminal's image upload; it does not have standalone Kitty's direct presentation path. SSH adds the real connection's network delay.
-
-`python3 scripts/bench-terminal-latency.py` measures RPC key injection to program receipt and a screen-capture-observed color update. It creates disposable windows at the same fixed size. Screen capture adds sampling delay, so these are software-path comparisons rather than hardware input-to-photon measurements. `STARMUX_TERMINAL_PACING=legacy` reproduces the previous 30 Hz pacing for an A/B run. `STARMUX_RENDER_TIMING=1` adds compositor renderer/readback and controller handoff timing to the workspace log. Samples and screen sizes are recorded in `target/terminal-latency-proof`.
+The older offscreen path is available only with `STAR_TERMINAL_RENDERER=kitty-pixels`. Historical pixel-capture and latency scripts target that diagnostic path; they do not validate the native terminal path. `scripts/test-native-terminal.py` checks the native path without a display or real agent.
 
 ## Multiple agents in a project
 
@@ -55,6 +59,8 @@ The **Agent** space has its own agent tabs and a **+ Agent** button. Each additi
 Click an agent tab to switch; status dots show its health. Right-click to rename or focus the agent, or create another. When the strip fills, the arrow controls cycle through all agents. Names, selected agent and session identities survive closing/reopening the workspace. Additional agents and shell tabs use separate session IDs. **Attach agent** operates on the selected agent, and `--stop` cleans up every native agent in that project while preserving imported Herdr terminals.
 
 Keyboard forwarding preserves uppercase letters and shifted punctuation in Kitty panes, including events where the terminal has already translated the character without a Shift modifier. Synthetic Shift is released after key-up. The experimental direct renderer uses the same Control/Alt modifier contract as the frontend.
+
+Returning to the workspace from another desktop window automatically restores keyboard capture and native focus to the selected agent or terminal. Split panes retain the selected half. Resizes during window switching defer focus until the new scene is available. Rename and launch dialogs keep their text-field focus; a context menu dismisses on window blur before terminal focus is restored. Ctrl+Esc still releases input until you click the pane or activate the workspace again. The installed KIT candidate supports the explicit local `focus-canvas:terminals` activation notice; the portable baseline remains compatible with click-to-focus frontends.
 
 `python3 scripts/test-multiple-agents.py` checks real GPU panes with two disposable agents per project, uppercase/Shift/punctuation and Control/Alt bytes, separate input, matching working directories, rename controls and persistent process IDs after controller restart. It covers local and authenticated loopback SSH projects without touching original Herdr sessions. Evidence is in `target/multi-agent-proof`.
 
@@ -72,47 +78,49 @@ Repository inspection runs in the background on the project's configured host, l
 
 ## Kitty-rendered local and SSH terminals
 
-The default is actual Kitty rendering. Terminal panes load the normal Kitty configuration, including the selected font, font features and text-composition settings. Their private compositor renders at the exact terminal panel dimensions; the former 1440px height cap is removed from terminal views. Local frames are delivered as lossless pixels at 1:1 scale, without re-rasterizing glyphs in STAR/KIT. Obsolete-size frames are withheld while resizing. The sidebar, project state, agent/terminal tabs and app desktops remain shared across backends. A GPU copy can quantize an antialiased color by one 8-bit level, but glyph shapes and placement come from Kitty itself.
-
-**A− / size / A+** controls Kitty’s font size; reset restores the presenting terminal’s inherited physical size. Agent and SSH session processes remain separate from the renderer and survive frontend restarts.
-
-`python3 scripts/test-kitty-pixels.py` compares standalone Kitty and embedded Kitty text captures, checks native frame/panel dimensions, and records glyph shape/coverage comparison and raw RGB differences in `target/kitty-pixel-proof`.
+Kitty on the presenting machine draws native terminal characters, including over SSH. Its configured font, glyph shaping and text-composition settings apply directly. STAR/KIT draws the surrounding chrome and leaves cell-aligned transparent terminal regions. The `− / size / +` header controls the current Kitty OS window's font size when the updated bridge is loaded; otherwise Kitty's own font shortcuts remain available. Session processes survive frontend restarts.
 
 ## Selecting and copying Codex text
 
-Use a normal **left-button drag** in an agent or terminal pane. S T A R / M U X distinguishes a drag from a click, uses Kitty's text selection even when the application captures the mouse, and copies the selected text to the presenting desktop clipboard on release. No Shift gesture or copy shortcut is required. Single clicks still reach Codex menus and other terminal controls. Hold **Ctrl** when you want an application drag instead of text selection.
-
-Selection stays attached to the pane where it began, including split panes. Clipboard reads run asynchronously through that pane's private Kitty socket; SSH-backed Codex sessions still copy to the local desktop. Font rendering and selection highlighting come from Kitty. Graphical app-space input keeps its native behavior.
-
-`python3 scripts/test-text-selection.py` checks Unicode selection and the local desktop clipboard against a mouse-capturing agent fixture, locally and through authenticated loopback SSH, and verifies that clicks still reach the agent. `python3 scripts/test-codex-selection.py` selects text in a disposable real Codex session without submitting a prompt or answering an approval. Evidence is in `target/selection-proof` and `target/codex-selection-proof`.
-
-## Experimental direct terminals
-
-Use `STAR_TERMINAL_RENDERER=direct` to opt into the experimental direct renderer. It uses a different glyph rasterizer and cannot guarantee Kitty’s exact font appearance. Terminal bytes come from a local PTY attached to the existing tmux or Herdr session; SSH terminals use that same PTY with an SSH attachment. STAR/KIT draws the cell grid as native text and shapes it through its selected CPU/GPU frontend. Terminal panels require neither an inner Kitty process nor a private display server, pixel capture or terminal frame encoding. The outer Kitty window remains the frontend's presentation host.
-
-The Agent and Terminals headers offer **A−**, the current pixel size, and **A+**. By default the direct terminal inherits the presenting Kitty window’s active font face, fractional pixel size (including DPI) and measured cell dimensions. Click the current size to return to that inherited size. Explicit zooms range from 10–32px and are saved per project, shared by its agent and shell tabs. Grid dimensions, cursor placement and mouse coordinates use measurements from the selected font at each size. Untouched legacy 16px defaults migrate to inheritance; other saved zooms are retained.
-
-Menus use normal/application cursor keys, modifier keys and function keys. The emulator supports alternate screens, ANSI/indexed/RGB colors, bold, underline, inverse video, wide/combining text, bracketed paste, cursor queries, mouse reporting and bounded scrollback. Drag to select text; releasing the mouse copies it to the desktop clipboard. A plain drag selects even when the application owns the mouse; Ctrl+drag preserves application mouse handling. Scrollback is local to an attachment; tmux/Herdr remain the persistent source of session history. Tabs, splits and project switching retain independent PTYs. No approval or Enter is sent when a file path is delivered.
-
-The initial renderer uses vt100 0.16 and portable-pty 0.9. The installed KIT candidate negotiates font metrics from the presenting computer, so SSH hosts need no local copy of the font. It shapes complete styled runs to retain ligatures and combining marks, placing their clusters on measured cell boundaries. KIT and Kitty still use different rasterizers; identical font selection does not promise identical antialiasing. Older KIT frontends without typography negotiation retain compatibility sizing. `STAR_GRAPHICS_FONT` and `STAR_GRAPHICS_FONT_SIZE` remain explicit overrides; the launcher no longer forces Liberation Mono. `STAR_GRAPHICS_FONT_DEBUG=1` reports the probe, resolved family and capability handoff for diagnosis. It does not implement Kitty image graphics or the Kitty enhanced keyboard protocol, and italic text currently uses the normal face. To explicitly select the default Kitty backend, close/reopen the workspace with:
-
-```sh
-STAR_TERMINAL_RENDERER=kitty STAR_GRAPHICS_RENDERER=gpu starmux --workspace my-app
-```
-
-Renderer selection is made when the controller starts. A running controller keeps its renderer until closed and reopened; backend sessions stay alive. `--inspect`/runtime snapshots identify the active renderer, PTY attachment PIDs and direct screen text.
-
-`python3 scripts/test-direct-terminal.py` checks a real GPU frontend with local and authenticated loopback SSH sessions: menu selection, Unicode bracketed paste, hashed file staging without Enter, split panes, font/geometry changes and stable backend PIDs after reconnect. Evidence lives in `target/direct-terminal-proof`. A separate disposable real Codex test verified `/model` and arrow selection, then cancelled without changing its model (`target/direct-codex-proof`).
+Use a normal **left-button drag** in an agent or terminal pane. STAR/MUX distinguishes a drag from a click and projects selection into PTY cells, even when Codex captures mouse input. Releasing copies the selected text to the presenting desktop clipboard, including over SSH. Single clicks still reach terminal menus; Ctrl+drag preserves application mouse handling. Selection remains attached to the pane where it began, including splits. Kitty renders the characters and their selection colors directly.
 
 ## Local and SSH apps
 
-Graphical applications run in a persistent private compositor on their own host. The workspace receives bounded PNG frames and sends input over the same framed transport locally or through OpenSSH. The app helper negotiates a protocol version, preserves stable window identities and retains only the newest frame. Hover motion is coalesced separately from ordered controls.
+**Launch app** opens a searchable catalog from the selected host’s system application registry, including user-installed desktop entries. Type to filter by name or executable, use the arrow keys to select, and press Enter or **Launch**. **Custom / host…** retains manual commands and host settings. Changing the host reloads its catalog asynchronously; hidden desktop entries stay hidden. Registered launches run inside the private app desktop and inherit its audio route.
+
+The terminal shelf shows one **Open app space** card for the virtual desktop, with a geometric map of all its windows and an app count. Multiple running apps share that card. Window rectangles reflect positions and sizes reported by the app host, preserve the desktop aspect ratio, and accent the selected window. **Launch app** adds another application to the desktop; individual window selection stays inside app space. Layout updates work locally and over SSH.
+
+Graphical applications run in a persistent private compositor on their own host. A workspace on the app host receives shared raw frames; a remote frontend receives a bounded H.264 stream with local decoding. Input travels over the framed transport locally or through OpenSSH. The app helper negotiates a protocol version, preserves stable window identities and retains only the newest frame. Hover motion is coalesced separately from ordered controls.
 
 For SSH graphical apps, install a compatible STAR/MUX executable on that host, plus its runtime libraries, `dbus-run-session`, Xwayland and a usable EGL graphics device. `--desktop-helper` selects the executable or runtime wrapper on that host. No forwarding into the host's normal desktop is used. A private D-Bus session prevents applications from handing their launch to an existing desktop instance. Ordinary SSH agent terminals continue to need only Python 3, tmux and the agent command.
 
 Closing or killing a frontend does not terminate the app compositor. **Reconnect** and reopening the workspace attach to the same app processes. A host reboot or explicit `--stop` ends them. Failed remote startup is reported in the workspace; the agent and shell spaces stay available.
 
-The first app-desktop transport is lossless, capped at 2560×1440 and at most 30 changed frames per second. Apps use a 33 ms frontend update interval. GPU readback and PNG encoding still run through CPU memory; sustained game frame rates depend on resolution, host and SSH bandwidth. Audio transport and hardware video encoding remain later work.
+The app compositor targets 60 frames per second, up to 3840×2160. Local worker IPC uses private, immutable raw frame files with one outstanding acknowledgement, avoiding PNG encoding and decoding. Compatible SSH frontends use STAR/SCREEN’s low latency H.264 model: local decoding, bounded frame credits, and coalescing before encoding. Encoding and GPU readback still use CPU memory; sustained rates depend on resolution, host, client and network. Older workers and app hosts on a separate SSH connection retain the PNG compatibility path, capped at 2560×1440. An already-running app desktop needs a one-time relaunch to adopt the new worker; reconnecting a frontend preserves existing apps and does not upgrade that worker. App audio uses a separate bounded SSH pipe and STAR/KIT’s negotiated 48 kHz stereo PCM relay.
+
+Embedded Kitty terminal frames use a separate native-resolution, lossless PNG patch transport in compatible KIT candidate builds. Encoding runs on a worker, unchanged pixels are omitted, and acknowledgement-scoped bases prevent stale patches. Text bypasses the JPEG thumbnail compatibility path. Older frontends retain the image compatibility transport. Runtime snapshots identify the negotiated terminal transport and app video delivery counters.
+
+## App audio and mute
+
+The header's **Audio on / Muted** control mutes this STAR/MUX workspace without changing system volume or stopping apps. The preference is saved across restarts and applies across its projects. With terminal input released using Ctrl+Esc, **m** toggles mute. The CLI actions `audio:mute`, `audio:unmute` and `audio:toggle` provide the same control.
+
+The selected project's app host is audible even while its terminal view is selected. Apps in that host share a private output sink. Switching projects or app hosts closes the old playback route; other desktops stay isolated and keep running. Mute and disconnect close local playback and discard queued samples. Unmute and reconnect use a fresh epoch, so old sound is not replayed. Device errors report failure and keep the host sink isolated; they never switch sound to the host's speakers.
+
+For a workspace on another machine, run the frontend on the machine whose speakers you want to use:
+
+```sh
+starmux --ssh HOST --workspace herdr-default-wV
+# A custom server installation:
+starmux --ssh HOST --remote-executable /path/to/starmux --workspace NAME
+```
+
+`--host` still selects an app/project host for a locally owned workspace; `--ssh` attaches a local frontend to an existing remote workspace. Matching audio-enabled builds are required on both ends. An existing SSH shell can use the STAR/KIT Kitty bridge; its local `star-kit-terminal` must also include audio output. An unbridged SSH TTY cannot reach the client's speakers and shows **Local audio missing**. Clicking that control explains the required local setup instead of toggling mute. The lightweight [local terminal client](../terminal-client/README.md) supports listening machines without a full STAR/MUX installation. The installer uses a content-versioned watcher path to bypass Kitty’s module cache. After installing, reload Kitty configuration, then Refresh UI or reconnect STAR/MUX; active bridge connections are preserved during the configuration reload.
+
+The app host needs a running PulseAudio-compatible server (including PipeWire-Pulse), `pactl`, `parec`, and `pw-dump` for adopting existing native PipeWire streams. It does not need a physical audio device. New apps inherit their desktop's private sink. Already-running apps can be moved into it without restarting: only verified descendants of that private compositor are eligible, using the PulseAudio process ID or PipeWire client credentials. No microphone or system-wide output is captured.
+
+Audio capture, metadata scanning and video use separate workers. Eight block credits bound delivery through the existing STAR/KIT frontend; a slow listener cannot grow memory or block app input/video. The live capture queue retains only recent samples instead of accumulating old audio. A missing host capture service or local output device is reported in the workspace.
+
+`python3 scripts/test-app-audio.py` exercises authenticated loopback SSH, an actual native PipeWire app stream, bounded credits, reconnect without app restart, local STAR/KIT playback into a disposable output sink, mute silence and saved mute across restart. The test does not change user applications or send audio to physical speakers. Handy's sound must be enabled; do not launch with `--no-sound` when testing audio.
 
 ## Agent launches on the app host
 
@@ -160,12 +168,122 @@ The transport has been checked with loopback SSH; this does not establish latenc
 
 `starmux --import-herdr` imports the default Herdr session into a separate `herdr-default` collection. It preserves workspace labels/order, directories, tab labels and terminal identities. The import prints the workspace to open. Native test/proof projects are excluded from this collection.
 
-Imported panes use `herdr terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. Herdr must remain running. No `--takeover` flag is used. The Agent shortcut and matching terminal tab share one attachment so they do not compete for input ownership. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/MUX project never stops its original Herdr terminals.
+Imported panes use `herdr terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. Herdr must remain running. No `--takeover` flag is used. Legacy Agent shortcuts migrate to their matching terminal tab, sharing one attachment. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/MUX project never stops its original Herdr terminals.
 
-The project sidebar retains stable order and keeps the collection visible. Wheel scrolling in a shorter list does not change the active project. The test import contains 20 workspaces, 24 original tabs/panes and 16 detected agents. The initial read-only mirrors were replaced after input testing; those mirrors are no longer the normal imported-terminal path.
+The project sidebar follows the saved activity direction and keeps the collection visible. Wheel scrolling in a shorter list does not change the active project. The test import contains 20 workspaces, 24 original tabs/panes and 16 detected agents. The initial read-only mirrors were replaced after input testing; those mirrors are no longer the normal imported-terminal path.
 
 `python3 scripts/test-handy-ssh.py` uses the local Zendocon checkout and a disposable authenticated loopback SSH server. It checks sideband launch with an attached viewer, cartridge rendering, keyboard start, changing game frames and stable compositor/window identity across reconnect. Handy replaces its initial SDL window during cartridge initialization; input targets the resulting game window. Evidence is saved in `target/handy-ssh-proof`.
 
 `python3 scripts/test-font-inheritance.py` records real Kitty font/DPI queries and compares them with the negotiated terminal sizes/cells for both the normal user configuration and a Liberation Mono override. Native Kitty and STAR/MUX screenshots are saved in `target/font-inheritance-proof`.
 
 `python3 scripts/test-project-sidebar.py` uses 20 disposable projects with imported labels to verify that all project rows remain visible, the final row can be selected directly, and switching preserves order. Screenshots and results are in `target/sidebar-proof`. It does not attach to or type into original Herdr sessions.
+
+Image drops accept local file lists and PNG/JPEG/WebP/GIF image data. When Kitty reports files from a different machine, STAR/KIT requests their bytes and stages private copies on the workspace host before delivery to the selected terminal or app. Original files are retained; the application sends no Enter. Browser image drags can fall back from their web URL to offered image bytes. Remote folders and symlinks are rejected explicitly. URI metadata is limited to 1 MiB, direct image data to 32 MiB, and remote staging to 64 files / 256 MiB total; destination uploads retain their existing 64 MiB per-file limit.
+
+During drops, the frontend pauses terminal reads and its file-data producer before the outbound queue fills. Presentation and protocol replies retain queue capacity while the connection drains; file chunks remain ordered and are never coalesced. This prevents a slow SSH connection from terminating the frontend with a full control queue. The isolated regression check transfers 4 MiB through a deliberately slow local socket and verifies the image bytes and control replies without opening windows or contacting SSH hosts.
+
+App input uses the actual worker frame dimensions, including while a resize is pending. App desktops keep a 60 Hz frame clock; the terminal-only input burst does not apply to them. App-space chrome refreshes periodically at 10 Hz, independently of live video. Repeated pointer modifier state is filtered before motion coalescing.
+
+New app workers negotiate cursor tracking: software cursor surfaces are composited with their hotspot, and the frontend hides its local pointer over the app canvas when the app supplies or hides its own cursor. Controls and overlays retain the local pointer. Retained workers from older builds still reconnect, but need a deliberate app-desktop restart to gain worker-side cursor tracking and frame-clock changes; Refresh reloads the frontend without stopping those apps.
+
+The Linux compositor advertises DMA-BUF v4 render-device feedback so embedded Kitty and app clients can discover the hardware GPU. Without that device identity, clients can silently select llvmpipe even while the compositor itself is accelerated. `scripts/profile-egl.py` reports a compositor's EGL renderer without creating a window; the ignored `wayland_client_discovers_hardware_gpu_without_a_window` diagnostic checks this against an isolated compositor. Periodic chrome uses SCREEN's 100ms cadence in both views, while live pixels retain their independent frame clock. Empty transparent foreground layers are omitted until needed by an overlay.
+
+## Native terminal rendering
+
+Terminals now follow the PTY/cell model used by Herdr: the backend tracks the terminal screen, sends styled row updates, and the host Kitty renders the actual text with its native font engine. A cell-aligned transparent opening in the graphical chrome exposes Kitty's text. There is no offscreen Kitty, Wayland compositor, screenshot readback, PNG delta encoder, or video decoder in the default terminal path. App space retains its separate virtual desktop, GPU renderer, SSH video and audio transport.
+
+Selection, wide/combining characters, ANSI colors, bold, dim, italic, underline, cursor position, bracketed paste, menu keys, splits and file staging use the PTY state. Only changed rows cross the connection. Producer polling is independent of periodic chrome redraws. Newer Kitty bridge installations can adjust the current OS window's native font size from the header; older loaded watchers retain Kitty's own font-size shortcuts until the upgraded watcher is loaded. The installer versions watcher paths so a configuration reload actually loads the upgrade; Refresh UI then negotiates the native font controls. No global Kitty configuration is changed.
+
+`scripts/test-native-terminal.py` runs a headless proof with a private fake shell, private tmux namespace and isolated state directories. It checks for native row delivery and zero terminal pixel frames, without opening windows or touching real agents. `STAR_TERMINAL_RENDERER=kitty-pixels` is an explicit compatibility/diagnostic choice rather than the default.
+
+Sidebar context menus retain the main terminal view. Native terminal regions stay visible beneath graphical overlays; opening a menu changes input/cursor focus rather than hiding the terminal content.
+
+## Multiple windows on one workspace
+
+Open `starmux --workspace NAME` in more than one Kitty window, or attach with
+`starmux --ssh HOST --workspace NAME`. Each connection gets a private frontend
+controller. Project selection, terminal selection, splits, menus, viewport,
+selection gestures, font controls, audio mute, and presentation/media credits
+belong to that frontend. Refresh UI reloads only its own controller and restores
+its view. Closing a window leaves the other windows and backend processes running.
+
+Terminal processes, tab membership and names, application targets and the app
+desktop belong to the shared project. Changes propagate to other views without
+changing their selection. Project model edits use a per-project transaction and
+three-way merging; new terminal IDs are allocated while holding that transaction.
+Terminal generations prevent a delayed exit notification from removing a reused
+slot. Terminal attachment sockets are private to their controller process.
+Shared model files are separate from the old layout files, so a pre-upgrade
+frontend cannot overwrite the new shared model with an old layout snapshot.
+
+Each app desktop runs one compositor. Its transport broadcasts to bounded,
+independent viewer queues, with separate shared-frame leases and acknowledgments.
+The audio worker captures once and gives each subscriber its own credits and
+connection lifetime. A slow or muted viewer does not replace another subscriber.
+App input ownership transfers between viewers, releasing the preceding viewer's
+held input; stale release events cannot release the current owner's keys.
+
+A terminal has one underlying TUI screen. STAR-owned tmux sessions use the smallest
+attached terminal size to avoid resize oscillation. The app desktop likewise has
+shared geometry, negotiated from its viewers, while each frontend uses its own
+placement and coordinate transform.
+
+Refresh existing STAR/MUX windows once to load this architecture. Existing app
+workers retain their running applications: a worker created before this update
+keeps its legacy single-viewer lease until it is restarted. New app workers
+advertise multi-viewer support. No running application is restarted automatically.
+
+`--inspect` includes a `frontends` array and each snapshot's `frontend` identity.
+For management, `--frontend ID` targets a particular view. Without that selector,
+`--close` closes all views opened for the named workspace while retaining its
+terminals/apps. A model-changing `--action` executes once; shared metadata then
+propagates to peers. Header controls always act on their own view.
+
+Headless validation uses `scripts/test-multiwindow.py`: two protocol clients,
+private fake shells and tmux servers, and isolated runtime/data directories. It
+checks shared input, independent projects/menus/viewports/tabs/splits/font
+requests, concurrent tab allocation, shared exits, safe slot reuse, window-local
+refresh, disconnect isolation, and reattachment without restarting the shell.
+Add `--ssh` to run one of those frontends over a private, temporary OpenSSH
+server. The synthetic app-transport unit test verifies local/shared and remote/image
+viewers, independent frame acknowledgments and disconnects without starting a
+compositor, audio device, GUI window or real agent.
+
+## Live migration out of Herdr
+
+`--import-herdr` keeps Herdr as the terminal owner. To remove that dependency on a
+Linux host, build the small helper with `scripts/build-pty-proxy`, then use
+`starmux --plan-herdr-migration` to validate and back up the default session, or
+`starmux --migrate-herdr` to prepare and apply the transfer.
+
+The migration uses Herdr 0.9.1's Unix handoff version 1, protocol 22. It receives
+the original PTY masters before the source releases them, stages native proxies
+inside STAR-owned tmux sessions, and commits only after every proxy is connected.
+The original shell and agent processes keep their PIDs, working state and native
+conversations. tmux handles terminal parsing, history and multiple viewers; the
+PTY owner waits on descriptor readiness and does not render or poll Herdr. The
+proxy is a libc-only C executable with no periodic wakeup timer. Agent status
+queries go directly to the native owner instead of launching Herdr CLI processes.
+
+STAR/MUX frontends refresh behind a migration gate while terminal ownership
+changes. Legacy frontends receive a private view identity and restore their
+selected project. Herdr UI-only clients for that session are retired; the server
+exits through its handoff protocol. Its saved default layout is archived and
+replaced by an empty layout only after commit, preventing an accidental Herdr
+launch from restarting duplicate agents. Other Herdr sessions are untouched.
+
+Backups, the live handoff manifest (including agent session references), screens,
+original PIDs and ownership status are stored privately under
+`~/.local/share/starmux/migrations/`. A pre-commit failure leaves the source owning
+its original PTYs and resumes it. A post-commit failure retains the received
+masters for diagnosis rather than restarting or discarding the user's processes.
+Existing agent memory remains allocated because those agents remain alive.
+Recent visible screens are carried into tmux; the agent's own conversation and
+history remain in its existing process.
+
+`scripts/test-herdr-adoption.py` uses an isolated Herdr server and fake shells,
+without windows or real agent input. It verifies rollback after descriptor
+receipt, original-PID preservation, old-server exit, post-transfer input/native
+inspection, frontend restoration and retirement of the old restore snapshot.
+
+Native Kitty presentation omits fully transparent chrome tiles instead of allocating image textures above terminal text. Graphics recovery batches visible tile uploads at most ten times per second; input, changed scenes, and app video retain their independent presentation cadence. Headless renderer tests cover overlay removal, lost-image recovery, and bounded recovery wakeups.

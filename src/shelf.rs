@@ -1,6 +1,9 @@
 //! App Shelf: single pixel borders, drafting grid, project spaces and app cards.
 use crate::{appearance::Appearance, project_state::Space};
 use starkit::native_surface::{HitRegion, PixelRect as R, Primitive, Surface};
+
+const TAB_HEIGHT: u16 = 31;
+const TAB_LEAD: u16 = 8;
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
     pub width: u16,
@@ -41,7 +44,7 @@ impl Layout {
         let margin = if width < 600 { 8 } else { 14 };
         let x = margin;
         let w = width.saturating_sub(margin * 2).max(1);
-        let y = 130.min(height.saturating_sub(100));
+        let y = 90.min(height.saturating_sub(100));
         let shelf_h = if space == Space::Apps {
             0
         } else {
@@ -71,22 +74,24 @@ impl Layout {
         }
     }
 }
-pub struct AgentTab {
-    pub id: usize,
-    pub name: String,
-    pub state: String,
-}
 pub struct ProjectTab<'a> {
     pub id: &'a str,
     pub name: &'a str,
     pub host: &'a str,
     pub working: usize,
     pub waiting: usize,
+    pub running: usize,
+    pub questions: usize,
+}
+#[derive(Clone, Copy)]
+pub struct DesktopMap<'a> {
+    pub size: [u32; 2],
+    pub windows: &'a [crate::project::WindowLayout],
+    pub selected: Option<usize>,
 }
 pub struct AppCard<'a> {
     pub action: String,
     pub name: &'a str,
-    pub host: &'a str,
     pub selected: bool,
 }
 pub struct ModalField<'a> {
@@ -94,7 +99,19 @@ pub struct ModalField<'a> {
     pub text: &'a str,
     pub cursor: usize,
 }
+pub struct ApplicationPicker<'a> {
+    pub query: &'a str,
+    pub cursor: usize,
+    pub focused: bool,
+    pub status: &'a str,
+    pub selection_name: Option<&'a str>,
+    pub selected: usize,
+    pub count: usize,
+    pub rows: Vec<(usize, &'a str, &'a str)>,
+}
 pub struct Modal<'a> {
+    pub applications: Option<ApplicationPicker<'a>>,
+    pub catalog_available: bool,
     pub title: &'a str,
     pub fields: Vec<ModalField<'a>>,
     pub selected: usize,
@@ -130,23 +147,29 @@ pub struct Model<'a> {
     pub project_label: &'a str,
     pub project_offset: usize,
     pub project_total: usize,
+    pub sort_hover: bool,
+    pub sort_mode_hover: bool,
+    pub project_manual: bool,
+    pub project_drag: Option<(&'a str, Option<usize>)>,
+    pub project_sort_high: bool,
     pub wave_phase: u16,
     pub reduced_motion: bool,
     pub directory: &'a str,
     pub host: &'a str,
     pub theme: &'a str,
+    pub audio_label: &'a str,
     pub space: Space,
     pub projects: Vec<ProjectTab<'a>>,
     pub terminals: Vec<(usize, String)>,
+    pub terminal_status: std::collections::BTreeMap<usize, String>,
     pub terminal: usize,
     pub terminal_font_size: String,
     pub split: bool,
-    pub agent: usize,
-    pub agents: Vec<AgentTab>,
     pub agent_name: &'a str,
     pub agent_state: &'a str,
     pub status: &'a str,
     pub apps: Vec<AppCard<'a>>,
+    pub app_desktop: Option<DesktopMap<'a>>,
     pub connected: bool,
     pub desktop_host: &'a str,
     pub context_menu: Option<&'a ContextMenu>,
@@ -196,6 +219,13 @@ impl Pen {
             })
         }
     }
+    fn centered_text(&mut self, r: R, text: impl Into<String>, color: &str, size: u16, bold: bool) {
+        let node = self.surface.nodes.len();
+        self.text(r, text, color, size, bold);
+        if self.surface.nodes.len() > node {
+            self.surface.centered_text.push(node as u16);
+        }
+    }
     fn border(&mut self, r: R, c: &str) {
         if r.width < 2 || r.height < 2 {
             return;
@@ -223,19 +253,44 @@ impl Pen {
     ) {
         self.fill(r, if selected { &t.selection } else { &t.panel });
         self.border(r, if selected { &t.accent } else { &t.border });
-        self.text(
+        self.centered_text(
             R::new(
-                r.x + 9,
-                r.y + 4,
-                r.width.saturating_sub(18),
-                r.height.saturating_sub(5),
+                r.x + 2,
+                r.y + 2,
+                r.width.saturating_sub(4),
+                r.height.saturating_sub(4),
             ),
             text,
             if selected { &t.accent } else { &t.fg },
-            12,
+            if matches!(text, "−" | "+") { 20 } else { 12 },
             false,
         );
         self.hit(r, action)
+    }
+    fn tab(&mut self, r: R, text: &str, action: impl Into<String>, t: &Appearance, selected: bool) {
+        // The active tab interrupts the shared baseline with a square, open-bottom
+        // outline. All labels share the same centered text box and neutral ink.
+        let ink = t.tab_color();
+        if selected {
+            self.fill(r, &t.bg);
+            self.fill(R::new(r.x, r.y, r.width, 1), &ink);
+            self.fill(R::new(r.x, r.y, 1, r.height), &ink);
+            self.fill(R::new(r.x + r.width - 1, r.y, 1, r.height), &ink);
+        }
+        let inset = 2;
+        self.centered_text(
+            R::new(
+                r.x + 12,
+                r.y + inset,
+                r.width.saturating_sub(24),
+                r.height.saturating_sub(4),
+            ),
+            text,
+            &ink,
+            12,
+            false,
+        );
+        self.hit(r, action);
     }
     fn grid(&mut self, r: R, c: &str) {
         for x in (r.x..r.x + r.width).step_by(24) {
@@ -246,10 +301,88 @@ impl Pen {
         }
     }
 }
-pub fn project_rows(height: u16) -> usize {
-    usize::from(height.saturating_sub(170) / 34).max(1)
+// Fit the complete desktop, then clip windows in source coordinates before
+// projecting; partly offscreen windows must not spill into labels or borders.
+fn desktop_bounds(area: R, size: [u32; 2]) -> Option<R> {
+    if area.width < 2 || area.height < 2 || size.contains(&0) {
+        return None;
+    }
+    let scale = (f64::from(area.width) / f64::from(size[0]))
+        .min(f64::from(area.height) / f64::from(size[1]));
+    let width = (f64::from(size[0]) * scale).round().max(1.) as u16;
+    let height = (f64::from(size[1]) * scale).round().max(1.) as u16;
+    Some(R::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    ))
 }
-fn activity_icon(p: &mut Pen, x: u16, y: u16, t: &Appearance, phase: u16, reduced_motion: bool) {
+fn map_window(desktop: R, size: [u32; 2], window: &crate::project::WindowLayout) -> Option<R> {
+    if size.contains(&0) || window.width <= 0 || window.height <= 0 {
+        return None;
+    }
+    let x = i64::from(window.x).clamp(0, i64::from(size[0]));
+    let y = i64::from(window.y).clamp(0, i64::from(size[1]));
+    let right = (i64::from(window.x) + i64::from(window.width)).clamp(0, i64::from(size[0]));
+    let bottom = (i64::from(window.y) + i64::from(window.height)).clamp(0, i64::from(size[1]));
+    if right <= x || bottom <= y {
+        return None;
+    }
+    let px =
+        |value: i64| (value as f64 * f64::from(desktop.width) / f64::from(size[0])).round() as u16;
+    let py =
+        |value: i64| (value as f64 * f64::from(desktop.height) / f64::from(size[1])).round() as u16;
+    Some(R::new(
+        desktop.x + px(x),
+        desktop.y + py(y),
+        (px(right) - px(x)).max(1),
+        (py(bottom) - py(y)).max(1),
+    ))
+}
+fn desktop_map(p: &mut Pen, area: R, map: Option<DesktopMap<'_>>, t: &Appearance) {
+    let size = map.map_or([16, 9], |m| m.size);
+    let Some(bounds) = desktop_bounds(area, size) else {
+        return;
+    };
+    p.grid(bounds, &t.grid);
+    p.border(bounds, &t.border);
+    let Some(map) = map else {
+        return;
+    };
+    // Draw the selected window last so its outline remains visible in overlaps.
+    for selected in [false, true] {
+        for (index, window) in map.windows.iter().enumerate() {
+            let active = map.selected == Some(index);
+            if active != selected {
+                continue;
+            }
+            if let Some(rect) = map_window(bounds, size, window) {
+                p.fill(rect, if active { &t.selection } else { &t.panel });
+                p.border(rect, if active { &t.accent } else { &t.muted });
+                if rect.width > 6 && rect.height > 8 {
+                    p.fill(
+                        R::new(rect.x + 2, rect.y + 3, rect.width - 4, 1),
+                        if active { &t.accent } else { &t.border },
+                    );
+                }
+            }
+        }
+    }
+}
+pub fn project_rows(height: u16) -> usize {
+    usize::from(height.saturating_sub(198) / 34).max(1)
+}
+fn activity_icon(
+    p: &mut Pen,
+    position: [u16; 2],
+    t: &Appearance,
+    phase: u16,
+    reduced_motion: bool,
+    attention: bool,
+    working: bool,
+) {
+    let [x, y] = position;
     // A fixed central spark and eight orbit points. Only their light moves;
     // integer geometry stays crisp at the sidebar's native pixel size.
     let phase = if reduced_motion {
@@ -279,14 +412,23 @@ fn activity_icon(p: &mut Pen, x: u16, y: u16, t: &Appearance, phase: u16, reduce
         };
         p.fill(
             R::new(x + dx, y + dy, 2, 2),
-            &t.activity_color(&t.border, strength),
+            &if attention {
+                t.attention_color(&t.border, strength)
+            } else {
+                t.activity_color(&t.border, strength * if working { 1. } else { 0.55 })
+            },
         );
     }
-    p.fill(R::new(x + 7, y + 5, 2, 6), &t.accent);
-    p.fill(R::new(x + 5, y + 7, 6, 2), &t.accent);
+    let ink = if attention { &t.warning } else { &t.accent };
+    p.fill(R::new(x + 7, y + 5, 2, 6), ink);
+    p.fill(R::new(x + 5, y + 7, 6, 2), ink);
     p.fill(
         R::new(x + 7, y + 7, 2, 2),
-        &t.activity_color(&t.accent, 0.85),
+        &if attention {
+            t.attention_color(ink, 0.85)
+        } else {
+            t.activity_color(ink, 0.85)
+        },
     );
 }
 fn move_surface(surface: &mut Surface, x: u16, width: u16) {
@@ -340,12 +482,59 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         11,
         true,
     );
+    let mode = R::new(8, 86, w.saturating_sub(108).min(116), 24);
+    if m.sort_mode_hover {
+        p.border(mode, &t.border);
+    }
+    p.centered_text(
+        mode,
+        if m.project_manual {
+            "Manual ↕"
+        } else {
+            "Activity"
+        },
+        &t.muted,
+        11,
+        false,
+    );
+    p.hit(mode, "projects:sort:mode");
+    if m.project_manual {
+        if w >= 220 {
+            p.text(
+                R::new(w - 120, 92, 108, 18),
+                "Drag to reorder",
+                &t.muted,
+                9,
+                false,
+            );
+        }
+    } else {
+        let sort = R::new(w.saturating_sub(84), 86, 68, 24);
+        if m.sort_hover {
+            p.border(sort, &t.border);
+        }
+        p.centered_text(
+            sort,
+            if m.project_sort_high {
+                "High ↓"
+            } else {
+                "Low ↑"
+            },
+            &t.muted,
+            11,
+            false,
+        );
+        p.hit(sort, "projects:sort:direction");
+    }
     let rows = project_rows(l.height);
     let start = m.project_offset.min(m.projects.len().saturating_sub(rows));
     for (n, project) in m.projects.iter().enumerate().skip(start).take(rows) {
-        let y = 94 + (n - start) as u16 * 34;
+        let y = 122 + (n - start) as u16 * 34;
         let r = R::new(8, y, w.saturating_sub(20), 32);
         let selected = project.id == m.project;
+        if m.project_drag.is_some_and(|(id, _)| id == project.id) {
+            p.border(r, &t.border);
+        }
         if selected {
             p.fill(R::new(r.x, r.y, 2, r.height), &t.accent);
         }
@@ -358,14 +547,30 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         );
         let label = R::new(43, y + 2, w.saturating_sub(83), 19);
         let working = project.working > 0;
-        if working {
+        if project.waiting > 0 {
+            let r = R::new(w.saturating_sub(33), y + 5, 14, 14);
+            p.border(r, &t.warning);
+            p.text(
+                R::new(r.x + 3, r.y, 10, 15),
+                if project.questions > 0 { "?" } else { "!" },
+                &t.warning,
+                12,
+                true,
+            );
+        } else if working {
             activity_icon(
                 &mut p,
-                w.saturating_sub(34),
-                y + 4,
+                [w.saturating_sub(34), y + 4],
                 t,
-                (m.wave_phase + n as u16 * 7) % 48,
+                ((if working || project.waiting > 0 {
+                    m.wave_phase
+                } else {
+                    m.wave_phase / 2
+                }) + n as u16 * 7)
+                    % 48,
                 m.reduced_motion,
+                project.waiting > 0,
+                working,
             );
         }
         let base = if selected || working {
@@ -428,20 +633,33 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
                 selected || working,
             );
         }
-        let detail = if project.working > 0 {
+        let detail = if working && project.waiting > 0 {
+            format!("{} working · {} waiting", project.working, project.waiting)
+        } else if project.working > 0 {
             format!("{} · {} working", project.host, project.working)
+        } else if project.questions > 0 {
+            format!("{} · question pending", project.host)
         } else if project.waiting > 0 {
-            format!("{} · needs input", project.host)
+            format!("{} · approval requested", project.host)
         } else {
-            project.host.into()
+            if project.running > 0 {
+                format!(
+                    "{} · {} agent{}",
+                    project.host,
+                    project.running,
+                    if project.running == 1 { "" } else { "s" }
+                )
+            } else {
+                project.host.into()
+            }
         };
         p.text(
             R::new(43, y + 20, w.saturating_sub(61), 12),
             detail,
-            if working {
-                &t.accent
-            } else if project.waiting > 0 {
+            if project.waiting > 0 {
                 &t.warning
+            } else if working {
+                &t.accent
             } else {
                 &t.muted
             },
@@ -450,14 +668,23 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         );
         p.hit(r, format!("project:{}", project.id));
     }
+    if let Some((_, Some(gap))) = m.project_drag
+        && gap >= start
+        && gap <= start + rows
+    {
+        p.fill(
+            R::new(12, 122 + (gap - start) as u16 * 34, w.saturating_sub(28), 2),
+            &t.accent,
+        );
+    }
     if m.projects.len() > rows {
-        let track = (rows as u16 * 34).min(l.height.saturating_sub(170));
+        let track = (rows as u16 * 34).min(l.height.saturating_sub(198));
         let thumb = (usize::from(track) * rows / m.projects.len()).max(18) as u16;
         let offset = (usize::from(track.saturating_sub(thumb)) * start
             / m.projects.len().saturating_sub(rows).max(1)) as u16;
-        p.fill(R::new(w.saturating_sub(6), 94, 2, track), &t.border);
+        p.fill(R::new(w.saturating_sub(6), 122, 2, track), &t.border);
         p.fill(
-            R::new(w.saturating_sub(6), 94 + offset, 2, thumb),
+            R::new(w.saturating_sub(6), 122 + offset, 2, thumb),
             &t.accent,
         );
     }
@@ -505,15 +732,21 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
     p.fill(R::new(0, 0, l.width, 82), &t.panel);
     p.fill(R::new(0, 81, l.width, 1), &t.border);
     let theme_w = if l.width > 850 { 150 } else { 100 };
+    let refresh_w = if l.width > 720 { 104 } else { 0 };
     p.text(
-        R::new(20, 10, l.width.saturating_sub(theme_w + 60), 26),
+        R::new(
+            20,
+            10,
+            l.width.saturating_sub(theme_w + 205 + refresh_w),
+            26,
+        ),
         m.project_label,
         &t.fg,
         18,
         true,
     );
     p.hit(
-        R::new(16, 8, l.width.saturating_sub(theme_w + 48), 28),
+        R::new(16, 8, l.width.saturating_sub(theme_w + 185 + refresh_w), 28),
         format!("project:{}", m.project),
     );
     p.text(
@@ -541,6 +774,24 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         t,
         false,
     );
+    if l.width > 600 {
+        p.button(
+            R::new(l.width.saturating_sub(theme_w + 144), 10, 122, 26),
+            m.audio_label,
+            "audio:toggle",
+            t,
+            m.audio_label == "Muted",
+        );
+    }
+    if refresh_w > 0 {
+        p.button(
+            R::new(l.width.saturating_sub(theme_w + 248), 10, 96, 26),
+            "Refresh",
+            "ui:refresh",
+            t,
+            false,
+        );
+    }
     let git_summary = m
         .git
         .map_or_else(|| "Checking Git…".into(), |g| g.summary());
@@ -563,109 +814,75 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         R::new(16, 56, l.width.saturating_sub(32), 24),
         "git:details",
     );
-    let mut x = 14;
-    for (space, name, id) in [
-        (Space::Agent, "Agent", "agent"),
-        (Space::Terminals, "Terminals", "terminals"),
-        (Space::Apps, "Apps", "apps"),
-    ] {
-        let w = if space == Space::Terminals { 114 } else { 86 };
-        p.button(
-            R::new(x, 90, w, 29),
-            name,
-            format!("view:{id}"),
-            t,
-            m.space == space,
-        );
-        x += w + 6;
-    }
-    if l.width > 960 {
-        p.text(
-            R::new(330, 94, l.width.saturating_sub(640), 23),
-            "All inside this project",
-            &t.muted,
-            11,
-            false,
-        );
-    }
-    if l.width > 460 {
-        p.button(
-            R::new(l.width - 140, 90, 126, 29),
-            "Launch app +",
-            "launch-app",
-            t,
-            false,
-        );
-    }
-    if l.width > 620 {
-        p.button(
-            R::new(l.width - 250, 90, 100, 29),
-            "Run app",
-            "run-app",
-            t,
-            false,
-        );
-    }
     p.fill(l.frame, &t.bg);
     p.fill(R::new(l.frame.x, l.frame.y, l.frame.width, 37), &t.panel);
     p.border(l.frame, if m.hover { &t.warning } else { &t.accent });
     let title = match m.space {
-        Space::Agent => format!("{} / {}", m.agent_name, m.agent_state),
-        Space::Terminals => format!("Project terminals / {}", m.host),
+        Space::Agent | Space::Terminals => {
+            if m.agent_state == "stopped" {
+                "Terminal exited · right-click its tab to reopen a shell".into()
+            } else if m.agent_name.is_empty() {
+                format!("Project terminals / {}", m.host)
+            } else {
+                format!("{} · {} / {}", m.agent_name, m.agent_state, m.host)
+            }
+        }
         Space::Apps => format!("Virtual app desktop / {}", m.desktop_host),
     };
-    p.text(
-        R::new(
-            l.frame.x + 12,
-            l.frame.y + 9,
-            l.frame.width.saturating_sub(310),
-            24,
-        ),
-        title,
-        &t.fg,
-        13,
-        false,
-    );
-    if m.space == Space::Apps {
-        let y = l.frame.y + 6;
-        let x = l.width.saturating_sub(310);
-        p.button(R::new(x, y, 54, 26), "Tile", "apps:tile", t, false);
-        p.button(
-            R::new(x + 60, y, 82, 26),
-            "Maximize",
-            "apps:maximize",
-            t,
-            false,
-        );
-        p.button(R::new(x + 148, y, 62, 26), "Close", "apps:close", t, false);
-        p.button(
-            R::new(x + 216, y, 78, 26),
-            "Reconnect",
-            "apps:reconnect",
-            t,
-            false,
-        );
-    } else if m.space == Space::Agent && l.width >= 480 {
-        p.button(
-            R::new(l.width.saturating_sub(135), l.frame.y + 6, 108, 26),
-            "Attach agent",
-            "agent:attach",
-            t,
+    if m.space != Space::Apps {
+        p.text(
+            R::new(
+                l.frame.x + 12,
+                l.frame.y + 9,
+                l.frame.width.saturating_sub(310),
+                24,
+            ),
+            title,
+            &t.fg,
+            13,
             false,
         );
     }
+    if m.space == Space::Apps {
+        let y = l.frame.y + 6;
+        p.button(
+            R::new(
+                l.frame.x + 12,
+                y,
+                136.min(l.frame.width.saturating_sub(24)),
+                26,
+            ),
+            "‹ Terminals",
+            "view:terminals",
+            t,
+            false,
+        );
+        if l.frame.width >= 470 {
+            let x = l.width.saturating_sub(310);
+            p.button(R::new(x, y, 54, 26), "Tile", "apps:tile", t, false);
+            p.button(
+                R::new(x + 60, y, 82, 26),
+                "Maximize",
+                "apps:maximize",
+                t,
+                false,
+            );
+            p.button(R::new(x + 148, y, 62, 26), "Close", "apps:close", t, false);
+            p.button(
+                R::new(x + 216, y, 78, 26),
+                "Reconnect",
+                "apps:reconnect",
+                t,
+                false,
+            );
+        }
+    }
     if m.space != Space::Apps {
-        let x = l
-            .width
-            .saturating_sub(if m.space == Space::Agent && l.width >= 480 {
-                313
-            } else {
-                190
-            });
+        let x = l.width.saturating_sub(190);
         let y = l.frame.y + 6;
         p.button(
             R::new(x, y, 34, 26),
-            "A−",
+            "−",
             "terminal:font:decrease",
             t,
             false,
@@ -679,78 +896,113 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         );
         p.button(
             R::new(x + 112, y, 34, 26),
-            "A+",
+            "+",
             "terminal:font:increase",
             t,
             false,
         );
     }
-    if m.space == Space::Agent {
-        let available = l.width.saturating_sub(220);
-        let count = usize::from(available / 158).max(1);
-        let selected = m.agents.iter().position(|a| a.id == m.agent).unwrap_or(0);
-        let start = selected.saturating_sub(count - 1);
-        let mut x = l.tabs.x + 5;
-        for agent in m.agents.iter().skip(start).take(count) {
-            let r = R::new(x, l.tabs.y + 3, 152.min(l.width.saturating_sub(x)), 27);
-            p.button(
-                r,
-                &agent.name,
-                format!("agent:{}", agent.id),
-                t,
-                agent.id == m.agent,
-            );
-            p.fill(
-                R::new(r.x + r.width.saturating_sub(10), r.y + 11, 4, 4),
-                match agent.state.as_str() {
-                    "stopped" | "disconnected" => &t.error,
-                    "waiting" | "needs_input" => &t.warning,
-                    "starting" => &t.muted,
-                    _ => &t.success,
+    if m.space != Space::Apps {
+        let tab_left = l.tabs.x;
+        let mut x = tab_left + TAB_LEAD;
+        let mut controls = if m.split { 275 } else { 175 };
+        // Shape the marker with the label so their complete visual group is
+        // centered. An independently anchored dot made the right padding uneven.
+        let labels = m
+            .terminals
+            .iter()
+            .map(
+                |(id, name)| match m.terminal_status.get(id).map(String::as_str) {
+                    Some(
+                        "needs_input"
+                        | "waiting_for_approval"
+                        | "needs_approval"
+                        | "needs_permission",
+                    ) => format!("{name} ?"),
+                    Some("stopped" | "disconnected") => format!("{name} ×"),
+                    Some(_) => format!("{name} ▪"),
+                    None => name.clone(),
                 },
-            );
-            x += 158;
+            )
+            .collect::<Vec<_>>();
+        let widths: Vec<_> = labels
+            .iter()
+            .map(|label| (label.chars().count() as u16 * 8 + 34).clamp(90, 240))
+            .collect();
+        let available = l.width.saturating_sub(controls + x + TAB_LEAD + 12);
+        let overflow = widths.iter().map(|w| u32::from(*w)).sum::<u32>() > u32::from(available);
+        if overflow {
+            controls += 68;
         }
-        if m.agents.len() > count && l.width > 430 {
-            p.button(
-                R::new(l.width - 182, l.tabs.y + 3, 28, 27),
-                "‹",
-                "agent:previous",
-                t,
-                false,
-            );
-            p.button(
-                R::new(l.width - 148, l.tabs.y + 3, 28, 27),
-                "›",
-                "agent:next",
-                t,
-                false,
-            );
+        let available = l.width.saturating_sub(controls + x + TAB_LEAD + 12);
+        let selected = m
+            .terminals
+            .iter()
+            .position(|(id, _)| *id == m.terminal)
+            .unwrap_or(0);
+        let mut start = 0;
+        while start < selected
+            && widths[start..=selected]
+                .iter()
+                .map(|w| u32::from(*w))
+                .sum::<u32>()
+                > u32::from(available)
+        {
+            start += 1;
         }
-        p.button(
-            R::new(l.width.saturating_sub(112), l.tabs.y + 3, 92, 27),
-            "+ Agent",
-            "agent:new",
-            t,
-            false,
-        );
-    }
-    if m.space == Space::Terminals {
-        let mut x = l.tabs.x + 5;
-        let controls = if m.split { 275 } else { 175 };
-        for (id, name) in &m.terminals {
-            let width = (name.chars().count() as u16 * 8 + 24).clamp(80, 200);
-            if x + width > l.width.saturating_sub(controls) {
+        // Give the baseline the same short lead and tail, with an explicit
+        // gap before the fixed controls rather than filling the whole strip.
+        let tabs_right = l.width.saturating_sub(controls + TAB_LEAD + 12);
+        let mut tab_end = x;
+        for width in widths.iter().skip(start) {
+            if tab_end + width > tabs_right {
                 break;
             }
-            p.button(
-                R::new(x, l.tabs.y + 3, width, 27),
-                name,
+            tab_end += width;
+        }
+        let baseline_end = (tab_end + TAB_LEAD).min(l.width.saturating_sub(controls + 12));
+        p.fill(
+            R::new(
+                tab_left,
+                l.tabs.y + l.tabs.height - 1,
+                baseline_end.saturating_sub(tab_left),
+                1,
+            ),
+            &t.tab_color(),
+        );
+        for (((id, _), label), width) in m.terminals.iter().zip(&labels).zip(widths).skip(start) {
+            if x + width > tabs_right {
+                break;
+            }
+            p.tab(
+                R::new(
+                    x,
+                    l.tabs.y + l.tabs.height.saturating_sub(TAB_HEIGHT),
+                    width,
+                    TAB_HEIGHT.min(l.tabs.height),
+                ),
+                label,
                 format!("terminal:{id}"),
                 t,
                 *id == m.terminal,
             );
-            x += width + 6
+            x += width
+        }
+        if overflow {
+            p.button(
+                R::new(l.width.saturating_sub(controls), l.tabs.y + 3, 28, 27),
+                "‹",
+                "terminal:previous",
+                t,
+                false,
+            );
+            p.button(
+                R::new(l.width.saturating_sub(controls) + 34, l.tabs.y + 3, 28, 27),
+                "›",
+                "terminal:next",
+                t,
+                false,
+            );
         }
         if m.split {
             p.button(
@@ -776,6 +1028,20 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
+    if m.space != Space::Apps && m.terminals.is_empty() {
+        p.centered_text(
+            R::new(
+                l.canvas.x + 12,
+                l.canvas.y + 30,
+                l.canvas.width.saturating_sub(24),
+                30,
+            ),
+            "No terminals open · use + Tab to start a shell",
+            &t.muted,
+            13,
+            false,
+        );
+    }
     if m.space == Space::Apps && !m.connected {
         p.text(
             R::new(
@@ -792,97 +1058,86 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         p.text(R::new(l.canvas.x+24,l.canvas.y+88,l.canvas.width.saturating_sub(48),60),"The app host needs S T A R / M U X and a usable graphics device.\nAgent and terminal sessions stay available.",&t.muted,12,false);
     }
     if m.space != Space::Apps && l.shelf.height > 0 {
-        p.text(
-            R::new(l.shelf.x, l.shelf.y + 8, 90, 30),
-            "PROJECT\nAPPS",
-            &t.muted,
-            11,
+        let card = R::new(l.shelf.x, l.shelf.y, 190.min(l.shelf.width), l.shelf.height);
+        p.fill(card, &t.panel);
+        p.border(card, if m.connected { &t.accent } else { &t.border });
+        desktop_map(
+            &mut p,
+            R::new(
+                card.x + 10,
+                card.y + 6,
+                card.width.saturating_sub(20),
+                card.height.saturating_sub(46),
+            ),
+            m.app_desktop,
+            t,
+        );
+        p.centered_text(
+            R::new(
+                card.x + 2,
+                card.y + card.height.saturating_sub(36),
+                card.width.saturating_sub(4),
+                19,
+            ),
+            "Open app space >",
+            &t.fg,
+            12,
             false,
         );
-        let mut x = l.shelf.x + 96;
-        let card_w = 160u16;
-        for app in &m.apps {
-            if x + card_w > l.width.saturating_sub(175) {
-                break;
-            }
-            let card = R::new(x, l.shelf.y, card_w, l.shelf.height);
-            p.fill(card, &t.panel);
-            p.border(card, if app.selected { &t.accent } else { &t.border });
-            let preview = R::new(
-                x + 1,
-                l.shelf.y + 1,
-                card_w - 2,
-                l.shelf.height.saturating_sub(39),
-            );
-            p.grid(preview, &t.grid);
-            p.text(
-                R::new(x + 13, l.shelf.y + 8, 135, 23),
-                "[ app ]",
-                &t.accent,
-                12,
-                false,
-            );
-            p.text(
-                R::new(
-                    x + 9,
-                    l.shelf.y + l.shelf.height.saturating_sub(36),
-                    card_w - 18,
-                    19,
-                ),
-                app.name,
-                &t.fg,
-                12,
-                false,
-            );
-            p.text(
-                R::new(
-                    x + 9,
-                    l.shelf.y + l.shelf.height.saturating_sub(18),
-                    card_w - 18,
-                    17,
-                ),
-                app.host,
-                &t.muted,
-                10,
-                false,
-            );
-            p.hit(card, app.action.clone());
-            x += card_w + 10;
-        }
+        let count = m.app_desktop.map_or(0, |d| d.windows.len());
+        p.centered_text(
+            R::new(
+                card.x + 2,
+                card.y + card.height.saturating_sub(18),
+                card.width.saturating_sub(4),
+                17,
+            ),
+            format!(
+                "{count} {} · {}",
+                if count == 1 { "app" } else { "apps" },
+                m.desktop_host
+            ),
+            &t.muted,
+            10,
+            false,
+        );
+        p.hit(card, "view:apps");
+    }
+    if m.space == Space::Apps {
+        p.fill(
+            R::new(
+                14,
+                l.height.saturating_sub(36),
+                l.width.saturating_sub(28),
+                1,
+            ),
+            &t.tab_color(),
+        );
         p.button(
-            R::new(x.min(l.width.saturating_sub(175)), l.shelf.y + 14, 146, 30),
+            R::new(
+                l.width.saturating_sub(160),
+                l.height.saturating_sub(66),
+                146,
+                30,
+            ),
             "+ Launch app",
             "launch-app",
             t,
             false,
         );
-        p.button(
-            R::new(
-                l.width.saturating_sub(168),
-                l.shelf.y + l.shelf.height.saturating_sub(32),
-                154,
-                29,
-            ),
-            "Open app space >",
-            "view:apps",
-            t,
-            false,
-        );
-    }
-    if m.space == Space::Apps {
-        let mut x = 14;
+        let mut x = 22;
         for app in &m.apps {
-            if x + 170 > l.width.saturating_sub(28) {
+            if x + 170 > l.width.saturating_sub(174) {
                 break;
             }
-            p.button(
+            p.tab(
                 R::new(x, l.height.saturating_sub(62), 160, 27),
                 app.name,
                 app.action.clone(),
                 t,
                 app.selected,
             );
-            x += 166;
+            x += 160;
         }
     }
     p.fill(l.footer, &t.panel);
@@ -1157,6 +1412,10 @@ fn draw_git(p: &mut Pen, l: Layout, t: &Appearance, m: &Model<'_>) {
     for hit in &mut body.surface.hits {
         hit.rect.y += r.y;
     }
+    let offset = p.surface.nodes.len() as u16;
+    p.surface
+        .centered_text
+        .extend(body.surface.centered_text.into_iter().map(|i| i + offset));
     p.surface.nodes.extend(body.surface.nodes);
     p.surface.hits.extend(body.surface.hits);
 }
@@ -1217,7 +1476,224 @@ fn draw_context_menu(p: &mut Pen, l: Layout, t: &Appearance, m: &ContextMenu) {
         p.hit(row, format!("menu:item:{i}"));
     }
 }
+pub fn application_rows(height: u16) -> usize {
+    usize::from(height.saturating_sub(190).min(410) / 42).max(1)
+}
+fn draw_application_picker(
+    p: &mut Pen,
+    l: Layout,
+    t: &Appearance,
+    m: &Modal<'_>,
+    apps: &ApplicationPicker<'_>,
+) {
+    let w = 940.min(l.width.saturating_sub(24));
+    let h = 600.min(l.height.saturating_sub(20));
+    let r = R::new((l.width - w) / 2, (l.height - h) / 2, w, h);
+    p.fill(r, &t.bg);
+    p.border(r, &t.accent);
+    p.text(
+        R::new(r.x + 20, r.y + 14, w.saturating_sub(70), 30),
+        "Launch application",
+        &t.fg,
+        18,
+        true,
+    );
+    p.button(
+        R::new(r.x + w - 40, r.y + 11, 26, 26),
+        "x",
+        "modal:cancel",
+        t,
+        false,
+    );
+    let split = w >= 676;
+    let left = if split {
+        w * 45 / 100
+    } else {
+        w.saturating_sub(40)
+    };
+    let search = R::new(r.x + 20, r.y + 62, left, 34);
+    p.fill(search, &t.panel);
+    p.border(search, if apps.focused { &t.accent } else { &t.border });
+    let text = if apps.focused {
+        format!(
+            "{}|{}",
+            &apps.query[..apps.cursor],
+            &apps.query[apps.cursor..]
+        )
+    } else if apps.query.is_empty() {
+        "Search applications…".into()
+    } else {
+        apps.query.into()
+    };
+    p.text(
+        R::new(
+            search.x + 9,
+            search.y + 6,
+            search.width.saturating_sub(18),
+            24,
+        ),
+        text,
+        &t.fg,
+        13,
+        false,
+    );
+    p.hit(search, "modal:search");
+    p.text(
+        R::new(search.x, r.y + 104, left, 20),
+        format!("{} / {} matches", apps.status, apps.count),
+        &t.muted,
+        10,
+        false,
+    );
+    for (row, (index, name, executable)) in apps.rows.iter().enumerate() {
+        let y = r.y + 132 + row as u16 * 42;
+        if y + 40 > r.y + h.saturating_sub(56) {
+            break;
+        }
+        let rect = R::new(search.x, y, left, 40);
+        if *index == apps.selected {
+            p.fill(rect, &t.selection);
+            p.fill(R::new(rect.x, rect.y + 5, 2, 30), &t.accent);
+        }
+        p.text(
+            R::new(rect.x + 10, rect.y + 3, left.saturating_sub(20), 21),
+            *name,
+            if *index == apps.selected {
+                &t.accent
+            } else {
+                &t.fg
+            },
+            13,
+            false,
+        );
+        p.text(
+            R::new(rect.x + 10, rect.y + 23, left.saturating_sub(20), 16),
+            *executable,
+            &t.muted,
+            10,
+            false,
+        );
+        p.hit(rect, format!("modal:application:{index}"));
+    }
+    if apps.rows.is_empty() {
+        p.text(
+            R::new(search.x + 10, r.y + 143, left.saturating_sub(20), 60),
+            if apps.query.is_empty() {
+                "No applications loaded"
+            } else {
+                "No matching applications"
+            },
+            &t.muted,
+            12,
+            false,
+        );
+    }
+    if split {
+        let x = r.x + left + 42;
+        let width = w.saturating_sub(left + 62);
+        for (i, f) in m.fields.iter().enumerate() {
+            let y = r.y + 62 + i as u16 * 84;
+            if y + 60 > r.y + h.saturating_sub(70) {
+                break;
+            }
+            p.text(
+                R::new(x, y, width, 21),
+                if i == 0 && apps.selection_name.is_some() {
+                    "Application"
+                } else {
+                    f.label
+                },
+                &t.muted,
+                11,
+                false,
+            );
+            let field = R::new(x, y + 25, width, 34);
+            p.fill(field, &t.panel);
+            p.border(
+                field,
+                if !apps.focused && i == m.selected {
+                    &t.accent
+                } else {
+                    &t.border
+                },
+            );
+            let text = if let Some(name) = apps.selection_name.filter(|_| i == 0) {
+                name.into()
+            } else if !apps.focused && i == m.selected {
+                format!("{}|{}", &f.text[..f.cursor], &f.text[f.cursor..])
+            } else {
+                f.text.into()
+            };
+            p.text(
+                R::new(x + 9, y + 31, width.saturating_sub(18), 24),
+                text,
+                &t.fg,
+                12,
+                false,
+            );
+            p.hit(
+                field,
+                if i == 0 && apps.selection_name.is_some() {
+                    "modal:details".into()
+                } else {
+                    format!("modal:field:{i}")
+                },
+            );
+        }
+        p.text(
+            R::new(x, r.y + h.saturating_sub(96), width, 40),
+            m.error,
+            &t.error,
+            11,
+            false,
+        );
+    }
+    if !m.error.is_empty() {
+        p.text(
+            R::new(
+                r.x + 20,
+                r.y + h.saturating_sub(70),
+                w.saturating_sub(40),
+                22,
+            ),
+            m.error,
+            &t.error,
+            11,
+            false,
+        );
+    }
+    p.button(
+        R::new(r.x + 20, r.y + h.saturating_sub(43), 132, 27),
+        "Custom / host…",
+        "modal:details",
+        t,
+        false,
+    );
+    p.text(
+        R::new(
+            r.x + 164,
+            r.y + h.saturating_sub(37),
+            w.saturating_sub(320),
+            22,
+        ),
+        "↑↓ / select · Enter / launch",
+        &t.muted,
+        10,
+        false,
+    );
+    p.button(
+        R::new(r.x + w - 120, r.y + h.saturating_sub(43), 100, 27),
+        "Launch",
+        "modal:accept",
+        t,
+        false,
+    );
+}
 fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
+    if let Some(apps) = &m.applications {
+        draw_application_picker(p, l, t, m, apps);
+        return;
+    }
     let w = 640.min(l.width.saturating_sub(24));
     let h = (135 + m.fields.len() as u16 * 68).min(l.height.saturating_sub(20));
     let r = R::new((l.width - w) / 2, (l.height - h) / 2, w, h);
@@ -1280,13 +1756,23 @@ fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
         11,
         false,
     );
-    p.text(
-        R::new(r.x + 20, r.y + h - 30, w.saturating_sub(165), 21),
-        "Tab / next   Ctrl+Enter / accept",
-        &t.muted,
-        10,
-        false,
-    );
+    if m.catalog_available {
+        p.button(
+            R::new(r.x + 20, r.y + h - 36, 152, 27),
+            "Browse system apps",
+            "modal:catalog",
+            t,
+            false,
+        );
+    } else {
+        p.text(
+            R::new(r.x + 20, r.y + h - 30, w.saturating_sub(165), 21),
+            "Tab / next   Ctrl+Enter / accept",
+            &t.muted,
+            10,
+            false,
+        );
+    }
     p.button(
         R::new(r.x + w - 120, r.y + h - 36, 100, 27),
         "Accept",
@@ -1299,8 +1785,44 @@ fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
 mod tests {
     use super::*;
     #[test]
+    fn desktop_map_keeps_aspect_and_clips_offscreen_windows() {
+        let bounds = desktop_bounds(R::new(10, 20, 140, 80), [1000, 1000]).unwrap();
+        assert_eq!(
+            (bounds.x, bounds.y, bounds.width, bounds.height),
+            (40, 20, 80, 80)
+        );
+        let mut window = crate::project::WindowLayout {
+            app_id: "test".into(),
+            x: -250,
+            y: 500,
+            width: 750,
+            height: 1000,
+        };
+        let rect = map_window(bounds, [1000, 1000], &window).unwrap();
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), (40, 60, 40, 40));
+        window.x = 1000;
+        assert!(map_window(bounds, [1000, 1000], &window).is_none());
+        assert!(desktop_bounds(bounds, [0, 1000]).is_none());
+    }
+    #[test]
     fn native_surfaces_validate_in_all_spaces_and_sizes() {
         let theme = Appearance::load("kanagawa").unwrap();
+        let windows = [
+            crate::project::WindowLayout {
+                app_id: "handy".into(),
+                x: 0,
+                y: 0,
+                width: 1280,
+                height: 1080,
+            },
+            crate::project::WindowLayout {
+                app_id: "support".into(),
+                x: 1280,
+                y: 0,
+                width: 640,
+                height: 1080,
+            },
+        ];
         for (width, height) in [(320, 240), (800, 600), (1400, 900), (3424, 2150)] {
             for space in [Space::Agent, Space::Terminals, Space::Apps] {
                 let mut model = Model {
@@ -1308,24 +1830,45 @@ mod tests {
                     project_label: "sample",
                     project_offset: 0,
                     project_total: 1,
+                    sort_hover: false,
+                    sort_mode_hover: false,
+                    project_manual: true,
+                    project_drag: None,
+                    project_sort_high: true,
                     wave_phase: 0,
                     reduced_motion: false,
                     directory: "/work/sample",
                     host: "ssh-host",
                     desktop_host: "local",
                     theme: "Kanagawa",
+                    audio_label: "Audio on",
                     space,
                     projects: vec![],
                     terminals: vec![(0, "Shell".into())],
+                    terminal_status: Default::default(),
                     terminal: 0,
                     terminal_font_size: "16px".into(),
                     split: false,
-                    agent: 1,
-                    agents: vec![],
                     agent_name: "Codex",
                     agent_state: "running",
                     status: "Ready",
-                    apps: vec![],
+                    apps: vec![
+                        AppCard {
+                            action: "app:desktop:1".into(),
+                            name: "Handy",
+                            selected: true,
+                        },
+                        AppCard {
+                            action: "app:desktop:2".into(),
+                            name: "Supporting app",
+                            selected: false,
+                        },
+                    ],
+                    app_desktop: Some(DesktopMap {
+                        size: [1920, 1080],
+                        windows: &windows,
+                        selected: Some(0),
+                    }),
                     connected: false,
                     git: None,
                     git_open: false,
@@ -1337,6 +1880,42 @@ mod tests {
                 };
                 let (chrome, foreground) =
                     surfaces(Layout::new(width, height, space), &theme, &model);
+                if space != Space::Apps {
+                    let shelf = Layout::new(width, height, space).shelf;
+                    assert_eq!(
+                        chrome
+                            .hits
+                            .iter()
+                            .filter(|h| h.action == "view:apps" && h.rect.y >= shelf.y)
+                            .count(),
+                        1,
+                        "Multiple app windows must share one desktop card"
+                    );
+                    assert!(
+                        !chrome.hits.iter().any(|h| h.action.starts_with("app:")),
+                        "Individual app selectors belong inside app space"
+                    );
+                }
+                assert_eq!(
+                    chrome
+                        .hits
+                        .iter()
+                        .filter(|h| h.action == "launch-app")
+                        .count(),
+                    usize::from(space == Space::Apps),
+                    "The app launcher belongs exclusively to app space"
+                );
+                if space == Space::Apps {
+                    assert!(
+                        chrome.hits.iter().any(|h| h.action == "view:terminals"),
+                        "App space must always provide a return to terminals"
+                    );
+                } else {
+                    assert!(
+                        !chrome.hits.iter().any(|h| h.action == "view:terminals"),
+                        "Terminal space uses the desktop card, without a view tab row"
+                    );
+                }
                 chrome.validate().unwrap();
                 foreground.validate().unwrap();
                 let menu = ContextMenu {
@@ -1383,11 +1962,17 @@ mod tests {
                 project_label: "Zendocon decompile",
                 project_offset: offset,
                 project_total: 20,
+                sort_hover: false,
+                sort_mode_hover: false,
+                project_manual: true,
+                project_drag: None,
+                project_sort_high: true,
                 wave_phase: 0,
                 reduced_motion: false,
                 directory: "/work/zendocon",
                 host: "local",
                 theme: "Kanagawa",
+                audio_label: "Audio on",
                 space: Space::Agent,
                 projects: ids
                     .iter()
@@ -1397,18 +1982,20 @@ mod tests {
                         host: "local",
                         working: 0,
                         waiting: 0,
+                        running: 0,
+                        questions: 0,
                     })
                     .collect(),
                 terminals: vec![(0, "Shell".into())],
+                terminal_status: Default::default(),
                 terminal: 0,
                 terminal_font_size: "14.7px".into(),
                 split: false,
-                agent: 1,
-                agents: vec![],
                 agent_name: "Codex",
                 agent_state: "working",
                 status: "Ready",
                 apps: vec![],
+                app_desktop: None,
                 connected: false,
                 desktop_host: "local",
                 git: None,

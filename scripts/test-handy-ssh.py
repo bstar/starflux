@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix="handy-ssh-") as tmp:
         viewer = connect()
         wait(lambda: any(p["type"] == "hello" for p in packets), "No desktop handshake")
         worker = next(p["pid"] for p in packets if p["type"] == "hello")
-        command = [str(app), "--app-launch", session, "--app-directory", str(game), "--", "python3", "tools/run_handy.py", "--app-space", "build/lynx/engine/live-effects-probe/engine-probe.lnx", "--no-sound"]
+        command = [str(app), "--app-launch", session, "--app-directory", str(game), "--", "python3", "tools/run_handy.py", "--app-space", "build/lynx/engine/live-effects-probe/engine-probe.lnx"]
         windows = json.loads(subprocess.check_output(ssh + [shlex.join(command)], timeout=30))
         assert len(windows) == 1 and windows[0]["app_id"] == "handy_sdl", windows
         wait(lambda: any(p["type"] == "windows" and p["windows"] == windows for p in packets), "Viewer lost live window notifications")
@@ -111,7 +111,33 @@ with tempfile.TemporaryDirectory(prefix="handy-ssh-") as tmp:
         wait(lambda: any(p["type"] == "windows" and {w["id"] for w in p["windows"]} == {w["id"] for w in windows} for p in packets), "Windows did not survive reconnect")
         assert next(p["pid"] for p in packets if p["type"] == "hello") == worker
         wait(lambda: any(p["type"] == "frame" for p in packets), "No frame after reconnect")
-        result = {"transport":"authenticated loopback SSH", "worker_pid":worker, "windows":windows, "launch_preserves_viewer":True, "worker_and_window_survive_reconnect":True, "distinct_game_frames_in_3_seconds":len(changed)}
+        audio_packets=[]
+        audio=subprocess.Popen(ssh+[shlex.join([str(app),"--desktop-audio-relay",session,str(worker)])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=(out/"audio.log").open("w"))
+        def audio_read():
+            def exact(n):
+                value=b""
+                while len(value)<n:
+                    part=audio.stdout.read(n-len(value))
+                    if not part:raise EOFError
+                    value+=part
+                return value
+            try:
+                while True:audio_packets.append(json.loads(exact(struct.unpack(">I",exact(4))[0])))
+            except (EOFError,OSError):pass
+        threading.Thread(target=audio_read,daemon=True).start()
+        try:
+            wait(lambda:any(p["type"]=="ready" for p in audio_packets),"No Handy audio handshake")
+            peak=0
+            for _ in range(16):
+                count=len([p for p in audio_packets if p["type"]=="chunk"])
+                message=json.dumps({"blocks":8}).encode();audio.stdin.write(struct.pack(">I",len(message))+message);audio.stdin.flush()
+                wait(lambda:len([p for p in audio_packets if p["type"]=="chunk"])>=count+8,"Handy audio credits stalled")
+                peak=max((abs(x)for p in audio_packets if p["type"]=="chunk" for x in p["samples"]),default=0)
+                if peak>100:break
+            assert peak>100,("Handy soundtrack was silent",peak)
+        finally:
+            audio.terminate();audio.wait(timeout=10)
+        result = {"handy_audio_peak_over_ssh":peak,"transport":"authenticated loopback SSH", "worker_pid":worker, "windows":windows, "launch_preserves_viewer":True, "worker_and_window_survive_reconnect":True, "distinct_game_frames_in_3_seconds":len(changed)}
         (out / "result.json").write_text(json.dumps(result, indent=2)+"\n")
         print(json.dumps(result))
     finally:

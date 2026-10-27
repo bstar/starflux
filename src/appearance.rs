@@ -152,11 +152,26 @@ impl Appearance {
                 .collect(),
         })
     }
+    pub fn tab_color(&self) -> String {
+        let bg = Rgb::parse_hex(&self.bg).unwrap();
+        let level = if bg.contrast(Rgb::new(0, 0, 0)) > bg.contrast(Rgb::new(255, 255, 255)) {
+            96
+        } else {
+            176
+        };
+        Rgb::new(level, level, level).to_hex()
+    }
     pub fn activity_color(&self, base: &str, strength: f64) -> String {
+        self.activity_tint(base, &self.accent, strength)
+    }
+    pub fn attention_color(&self, base: &str, strength: f64) -> String {
+        self.activity_tint(base, &self.warning, strength)
+    }
+    fn activity_tint(&self, base: &str, accent: &str, strength: f64) -> String {
         let base = Rgb::parse_hex(base).unwrap();
         let crest = readable(
             mix(
-                Rgb::parse_hex(&self.accent).unwrap(),
+                Rgb::parse_hex(accent).unwrap(),
                 Rgb::parse_hex(&self.fg).unwrap(),
                 0.65,
             ),

@@ -21,7 +21,7 @@ use smithay::{
             element::{
                 Kind,
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
-                surface::WaylandSurfaceRenderElement,
+                surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
             },
             gles::{GlesRenderbuffer, GlesRenderer},
         },
@@ -30,7 +30,10 @@ use smithay::{
     input::{
         Seat, SeatState,
         keyboard::{FilterResult, KeyboardTarget},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
+        pointer::{
+            AxisFrame, ButtonEvent, CursorImageStatus, CursorImageSurfaceData, MotionEvent,
+            RelativeMotionEvent,
+        },
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -40,7 +43,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Transform},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
-        dmabuf::DmabufState,
+        dmabuf::{DmabufFeedbackBuilder, DmabufState},
         output::OutputManagerState,
         pointer_constraints::{PointerConstraintsState, with_pointer_constraint},
         relative_pointer::RelativePointerManagerState,
@@ -54,6 +57,7 @@ use smithay::{
 };
 use std::{
     ffi::OsString,
+    os::unix::fs::MetadataExt,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -64,6 +68,7 @@ smithay::backend::renderer::element::render_elements! {
     DesktopElement<=GlesRenderer>;
     Window=smithay::desktop::space::SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
     Wallpaper=MemoryRenderBufferRenderElement<GlesRenderer>,
+    Cursor=WaylandSurfaceRenderElement<GlesRenderer>,
 }
 fn wallpaper_buffer(wallpaper: Wallpaper, settings: &Settings) -> MemoryRenderBuffer {
     MemoryRenderBuffer::from_slice(
@@ -97,6 +102,71 @@ fn fit_window_geometry(
 #[cfg(test)]
 mod geometry_tests {
     use super::*;
+    #[test]
+    #[ignore = "Requires a local hardware render device; no windows or apps are created"]
+    fn wayland_client_discovers_hardware_gpu_without_a_window() {
+        let desktop = Desktop::start(Settings {
+            width: 320,
+            height: 240,
+            fps: 60,
+        });
+        let started = Instant::now();
+        let socket = loop {
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "Headless compositor startup timed out"
+            );
+            match desktop.events.recv_timeout(Duration::from_secs(2)) {
+                Ok(DesktopEvent::Ready(socket)) => break socket,
+                Ok(DesktopEvent::Error(error)) => panic!("{error}"),
+                _ => {}
+            }
+        };
+        let result = Command::new("python3")
+            .args(["-c", include_str!("../../scripts/profile-egl.py")])
+            .env("WAYLAND_DISPLAY", socket)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&result.stdout);
+        eprintln!("{output}{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(), "Headless EGL client failed");
+        assert!(output.contains("GL_RENDERER="));
+        assert!(
+            !output.to_lowercase().contains("llvmpipe"),
+            "Client is still software rendered"
+        );
+    }
+    #[test]
+    fn app_desktops_keep_sixty_hz_under_continuous_input() {
+        let start = Instant::now();
+        let mut clock = FrameClock::new(start);
+        clock.burst = false;
+        let mut frames = 0;
+        for ms in 0..1000 {
+            let now = start + Duration::from_millis(ms);
+            clock.input(now, 60);
+            clock.pending = true;
+            if clock.ready(now, 60) {
+                clock.rendered(now, 60);
+                frames += 1;
+            }
+        }
+        assert_eq!(frames, 60);
+    }
+    #[test]
+    fn sixty_hz_does_not_accumulate_polling_jitter() {
+        let start = Instant::now();
+        let mut clock = FrameClock::new(start);
+        let mut frames = 0;
+        for ms in (0..=1000).step_by(2) {
+            let now = start + Duration::from_millis(ms);
+            if clock.ready(now, 60) {
+                clock.rendered(now, 60);
+                frames += 1;
+            }
+        }
+        assert!(frames >= 60, "60 Hz drifted to {frames} frames");
+    }
     #[test]
     fn input_bursts_are_bounded_and_do_not_accumulate_future_deadlines() {
         let start = Instant::now();
@@ -148,6 +218,7 @@ struct FrameClock {
     last: Instant,
     interactive_until: Instant,
     pending: bool,
+    burst: bool,
 }
 impl FrameClock {
     fn new(now: Instant) -> Self {
@@ -156,10 +227,11 @@ impl FrameClock {
             last: now,
             interactive_until: now,
             pending: false,
+            burst: true,
         }
     }
     fn input(&mut self, now: Instant, fps: u32) {
-        if fps < 60 {
+        if fps < 60 || !self.burst {
             return;
         }
         self.interactive_until = now + Duration::from_millis(150);
@@ -175,7 +247,15 @@ impl FrameClock {
     fn rendered(&mut self, now: Instant, fps: u32) {
         self.last = now;
         self.pending = false;
-        self.next = now + Duration::from_secs_f64(1. / f64::from(fps));
+        let interval = Duration::from_secs_f64(1. / f64::from(fps));
+        if now < self.next {
+            self.next = now + interval;
+        } else {
+            self.next += interval;
+            if now.saturating_duration_since(self.next) >= interval {
+                self.next = now + interval;
+            }
+        }
     }
 }
 pub(super) struct State {
@@ -210,6 +290,7 @@ pub(super) struct State {
     pub audio_sink: Option<String>,
     pub relay_audio: bool,
     pub locked: bool,
+    pub cursor_status: CursorImageStatus,
     pub keys: std::collections::HashSet<u32>,
     pub pending_launches: Vec<Launch>,
     pub layout: Vec<WindowLayout>,
@@ -281,7 +362,29 @@ pub(super) fn run(
     let socket = listener.socket_name().to_os_string();
     let renderer = renderer()?;
     let mut dmabuf = DmabufState::new();
-    dmabuf.create_global::<State>(&dh, renderer.dmabuf_formats().iter().copied());
+    // Version 4 feedback tells Mesa which DRM render node backs this desktop.
+    // Format-only v3 advertisement leaves Wayland EGL clients with fd=-1,
+    // silently selecting llvmpipe even though our compositor uses the GPU.
+    let feedback = (|| -> Result<_> {
+        let device = EGLDevice::device_for_display(renderer.egl_context().display())?;
+        let node = device.render_device_path()?;
+        let main_device = std::fs::metadata(&node)?.rdev();
+        let feedback =
+            DmabufFeedbackBuilder::new(main_device, renderer.dmabuf_formats().iter().copied())
+                .build()
+                .context("Build render-device feedback")?;
+        tracing::info!(render_node = %node.display(), "Advertising app GPU device");
+        Ok(feedback)
+    })();
+    match feedback {
+        Ok(feedback) => {
+            dmabuf.create_global_with_default_feedback::<State>(&dh, &feedback);
+        }
+        Err(error) => {
+            tracing::warn!(%error, "GPU device feedback unavailable; clients may use software rendering");
+            dmabuf.create_global::<State>(&dh, renderer.dmabuf_formats().iter().copied());
+        }
+    }
     let output = Output::new(
         "STAR/MUX".into(),
         PhysicalProperties {
@@ -316,6 +419,7 @@ pub(super) fn run(
         seat,
         dmabuf,
         renderer,
+        cursor_status: CursorImageStatus::default_named(),
         drag: None,
         window_drag: None,
         buttons: Default::default(),
@@ -418,6 +522,12 @@ pub(super) fn run(
                         state.clock.input(Instant::now(), state.settings.fps);
                     }
                     state.input(input);
+                }
+                DesktopCommand::InputBurst(enabled) => {
+                    state.clock.burst = enabled;
+                    if !enabled {
+                        state.clock.interactive_until = Instant::now();
+                    }
                 }
                 DesktopCommand::Launch(launch) => state.launch(launch),
                 DesktopCommand::Visible(ids) => {
@@ -563,6 +673,34 @@ pub(super) fn run(
             .into_iter()
             .map(DesktopElement::Window)
             .collect();
+            if let CursorImageStatus::Surface(surface) = &state.cursor_status {
+                let hotspot = smithay::wayland::compositor::with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<CursorImageSurfaceData>()
+                        .map(|attributes| attributes.lock().unwrap().hotspot)
+                        .unwrap_or_default()
+                });
+                let location =
+                    state.seat.get_pointer().unwrap().current_location() - hotspot.to_f64();
+                let cursor: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                    render_elements_from_surface_tree(
+                        &mut state.renderer,
+                        surface,
+                        (location.x.round() as i32, location.y.round() as i32),
+                        1.,
+                        1.,
+                        Kind::Cursor,
+                    );
+                elements.splice(0..0, cursor.into_iter().map(DesktopElement::Cursor));
+                smithay::desktop::utils::send_frames_surface_tree(
+                    surface,
+                    &state.output,
+                    state.started.elapsed(),
+                    Some(Duration::ZERO),
+                    |_, _| Some(state.output.clone()),
+                );
+            }
             elements.push(DesktopElement::Wallpaper(
                 MemoryRenderBufferRenderElement::from_buffer(
                     &mut state.renderer,

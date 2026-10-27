@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$app_root"
+mkdir -p target/nix-shell target/release
+cp flake.nix flake.lock target/nix-shell/
+nix --extra-experimental-features 'nix-command flakes' develop "path:$app_root/target/nix-shell" --profile "$app_root/target/dev-shell" -c cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o target/release/starmux-pty-proxy.new
+mv -f target/release/starmux-pty-proxy.new target/release/starmux-pty-proxy

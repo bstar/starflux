@@ -33,20 +33,34 @@ use std::{
 #[derive(Debug)]
 enum Event {
     Ready(Box<Config>, usize),
+    Applications(
+        String,
+        Instant,
+        std::result::Result<Vec<crate::applications::Application>, String>,
+    ),
     Git(String, String, Box<crate::git::Status>),
     Activity(BTreeMap<String, crate::activity::Activity>),
     Selected(u64, String),
-    Health(String, usize, Value),
+    Health(String, usize, Value, Arc<AtomicBool>),
     Status(String),
     Delivered(String, usize, String),
     AppDelivered(String, u64, String),
     Error(String),
     TransferFailed(String),
 }
+const AUDIO_SESSION: u64 = 0x535441524d5558;
+struct AudioRoute {
+    key: String,
+    epoch: u64,
+    source: crate::app_audio::Source,
+    sent: u64,
+    credits: u64,
+}
 struct AppHost {
     config: Config,
     client: AppClient,
     windows: Vec<WindowInfo>,
+    layout: Vec<WindowLayout>,
     selected: Option<u64>,
 }
 #[derive(Clone)]
@@ -58,11 +72,41 @@ enum Prompt {
     RenameTab(usize),
     RenameAgent(usize),
 }
+struct Catalog {
+    source: String,
+    changed: Instant,
+    requested: bool,
+    apps: Vec<crate::applications::Application>,
+    query: TextInput,
+    selected: usize,
+    offset: usize,
+    focused: bool,
+    visible: bool,
+    status: String,
+}
+impl Catalog {
+    fn matches(&self) -> Vec<usize> {
+        self.apps
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.matches(self.query.text()))
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
 struct Modal {
     kind: Prompt,
+    catalog: Option<Catalog>,
     fields: Vec<(String, TextInput)>,
     selected: usize,
     error: String,
+}
+struct ProjectDrag {
+    id: String,
+    start: [u32; 2],
+    gap: Option<usize>,
+    moved: bool,
+    scrolled_at: Instant,
 }
 pub struct Workspace {
     controller_id: String,
@@ -71,8 +115,15 @@ pub struct Workspace {
     projects: Vec<Config>,
     project_offset: usize,
     project_page_size: usize,
+    sort_hover: bool,
+    sort_mode_hover: bool,
+    project_drag: Option<ProjectDrag>,
+    navigation: crate::navigation::Navigation,
+    navigation_saved_at: Instant,
     states: BTreeMap<String, ProjectState>,
-    leases: BTreeMap<String, fs::File>,
+    workspace_id: String,
+    shared_synced_at: Instant,
+    catalog_stamp: Option<std::time::SystemTime>,
     appearance: crate::appearance::Appearance,
     typography: Option<crate::terminal::FontMetrics>,
     chrome_hits: Vec<HitRegion>,
@@ -83,14 +134,37 @@ pub struct Workspace {
     tx: Sender<Event>,
     health: BTreeMap<(String, usize), Value>,
     registered: BTreeSet<(String, usize)>,
+    session_monitors: BTreeMap<(String, usize), Arc<AtomicBool>>,
+    session_epochs: BTreeMap<(String, usize), Option<String>>,
     launched: BTreeMap<(String, usize), Instant>,
     windows: Vec<WindowInfo>,
     app_hosts: BTreeMap<String, AppHost>,
+    video_capable: bool,
+    video_high_quality: bool,
+    video: crate::remote_video::Video,
+    video_failed: bool,
+    video_source: Option<String>,
+    terminal_transport: &'static str,
+    audio_capable: bool,
+    audio_route: Option<AudioRoute>,
+    audio_epoch: u64,
+    audio_failed: Option<String>,
     active_app: Option<String>,
     view: Option<ContentView>,
     viewport: Viewport,
     settings: Settings,
     terminal_fps: u32,
+    #[cfg(feature = "lossless-canvas")]
+    native_terminal_cells: bool,
+    #[cfg(feature = "lossless-canvas")]
+    native_layout_key: String,
+    #[cfg(feature = "lossless-canvas")]
+    native_font_points: Option<u32>,
+    #[cfg(feature = "lossless-canvas")]
+    initial_native_font_points: Option<u32>,
+    app_pointer_modifiers: crate::compositor::PointerModifiers,
+    pointer_hiding: bool,
+    cursor_policy_sent: Option<bool>,
     status: String,
     history: Vec<String>,
     effects: Vec<ServerMessage>,
@@ -98,6 +172,12 @@ pub struct Workspace {
     last_inspect: Instant,
     started: Instant,
     receiving: Option<(usize, Vec<u8>)>,
+    receiving_remote: bool,
+    receiving_image: Option<&'static str>,
+    receiving_mime: u64,
+    #[cfg(feature = "lossless-canvas")]
+    remote_drop: Option<starkit::terminal_graphics::drop_receive::Incoming>,
+    drop_stage: Option<tempfile::TempDir>,
     drop_enabled: bool,
     hover: Option<usize>,
     offered: Vec<String>,
@@ -128,22 +208,6 @@ const URI_PATH: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'#')
     .add(b'?')
     .add(b'%');
-fn lease(name: &str) -> Result<fs::File> {
-    use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
-    let path = root()?.join(format!("{name}.project.lock"));
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    ensure!(
-        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-        "Project is already controlled by another workspace; detach it there before opening it here"
-    );
-    Ok(file)
-}
 fn app_key(config: &Config) -> String {
     format!(
         "{}@{}",
@@ -154,9 +218,50 @@ fn app_key(config: &Config) -> String {
 fn app_id(project: &str, pane: usize) -> String {
     format!("starmux-{project}-p{pane}")
 }
+#[cfg(feature = "lossless-canvas")]
+fn native_terminal_rect(
+    pane: PixelRect,
+    canvas: PixelRect,
+    viewport: Viewport,
+) -> (Rect, [u16; 2]) {
+    let width = viewport.width.max(1);
+    let height = viewport.height.max(1);
+    let cols = u32::from(viewport.columns.max(1));
+    let rows = u32::from(viewport.rows.max(1));
+    let px = u32::from(canvas.x) + u32::from(pane.x);
+    let py = u32::from(canvas.y) + u32::from(pane.y);
+    let x = ((px + 12) * cols)
+        .div_ceil(width)
+        .min(cols.saturating_sub(2));
+    let y = ((py + 12) * rows)
+        .div_ceil(height)
+        .min(rows.saturating_sub(1));
+    let right = ((px + u32::from(pane.width).saturating_sub(12)) * cols / width)
+        .max(x + 2)
+        .min(cols);
+    let bottom = ((py + u32::from(pane.height).saturating_sub(12)) * rows / height)
+        .max(y + 1)
+        .min(rows);
+    (
+        Rect {
+            x: x as u16,
+            y: y as u16,
+            width: (right - x).min(512) as u16,
+            height: (bottom - y).min(192) as u16,
+        },
+        [
+            (x * width / cols).saturating_sub(px) as u16,
+            (y * height / rows).saturating_sub(py) as u16,
+        ],
+    )
+}
 impl Workspace {
     pub fn new(config: Config) -> Result<Self> {
-        let controller_id = config.workspace.clone();
+        let id = config.workspace.clone();
+        Self::new_view(config, id)
+    }
+    pub fn new_view(config: Config, controller_id: String) -> Result<Self> {
+        let workspace_id = config.workspace.clone();
         let selected =
             fs::read(project_state::data_root()?.join(format!("{controller_id}.workspace.json")))
                 .ok()
@@ -170,9 +275,18 @@ impl Workspace {
             })
             .unwrap_or(config);
         let appearance = crate::appearance::Appearance::load(&config.theme)?;
-        let state = ProjectState::load(&config)?;
+        let state = ProjectState::load_view(&config, &controller_id)?;
         state.save(&config)?;
-        let projects = project_state::catalog(&config);
+        let mut projects = project_state::catalog(&config);
+        let mut navigation = crate::navigation::Navigation::load(&controller_id)?;
+        if controller_id != workspace_id
+            && !project_state::data_root()?
+                .join(format!("{controller_id}.navigation.json"))
+                .exists()
+        {
+            navigation = crate::navigation::Navigation::load(&workspace_id)?;
+        }
+        navigation.sort(&mut projects);
         let (controller_tx, rx) = bounded(128);
         let terminal_fps = if std::env::var("STARMUX_TERMINAL_PACING").as_deref() == Ok("legacy") {
             30
@@ -185,11 +299,6 @@ impl Workspace {
             fps: terminal_fps,
         };
         let desktop = (!crate::terminal::direct()).then(|| Desktop::start(settings.clone()));
-        let mut leases = BTreeMap::new();
-        leases.insert(controller_id.clone(), lease(&controller_id)?);
-        if config.workspace != controller_id {
-            leases.insert(config.workspace.clone(), lease(&config.workspace)?);
-        }
         let mut s = Self {
             controller_id,
             config,
@@ -197,8 +306,15 @@ impl Workspace {
             projects,
             project_offset: 0,
             project_page_size: 0,
+            sort_hover: false,
+            sort_mode_hover: false,
+            project_drag: None,
+            navigation,
+            navigation_saved_at: Instant::now(),
             states: BTreeMap::new(),
-            leases,
+            workspace_id,
+            shared_synced_at: Instant::now(),
+            catalog_stamp: None,
             appearance,
             typography: None,
             chrome_hits: vec![],
@@ -209,14 +325,37 @@ impl Workspace {
             tx: controller_tx,
             health: BTreeMap::new(),
             registered: BTreeSet::new(),
+            session_monitors: BTreeMap::new(),
+            session_epochs: BTreeMap::new(),
             launched: BTreeMap::new(),
             windows: vec![],
             app_hosts: BTreeMap::new(),
+            video_capable: false,
+            video_high_quality: false,
+            video: Default::default(),
+            video_failed: false,
+            video_source: None,
+            terminal_transport: "negotiating",
+            audio_capable: false,
+            audio_route: None,
+            audio_epoch: 0,
+            audio_failed: None,
             active_app: None,
             view: None,
             viewport: Viewport::default(),
             settings,
             terminal_fps,
+            #[cfg(feature = "lossless-canvas")]
+            native_terminal_cells: false,
+            #[cfg(feature = "lossless-canvas")]
+            native_layout_key: String::new(),
+            #[cfg(feature = "lossless-canvas")]
+            native_font_points: None,
+            #[cfg(feature = "lossless-canvas")]
+            initial_native_font_points: None,
+            app_pointer_modifiers: Default::default(),
+            pointer_hiding: false,
+            cursor_policy_sent: None,
             status: "Connecting project sessions…".into(),
             history: vec![],
             effects: vec![],
@@ -224,6 +363,12 @@ impl Workspace {
             last_inspect: Instant::now(),
             started: Instant::now(),
             receiving: None,
+            receiving_remote: false,
+            receiving_image: None,
+            receiving_mime: 1,
+            #[cfg(feature = "lossless-canvas")]
+            remote_drop: None,
+            drop_stage: None,
             drop_enabled: false,
             hover: None,
             offered: vec![],
@@ -251,6 +396,14 @@ impl Workspace {
         };
         s.ensure_sessions();
         s.reconnect_saved_apps();
+        if let Some(view) = crate::refresh::take_view(&s.controller_id)
+            && view.project == s.config.workspace
+            && let Some(key) = view.app
+            && let Some(host) = s.app_hosts.get_mut(&key)
+        {
+            host.selected = view.window;
+            s.active_app = Some(key);
+        }
         Ok(s)
     }
     fn note(&mut self, text: String) {
@@ -267,7 +420,11 @@ impl Workspace {
                 &serde_json::to_vec(&self.config.workspace).unwrap(),
             );
         }
-        if let Err(e) = self.state.save(&self.config) {
+        if let Err(e) = self
+            .state
+            .save(&self.config)
+            .and_then(|_| self.state.save_view(&self.config, &self.controller_id))
+        {
             self.note(format!("Could not save project: {e:#}"));
         }
     }
@@ -316,8 +473,7 @@ impl Workspace {
                         return Ok(());
                     }
                     let result = std::process::Command::new(
-                        std::env::var("STARMUX_KITTEN")
-                            .unwrap_or_else(|_| "/usr/bin/kitten".into()),
+                        std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
                     )
                     .args([
                         "@",
@@ -350,6 +506,19 @@ impl Workspace {
         }
     }
     fn font_label(&self) -> String {
+        #[cfg(feature = "lossless-canvas")]
+        if self.desktop.is_none() {
+            return self.native_font_points.map_or_else(
+                || "Kitty".into(),
+                |size| {
+                    if size % 1000 == 0 {
+                        format!("{}pt", size / 1000)
+                    } else {
+                        format!("{:.1}pt", f64::from(size) / 1000.)
+                    }
+                },
+            );
+        }
         let size = self.font_pixels();
         if (size - size.round()).abs() < 0.01 {
             format!("{size:.0}px")
@@ -358,6 +527,7 @@ impl Workspace {
         }
     }
     fn release(&mut self) {
+        self.app_pointer_modifiers.reset();
         self.text_gesture.cancel();
         self.selection_target = None;
         for terminal in self.terminals.values_mut() {
@@ -383,14 +553,162 @@ impl Workspace {
         if !self.reduced_motion
             && self.last_typing.elapsed() >= Duration::from_millis(150)
             && self.wave_at.elapsed() >= Duration::from_millis(110)
-            && self
-                .projects
-                .iter()
-                .any(|p| self.project_activity(p).working > 0)
+            && self.projects.iter().any(|p| {
+                let a = self.project_activity(p);
+                a.working > 0
+            })
         {
-            self.wave_phase = (self.wave_phase + 1) % 48;
+            self.wave_phase = (self.wave_phase + 1) % 192;
             self.wave_at = Instant::now();
         }
+    }
+    fn project_order_input(&mut self, input: &Input) -> bool {
+        if matches!(input, Input::CancelPointer)
+            || matches!(input, Input::Key { code, .. } if code == "escape")
+        {
+            return self.project_drag.take().is_some();
+        }
+        if self.modal.is_some() || self.context_menu.is_some() || self.git_open {
+            self.project_drag = None;
+            return false;
+        }
+        let Input::Pointer {
+            action,
+            button,
+            pixel,
+            x,
+            y,
+            ..
+        } = input
+        else {
+            if self.project_drag.is_some() && matches!(input, Input::Embedded { .. }) {
+                // Leaving the sidebar cancels rather than routing the drag into a terminal.
+                self.project_drag = None;
+                return true;
+            }
+            return false;
+        };
+        let point = pixel.unwrap_or([
+            u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
+            u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+        ]);
+        if self.project_drag.is_none() {
+            if !self.navigation.recent
+                && action == "down"
+                && *button == 0
+                && let Some(id) = self
+                    .chrome_hits
+                    .iter()
+                    .rev()
+                    .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
+                    .and_then(|h| h.action.strip_prefix("project:"))
+                    .filter(|id| self.projects.iter().any(|p| p.workspace == *id))
+                    .map(str::to_owned)
+            {
+                self.release();
+                self.project_drag = Some(ProjectDrag {
+                    id,
+                    start: point,
+                    gap: None,
+                    moved: false,
+                    scrolled_at: Instant::now(),
+                });
+                return true;
+            }
+            return false;
+        }
+        if *button != 0 && action == "down" {
+            self.project_drag = None;
+            return true;
+        }
+        let drag = self.project_drag.as_mut().unwrap();
+        drag.moved |= point[0].abs_diff(drag.start[0]) > 6 || point[1].abs_diff(drag.start[1]) > 6;
+        let width = crate::shelf::Layout::new(
+            self.viewport.width as u16,
+            self.viewport.height as u16,
+            self.state.space,
+        )
+        .sidebar
+        .width;
+        let rows = self.project_page_size.max(1);
+        let bottom = 122 + rows as u32 * 34;
+        if drag.moved
+            && point[0] < u32::from(width)
+            && drag.scrolled_at.elapsed() >= Duration::from_millis(120)
+            && matches!(
+                action.as_str(),
+                "drag" | "move" | "scroll_up" | "scroll_down"
+            )
+        {
+            if point[1] < 136 || action == "scroll_up" {
+                self.project_offset = self.project_offset.saturating_sub(1);
+            } else if point[1] >= bottom.saturating_sub(14) || action == "scroll_down" {
+                self.project_offset =
+                    (self.project_offset + 1).min(self.projects.len().saturating_sub(rows));
+            }
+            drag.scrolled_at = Instant::now();
+        }
+        drag.gap = (point[0] < u32::from(width) && point[1] >= 110 && point[1] <= bottom + 12)
+            .then(|| {
+                (self.project_offset + ((point[1].saturating_sub(122) + 17) / 34) as usize)
+                    .min(self.projects.len())
+            });
+        if action == "up" {
+            let drag = self.project_drag.take().unwrap();
+            if drag.moved {
+                if let Some(gap) = drag.gap {
+                    self.navigation.reconcile(&self.projects);
+                    if self.navigation.reorder(&drag.id, gap) {
+                        self.navigation.sort(&mut self.projects);
+                        if let Err(error) = self.navigation.save(&self.controller_id) {
+                            self.note(format!("Could not save project order: {error:#}"));
+                        }
+                        self.navigation_saved_at = Instant::now();
+                    }
+                }
+            } else if let Err(error) = self.switch_project(&drag.id) {
+                self.note(format!("{error:#}"));
+            }
+        }
+        true
+    }
+    fn sort_projects(&mut self, reset_scroll: bool) {
+        if self.project_drag.is_some() {
+            return;
+        }
+        let page = self.project_page_size.max(1);
+        let selected_visible = self
+            .projects
+            .iter()
+            .position(|p| p.workspace == self.config.workspace)
+            .is_some_and(|i| i >= self.project_offset && i < self.project_offset + page);
+        let anchor = self
+            .projects
+            .get(self.project_offset)
+            .map(|p| p.workspace.clone());
+        self.navigation.sort(&mut self.projects);
+        if reset_scroll {
+            self.project_offset = 0;
+        } else if selected_visible {
+            if let Some(i) = self
+                .projects
+                .iter()
+                .position(|p| p.workspace == self.config.workspace)
+            {
+                if i < self.project_offset {
+                    self.project_offset = i;
+                } else if i >= self.project_offset + page {
+                    self.project_offset = i + 1 - page;
+                }
+            }
+        } else if let Some(i) =
+            anchor.and_then(|a| self.projects.iter().position(|p| p.workspace == a))
+        {
+            self.project_offset = i;
+        }
+        self.project_offset = self
+            .project_offset
+            .min(self.projects.len().saturating_sub(page));
     }
     fn project_activity(&self, project: &Config) -> crate::activity::Activity {
         let mut result = if self.activity_at.elapsed() < Duration::from_secs(8) {
@@ -410,7 +728,7 @@ impl Workspace {
         if let Some(state) = state {
             let mut native = crate::activity::Activity::default();
             let mut any = false;
-            for pane in state.agent_ids().into_iter().filter(|id| {
+            for pane in state.terminal_ids().into_iter().filter(|id| {
                 !project
                     .herdr
                     .as_ref()
@@ -418,7 +736,7 @@ impl Workspace {
             }) {
                 if let Some(health) = self.health.get(&(project.workspace.clone(), pane)) {
                     any = true;
-                    if health["alive"] == true {
+                    if health["alive"] == true && health["agent"].as_str().is_some() {
                         native.observe(health["state"].as_str().unwrap_or("unknown"));
                     }
                 }
@@ -451,6 +769,81 @@ impl Workspace {
                 format!("Agent {}", n + 1)
             })
     }
+    fn remove_exited_terminal(&mut self, project: &str, pane: usize) -> Result<()> {
+        let current = self.config.workspace == project;
+        let mut config = if current {
+            self.config.clone()
+        } else {
+            self.projects
+                .iter()
+                .find(|config| config.workspace == project)
+                .context("Project not found")?
+                .clone()
+        };
+        let _transaction = crate::project_sync::transaction(&config)?;
+        let shared = ProjectState::load(&config)?;
+        let expected = self.session_epochs.get(&(project.to_owned(), pane));
+        if shared.terminal_ids().contains(&pane)
+            && expected.is_some_and(|epoch| epoch != &shared.terminal_epochs.get(&pane).cloned())
+        {
+            if current {
+                self.sync_project()?;
+            }
+            return Ok(());
+        }
+        let mut state = if current {
+            self.state.clone()
+        } else {
+            ProjectState::load(&config)?
+        };
+        if !state.remove_terminal(pane) {
+            return Ok(());
+        }
+        let aliases = config
+            .herdr
+            .as_ref()
+            .map(|source| {
+                source
+                    .panes
+                    .keys()
+                    .copied()
+                    .filter(|id| config.canonical_pane(*id) == pane)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(source) = &mut config.herdr {
+            source.panes.retain(|id, _| !aliases.contains(id));
+        }
+        state.reserved_slots.retain(|id| !aliases.contains(id));
+        state.save(&config)?;
+        let key = (project.to_owned(), pane);
+        if let Some(stopped) = self.session_monitors.remove(&key) {
+            stopped.store(true, Ordering::Release);
+        }
+        self.registered.remove(&key);
+        self.launched.remove(&key);
+        self.health.remove(&key);
+        self.terminals.remove(&key);
+        if let Some(saved) = self
+            .projects
+            .iter_mut()
+            .find(|saved| saved.workspace == project)
+        {
+            *saved = config.clone();
+        }
+        if current {
+            if self.state.visible().contains(&pane) {
+                self.release();
+            }
+            self.config = config;
+            self.state = state;
+            #[cfg(feature = "lossless-canvas")]
+            self.native_layout_key.clear();
+            self.layout();
+            self.note("Terminal closed".into());
+        }
+        Ok(())
+    }
     fn ensure_sessions(&mut self) {
         let agents = self.state.agent_ids();
         let panes: Vec<usize> = if self.config.herdr.is_some() {
@@ -469,35 +862,92 @@ impl Workspace {
         };
         for pane in panes {
             let key = (self.config.workspace.clone(), pane);
-            if !self.registered.insert(key) {
+            if !self.registered.insert(key.clone()) {
                 continue;
             }
+            let stopped = Arc::new(AtomicBool::new(false));
+            let epoch = self.state.terminal_epochs.get(&pane).cloned();
+            self.session_epochs.insert(key.clone(), epoch.clone());
+            self.session_monitors.insert(key, stopped.clone());
             let command = agents
                 .iter()
                 .find(|id| self.config.canonical_pane(**id) == pane)
-                .map(|id| self.agent_command(*id));
+                .and_then(|id| self.config.agent.as_ref().map(|_| self.agent_command(*id)));
             let config = self.config.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
-                if let Err(e) = config.ensure(pane, command.as_deref()) {
-                    let _ = tx.send(Event::Error(format!(
-                        "{} / session {}: {e:#}",
-                        config.workspace,
-                        pane + 1
-                    )));
-                    return;
+                let ensured = (|| -> Result<bool> {
+                    let _transaction = crate::project_sync::transaction(&config)?;
+                    let state = ProjectState::load(&config)?;
+                    if stopped.load(Ordering::Acquire)
+                        || !state.terminal_ids().contains(&pane)
+                        || state.terminal_epochs.get(&pane).cloned() != epoch
+                    {
+                        return Ok(false);
+                    }
+                    config.ensure(pane, command.as_deref())?;
+                    Ok(true)
+                })();
+                match ensured {
+                    Ok(true) => {
+                        let _ = tx.send(Event::Ready(Box::new(config.clone()), pane));
+                    }
+                    Ok(false) => return,
+                    Err(e) => {
+                        let _ = tx.send(Event::Error(format!(
+                            "{} / session {}: {e:#}",
+                            config.workspace,
+                            pane + 1
+                        )));
+                        return;
+                    }
                 }
-                let _ = tx.send(Event::Ready(Box::new(config.clone()), pane));
-                loop {
-                    let value = config
+                while !stopped.load(Ordering::Acquire) {
+                    let mut value = config
                         .call(pane, &config.request(pane, "inspect"))
                         .unwrap_or_else(
                             |e| json!({"state":"disconnected","error":format!("{e:#}")}),
                         );
+                    if stopped.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let mut closed = false;
+                    if value["exited"] == true {
+                        // Reap and remove membership under the same model transaction.
+                        // Another view cannot reuse this slot before removal is durable.
+                        let result = (|| -> Result<bool> {
+                            let _transaction = crate::project_sync::transaction(&config)?;
+                            let mut state = ProjectState::load(&config)?;
+                            if !state.terminal_ids().contains(&pane)
+                                || state.terminal_epochs.get(&pane).cloned() != epoch
+                            {
+                                return Ok(false);
+                            }
+                            let result = config.call(pane, &config.request(pane, "reap"))?;
+                            if result["reaped"] != true {
+                                return Ok(false);
+                            }
+                            state.remove_terminal(pane);
+                            state.save(&config)?;
+                            Ok(true)
+                        })();
+                        if matches!(result, Ok(true)) {
+                            value["reaped"] = json!(true);
+                            closed = true;
+                        }
+                    }
                     if tx
-                        .send(Event::Health(config.workspace.clone(), pane, value))
+                        .send(Event::Health(
+                            config.workspace.clone(),
+                            pane,
+                            value,
+                            stopped.clone(),
+                        ))
                         .is_err()
                     {
+                        break;
+                    }
+                    if closed {
                         break;
                     }
                     std::thread::sleep(Duration::from_secs(2));
@@ -514,6 +964,83 @@ impl Workspace {
             let _ = self.connect_app(config);
         }
     }
+    fn close_audio(&mut self) {
+        if self.audio_route.take().is_some() {
+            self.effects.push(ServerMessage::Media {
+                message: starkit::terminal_graphics::media::ToClient::AudioClose {
+                    session: AUDIO_SESSION,
+                },
+            });
+        }
+    }
+    fn sync_audio(&mut self) {
+        let desired = self
+            .active_app
+            .as_ref()
+            .and_then(|key| self.app_hosts.get(key).map(|h| (key, h)))
+            .filter(|(_, h)| {
+                h.config.workspace == self.config.workspace
+                    && !h.windows.is_empty()
+                    && h.client.connected.load(Ordering::Acquire)
+            })
+            .and_then(|(key, h)| {
+                h.client
+                    .pid
+                    .lock()
+                    .unwrap()
+                    .map(|pid| (key.clone(), h.config.clone(), pid))
+            });
+        let enabled = self.audio_capable && !self.navigation.audio_muted;
+        let key = desired.as_ref().map(|v| &v.0);
+        if !enabled
+            || self
+                .audio_route
+                .as_ref()
+                .is_some_and(|r| Some(&r.key) != key)
+        {
+            self.close_audio();
+        }
+        if key.is_none() {
+            self.audio_failed = None;
+        }
+        if enabled
+            && self.audio_route.is_none()
+            && let Some((key, config, pid)) = desired
+            && self.audio_failed.as_ref() != Some(&key)
+        {
+            match crate::app_audio::Source::start(&config, pid) {
+                Ok(source) => {
+                    self.audio_epoch = self.audio_epoch.wrapping_add(1);
+                    self.effects.push(ServerMessage::Media {
+                        message: starkit::terminal_graphics::media::ToClient::AudioOpen {
+                            session: AUDIO_SESSION,
+                            epoch: self.audio_epoch,
+                        },
+                    });
+                    self.audio_route = Some(AudioRoute {
+                        key,
+                        epoch: self.audio_epoch,
+                        source,
+                        sent: 0,
+                        credits: 0,
+                    });
+                }
+                Err(error) => {
+                    self.audio_failed = Some(key);
+                    self.note(format!("App audio: {error:#}"));
+                }
+            }
+        }
+        let error = self
+            .audio_route
+            .as_ref()
+            .and_then(|r| r.source.errors.try_recv().ok());
+        if let Some(error) = error {
+            self.audio_failed = self.audio_route.as_ref().map(|r| r.key.clone());
+            self.close_audio();
+            self.note(error);
+        }
+    }
     fn connect_app(&mut self, mut config: Config) -> Result<String> {
         config.herdr = None;
         let key = app_key(&config);
@@ -521,9 +1048,9 @@ impl Workspace {
             let client = AppClient::connect(&config)?;
             client.send(AppRequest::Resize {
                 settings: Settings {
-                    width: self.settings.width.clamp(128, 2560),
-                    height: self.settings.height.clamp(64, 1440),
-                    fps: 30,
+                    width: self.settings.width.clamp(128, 3840),
+                    height: self.settings.height.clamp(64, 2160),
+                    fps: 60,
                 },
             })?;
             self.app_hosts.insert(
@@ -532,6 +1059,7 @@ impl Workspace {
                     config,
                     client,
                     windows: vec![],
+                    layout: vec![],
                     selected: None,
                 },
             );
@@ -540,14 +1068,21 @@ impl Workspace {
         Ok(key)
     }
     fn launch(&mut self, config: Config, pane: usize) {
+        self.launch_inner(config, pane, false);
+    }
+    fn launch_inner(&mut self, config: Config, pane: usize, ensure_shell: bool) {
+        let attach = if ensure_shell {
+            config.attach_argv_with_shell(pane, true)
+        } else {
+            config.attach_argv(pane)
+        };
         if self.desktop.is_none() {
             let key = (config.workspace.clone(), pane);
             if self.terminals.contains_key(&key) {
                 return;
             }
-            let result = crate::terminal::socket(&config.workspace, pane).and_then(|socket| {
-                crate::terminal::Terminal::spawn(&config.attach_argv(pane), socket)
-            });
+            let result = crate::terminal::socket(&config.workspace, pane)
+                .and_then(|socket| crate::terminal::Terminal::spawn(&attach, socket));
             match result {
                 Ok(mut terminal) => {
                     terminal.set_palette(&self.appearance);
@@ -561,7 +1096,7 @@ impl Workspace {
         }
 
         let mut argv = vec![
-            std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "/usr/bin/kitty".into()),
+            std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "kitty".into()),
             "--class".into(),
             app_id(&config.workspace, pane),
             "--title".into(),
@@ -610,7 +1145,7 @@ impl Workspace {
         for setting in self.appearance.kitty_colors() {
             argv.extend(["-o".into(), setting]);
         }
-        argv.extend(config.attach_argv(pane));
+        argv.extend(attach);
         self.desktop_send(DesktopCommand::Launch(Launch {
             name: format!("{}-{pane}", config.workspace),
             command: shell_words::join(argv),
@@ -692,7 +1227,11 @@ impl Workspace {
     }
     fn set_space(&mut self, space: Space) {
         self.release();
-        self.state.space = space;
+        self.state.space = if space == Space::Agent {
+            Space::Terminals
+        } else {
+            space
+        };
         if self.config.herdr.is_some() {
             self.ensure_sessions();
         }
@@ -710,19 +1249,15 @@ impl Workspace {
             .find(|c| c.workspace == id)
             .context("Project not found")?
             .clone();
-        if !self.leases.contains_key(id) {
-            let lease = lease(id)?;
-            let socket = starkit::terminal_graphics::session::socket_path(&root()?, id)?;
-            ensure!(
-                std::os::unix::net::UnixStream::connect(socket).is_err(),
-                "Project has its own running controller; close that workspace before opening it here"
-            );
-            self.leases.insert(id.into(), lease);
-        }
-        let state = self
+        let mut state = self
             .states
             .remove(id)
-            .unwrap_or(ProjectState::load(&config)?);
+            .unwrap_or(ProjectState::load_view(&config, &self.controller_id)?);
+        state.sync_shared(&config)?;
+        let now = crate::navigation::now();
+        self.navigation
+            .presentation_changed(&self.config.workspace, now);
+        self.navigation.presentation_changed(id, now);
         self.release();
         self.save();
         self.states
@@ -772,8 +1307,7 @@ impl Workspace {
                         continue;
                     }
                     let _ = std::process::Command::new(
-                        std::env::var("STARMUX_KITTEN")
-                            .unwrap_or_else(|_| "/usr/bin/kitten".into()),
+                        std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
                     )
                     .args([
                         "@",
@@ -832,6 +1366,22 @@ impl Workspace {
             .map(|(id, _)| *id)
     }
     fn drop_message(&mut self, text: &str) -> Result<()> {
+        let result = self.drop_message_inner(text);
+        if result.is_err() {
+            #[cfg(feature = "lossless-canvas")]
+            {
+                self.remote_drop = None;
+            }
+            self.receiving = None;
+            self.receiving_image = None;
+            self.drop_target = None;
+            self.drop_stage = None;
+            self.hover = None;
+            self.osc("t=r:o=0:i=1", None);
+        }
+        result
+    }
+    fn drop_message_inner(&mut self, text: &str) -> Result<()> {
         ensure!(text.len() <= 1024 * 1024, "Drop message too large");
         let (header, payload) = text.split_once(';').unwrap_or((text, ""));
         let fields = header
@@ -844,10 +1394,47 @@ impl Workspace {
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(-1)
         };
+        #[cfg(feature = "lossless-canvas")]
+        if self.remote_drop.is_some() && fields.get("t").copied() == Some("r") {
+            use starkit::terminal_graphics::drop_receive::Progress;
+            match self.remote_drop.as_mut().unwrap().receive(text) {
+                Ok(Progress::Chunk) => {}
+                Ok(Progress::Next(request)) => self.osc(&request, None),
+                Ok(Progress::Complete) => {
+                    let incoming = self.remote_drop.take().unwrap();
+                    let (stage, paths) = incoming.into_files();
+                    let pane = self
+                        .receiving
+                        .take()
+                        .context("Drop destination was lost")?
+                        .0;
+                    self.drop_stage = Some(stage);
+                    self.osc("t=r:o=1:i=1", None);
+                    let destination = self.drop_target.take();
+                    self.deliver_to(pane, paths, destination);
+                }
+                Err(error) => {
+                    self.remote_drop = None;
+                    self.receiving = None;
+                    self.drop_target = None;
+                    self.osc("t=r:o=0:i=1", None);
+                    return Err(error);
+                }
+            }
+            return Ok(());
+        }
         match fields.get("t").copied() {
             Some("q") => {
                 self.drop_enabled = true;
-                self.osc("t=a:i=1", Some("text/uri-list".into()));
+                self.osc(
+                    "t=a:i=1",
+                    Some("text/uri-list image/png image/jpeg image/webp image/gif".into()),
+                );
+                #[cfg(feature = "lossless-canvas")]
+                if let Some(identity) = starkit::terminal_graphics::drop_receive::machine_identity()
+                {
+                    self.osc("t=a:x=1:i=1", Some(identity));
+                }
                 self.note("Desktop file drops ready · copy to the target session".into());
             }
             Some("m") => {
@@ -855,7 +1442,8 @@ impl Workspace {
                     self.offered = payload.split_whitespace().map(str::to_owned).collect();
                 }
                 let pane = self.drop_pane(n("x"), n("y"));
-                let accepts = self.offered.iter().any(|m| m == "text/uri-list") && n("o") & 1 != 0;
+                let mime = drop_mime(&self.offered);
+                let accepts = mime.is_some() && n("o") & 1 != 0;
                 let hover = if accepts { pane } else { None };
                 if self.hover != hover {
                     self.hover = hover;
@@ -865,21 +1453,25 @@ impl Workspace {
                         } else {
                             "t=m:o=0:i=1"
                         },
-                        hover.map(|_| "text/uri-list".into()),
+                        hover.and_then(|_| mime.map(|(index, _)| self.offered[index].clone())),
                     );
                 }
             }
             Some("M") => {
+                ensure!(self.transfer.is_none(), "A file transfer is already active");
                 if let Some(pane) = self.drop_pane(n("x"), n("y")) {
                     if !payload.is_empty() {
                         self.offered = payload.split_whitespace().map(str::to_owned).collect();
                     }
-                    if let Some(index) = self.offered.iter().position(|s| s == "text/uri-list") {
+                    if let Some((index, image)) = drop_mime(&self.offered) {
                         ensure!(
                             self.receiving.is_none(),
                             "A desktop drop is already being received"
                         );
                         self.receiving = Some((pane, vec![]));
+                        self.receiving_remote = false;
+                        self.receiving_image = image;
+                        self.receiving_mime = (index + 1) as u64;
                         self.drop_target = Some((
                             self.config.clone(),
                             self.active_app.as_ref().and_then(|key| {
@@ -899,17 +1491,69 @@ impl Workspace {
             }
             Some("r") | None => {
                 if let Some((_, data)) = &mut self.receiving {
+                    self.receiving_remote |= n("X") == 1;
                     let chunk = STANDARD.decode(payload).or_else(|_| {
                         base64::engine::general_purpose::STANDARD_NO_PAD.decode(payload)
                     })?;
                     ensure!(
-                        data.len() + chunk.len() <= 1024 * 1024,
-                        "URI list exceeds 1 MiB"
+                        data.len() + chunk.len()
+                            <= if self.receiving_image.is_some() {
+                                32 * 1024 * 1024
+                            } else {
+                                1024 * 1024
+                            },
+                        "Drop data exceeds limit"
                     );
                     data.extend(chunk);
                     if payload.is_empty() && n("m") <= 0 {
                         let (pane, data) = self.receiving.take().unwrap();
+                        if let Some(extension) = self.receiving_image.take() {
+                            let stage = tempfile::Builder::new()
+                                .prefix("starmux-image-")
+                                .tempdir()?;
+                            let path = stage.path().join(format!("dropped-image.{extension}"));
+                            fs::write(&path, data)?;
+                            self.drop_stage = Some(stage);
+                            self.osc("t=r:o=1:i=1", None);
+                            let destination = self.drop_target.take();
+                            self.deliver_to(pane, vec![path], destination);
+                            return Ok(());
+                        }
                         let text = String::from_utf8(data)?;
+                        // Browser image drags may offer a web URL and image bytes.
+                        // Keep file URI lists first so multi-file drops retain every item.
+                        if text
+                            .lines()
+                            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+                            .any(|s| !s.starts_with("file://"))
+                            && let Some((index, image)) = drop_image_mime(&self.offered)
+                        {
+                            self.receiving = Some((pane, vec![]));
+                            self.receiving_image = image;
+                            self.receiving_remote = false;
+                            self.receiving_mime = (index + 1) as u64;
+                            self.osc(&format!("t=r:x={}:i=1", index + 1), None);
+                            return Ok(());
+                        }
+                        if self.receiving_remote {
+                            #[cfg(feature = "lossless-canvas")]
+                            {
+                                let incoming =
+                                    starkit::terminal_graphics::drop_receive::Incoming::new(
+                                        &text,
+                                        self.receiving_mime,
+                                    )?;
+                                self.osc(&incoming.request(), None);
+                                self.remote_drop = Some(incoming);
+                                self.receiving = Some((pane, vec![]));
+                                self.note("Receiving dropped files from your computer…".into());
+                                return Ok(());
+                            }
+                            #[cfg(not(feature = "lossless-canvas"))]
+                            anyhow::bail!(
+                                "Remote file drops require the current STAR/KIT candidate"
+                            );
+                        }
                         let paths = uri_paths(&text)?;
                         self.osc("t=r:o=1:i=1", None);
                         let destination = self.drop_target.take();
@@ -918,7 +1562,12 @@ impl Workspace {
                 }
             }
             Some("R") | Some("E") => {
+                #[cfg(feature = "lossless-canvas")]
+                {
+                    self.remote_drop = None;
+                }
                 self.receiving = None;
+                self.drop_target = None;
                 self.hover = None;
                 self.note(format!("Drop: {payload}"));
             }
@@ -975,7 +1624,9 @@ impl Workspace {
             paths.len(),
             config.host.as_deref().unwrap_or("local")
         ));
+        let drop_stage = self.drop_stage.take();
         std::thread::spawn(move || {
+            let _drop_stage = drop_stage;
             let result = (|| -> Result<()> {
                 let mut references = vec![];
                 for path in paths {
@@ -1029,6 +1680,11 @@ impl Workspace {
         });
     }
     fn paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        self.navigation
+            .touch(&self.config.workspace, crate::navigation::now());
         if self.state.space == Space::Apps {
             if let Some(host) = self.active_app.as_ref().and_then(|k| self.app_hosts.get(k))
                 && let Err(e) = host.client.send(AppRequest::Input {
@@ -1053,6 +1709,9 @@ impl Workspace {
     }
     fn desktop_input(&mut self, input: DesktopInput) {
         if self.state.space == Space::Apps {
+            if !self.app_pointer_modifiers.forward(&input) {
+                return;
+            }
             if let Some(host) = self.active_app.as_ref().and_then(|k| self.app_hosts.get(k))
                 && let Err(e) = host.client.send(AppRequest::Input { input })
             {
@@ -1081,6 +1740,16 @@ impl Workspace {
         });
     }
     fn embedded(&mut self, kind: EmbeddedKind) {
+        if matches!(
+            &kind,
+            EmbeddedKind::Key {
+                phase: KeyPhase::Press | KeyPhase::Repeat,
+                ..
+            } | EmbeddedKind::Text { .. }
+        ) {
+            self.navigation
+                .touch(&self.config.workspace, crate::navigation::now());
+        }
         if let EmbeddedKind::Pointer {
             action,
             button,
@@ -1107,7 +1776,7 @@ impl Workspace {
                         .map(|(pane, _)| (self.config.workspace.clone(), *pane));
                     if let Some((project, pane)) = &self.selection_target {
                         if self.state.space == Space::Terminals {
-                            self.state.terminal = *pane;
+                            self.state.select_terminal(*pane);
                         }
                         self.desktop_send(DesktopCommand::FocusApp(app_id(project, *pane)));
                     }
@@ -1188,7 +1857,7 @@ impl Workspace {
                     })
                 {
                     if self.state.space == Space::Terminals {
-                        self.state.terminal = pane;
+                        self.state.select_terminal(pane);
                     }
                     self.desktop_send(DesktopCommand::FocusApp(app_id(
                         &self.config.workspace,
@@ -1274,7 +1943,7 @@ impl Workspace {
                     position[0] >= f64::from(r.x) && position[0] < f64::from(r.x + r.width)
                 })
             {
-                self.state.terminal = *pane;
+                self.state.select_terminal(*pane);
             }
         }
         let pane = self.config.canonical_pane(self.state.selected());
@@ -1374,17 +2043,103 @@ impl Workspace {
                 ),
                 field("Project host / local or an SSH alias", "local".into()),
                 field("Project directory on that host", directory),
-                field("Agent command", "codex".into()),
                 field("Run app command", String::new()),
                 field("S T A R / M U X helper on SSH host", "starmux".into()),
             ],
         };
+        let catalog = matches!(kind, Prompt::Launch).then(|| Catalog {
+            source: String::new(),
+            changed: Instant::now(),
+            requested: false,
+            apps: vec![],
+            query: TextInput::single().with_max_chars(256),
+            selected: 0,
+            offset: 0,
+            focused: true,
+            visible: true,
+            status: "Loading system apps…".into(),
+        });
         self.modal = Some(Modal {
             kind,
+            catalog,
             fields,
             selected: 0,
             error: String::new(),
         });
+    }
+    fn refresh_applications(&mut self) {
+        let Some(modal) = self.modal.as_mut() else {
+            return;
+        };
+        let Some(catalog) = modal.catalog.as_mut() else {
+            return;
+        };
+        let host = modal.fields[2].1.text().trim().to_owned();
+        let helper = modal.fields[3].1.text().trim().to_owned();
+        let source = format!("{host}\n{helper}");
+        if source != catalog.source {
+            if catalog
+                .apps
+                .iter()
+                .any(|a| a.command == modal.fields[0].1.text())
+            {
+                modal.fields[0].1 = TextInput::single().with_max_chars(2048);
+            }
+            catalog.source = source.clone();
+            catalog.changed = Instant::now();
+            catalog.requested = false;
+            catalog.apps.clear();
+            catalog.selected = 0;
+            catalog.offset = 0;
+            catalog.status = format!("Loading apps / {host}…");
+        }
+        if catalog.requested || catalog.changed.elapsed() < Duration::from_millis(350) {
+            return;
+        }
+        catalog.requested = true;
+        let token = catalog.changed;
+        let mut config = self.config.clone();
+        config.host = if host.is_empty() || host == "local" {
+            None
+        } else {
+            Some(host)
+        };
+        config.desktop_helper = helper;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = config
+                .validate()
+                .and_then(|_| crate::applications::on_host(&config))
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Event::Applications(source, token, result));
+        });
+    }
+    fn choose_application(&mut self, index: usize) {
+        let Some(modal) = self.modal.as_mut() else {
+            return;
+        };
+        let Some(catalog) = modal.catalog.as_mut() else {
+            return;
+        };
+        let matches = catalog.matches();
+        catalog.selected = index.min(matches.len().saturating_sub(1));
+        if let Some(app) = matches
+            .get(catalog.selected)
+            .and_then(|i| catalog.apps.get(*i))
+        {
+            modal.fields[0].1 = TextInput::single()
+                .with_max_chars(2048)
+                .with_text(app.command.clone());
+        } else {
+            modal.fields[0].1 = TextInput::single().with_max_chars(2048);
+        }
+        let rows = crate::shelf::application_rows(self.viewport.height as u16);
+        if catalog.selected < catalog.offset {
+            catalog.offset = catalog.selected;
+        }
+        if catalog.selected >= catalog.offset + rows {
+            catalog.offset = catalog.selected + 1 - rows;
+        }
     }
     fn launch_app(&mut self, config: Config, command: String, directory: String) -> Result<()> {
         ensure!(!command.trim().is_empty(), "Enter an application command");
@@ -1466,7 +2221,7 @@ impl Workspace {
                 Prompt::RenameTab(id) => {
                     project_state::validate_label(&values[0])?;
                     ensure!(
-                        self.state.terminals.contains(id),
+                        self.state.terminal_ids().contains(id),
                         "Terminal no longer exists"
                     );
                     let mut state = self.state.clone();
@@ -1512,6 +2267,7 @@ impl Workspace {
                         label: None,
                         collection: self.config.collection.clone(),
                         herdr: None,
+                        adopted: Default::default(),
                         theme: self.config.theme.clone(),
                         host: if values[1] == "local" || values[1].is_empty() {
                             None
@@ -1519,16 +2275,13 @@ impl Workspace {
                             Some(values[1].clone())
                         },
                         directory: Some(values[2].clone()),
-                        agent: Some(values[3].clone()),
+                        agent: None,
                         executable: std::env::current_exe()?.display().to_string(),
                         project_host: true,
-                        desktop_helper: values[5].clone(),
+                        desktop_helper: values[4].clone(),
                     };
                     config.validate()?;
-                    ensure!(
-                        !values[2].is_empty() && !values[3].is_empty(),
-                        "Project directory and agent command are required"
-                    );
+                    ensure!(!values[2].is_empty(), "Project directory is required");
                     ensure!(
                         !self
                             .projects
@@ -1536,9 +2289,8 @@ impl Workspace {
                             .any(|c| c.workspace == config.workspace),
                         "A project with that name already exists"
                     );
-                    shell_words::split(&values[3])?;
                     let state = ProjectState {
-                        app_command: values[4].clone(),
+                        app_command: values[3].clone(),
                         ..ProjectState::default()
                     };
                     state.save(&config)?;
@@ -1547,6 +2299,7 @@ impl Workspace {
                         &serde_json::to_vec_pretty(&config)?,
                     )?;
                     let id = config.workspace.clone();
+                    self.navigation.touch(&id, crate::navigation::now());
                     self.projects.push(config);
                     self.switch_project(&id)?;
                 }
@@ -1565,6 +2318,49 @@ impl Workspace {
             self.modal = None;
             return Ok(());
         }
+        if let Some(catalog) = self
+            .modal
+            .as_ref()
+            .and_then(|m| m.catalog.as_ref())
+            .filter(|c| c.visible && c.focused)
+        {
+            if code == "up" || code == "down" || code == "pageup" || code == "pagedown" {
+                let step = if code.starts_with("page") {
+                    crate::shelf::application_rows(self.viewport.height as u16)
+                } else {
+                    1
+                };
+                let index = if code == "up" || code == "pageup" {
+                    catalog.selected.saturating_sub(step)
+                } else {
+                    catalog.selected + step
+                };
+                self.choose_application(index);
+                return Ok(());
+            }
+            if code == "enter" {
+                return self.accept_prompt();
+            }
+            if code == "backtab" {
+                let modal = self.modal.as_mut().unwrap();
+                modal.selected = modal.fields.len() - 1;
+                let catalog = modal.catalog.as_mut().unwrap();
+                catalog.focused = false;
+                if self.viewport.width < 700 {
+                    catalog.visible = false;
+                }
+                return Ok(());
+            }
+            if code == "tab" {
+                let modal = self.modal.as_mut().unwrap();
+                modal.selected = if self.viewport.width >= 700 { 1 } else { 0 };
+                modal.catalog.as_mut().unwrap().focused = false;
+                if self.viewport.width < 700 {
+                    modal.catalog.as_mut().unwrap().visible = false;
+                }
+                return Ok(());
+            }
+        }
         if code == "enter"
             && (modifiers & 2 != 0
                 || self
@@ -1576,10 +2372,25 @@ impl Workspace {
         }
         let modal = self.modal.as_mut().unwrap();
         if code == "tab" || code == "enter" {
+            if modal.selected + 1 == modal.fields.len()
+                && let Some(catalog) = modal.catalog.as_mut()
+            {
+                catalog.focused = true;
+                catalog.visible = true;
+                return Ok(());
+            }
             modal.selected = (modal.selected + 1) % modal.fields.len();
             return Ok(());
         }
         if code == "backtab" {
+            if (modal.selected == 0
+                || (modal.selected == 1 && modal.catalog.as_ref().is_some_and(|c| c.visible)))
+                && let Some(catalog) = modal.catalog.as_mut()
+            {
+                catalog.focused = true;
+                catalog.visible = true;
+                return Ok(());
+            }
             modal.selected = (modal.selected + modal.fields.len() - 1) % modal.fields.len();
             return Ok(());
         }
@@ -1609,9 +2420,14 @@ impl Workspace {
         if modifiers & 4 != 0 {
             mods |= KeyModifiers::ALT
         }
-        modal.fields[modal.selected]
-            .1
-            .handle(KeyEvent::new(key, mods));
+        if let Some(catalog) = modal.catalog.as_mut().filter(|c| c.visible && c.focused) {
+            catalog.query.handle(KeyEvent::new(key, mods));
+            self.choose_application(0);
+        } else {
+            modal.fields[modal.selected]
+                .1
+                .handle(KeyEvent::new(key, mods));
+        }
         Ok(())
     }
     fn git_location(&self) -> String {
@@ -1657,6 +2473,7 @@ impl Workspace {
             .terminal_labels
             .get(&id)
             .cloned()
+            .or_else(|| self.state.agent_labels.get(&id).cloned())
             .or_else(|| {
                 self.config
                     .herdr
@@ -1667,14 +2484,14 @@ impl Workspace {
             .unwrap_or_else(|| {
                 let n = self
                     .state
-                    .terminals
+                    .terminal_ids()
                     .iter()
                     .position(|i| *i == id)
                     .unwrap_or(0);
                 if n == 0 {
-                    "Shell".into()
+                    "Terminal 1".into()
                 } else {
-                    format!("Shell {}", n + 1)
+                    format!("Terminal {}", n + 1)
                 }
             })
     }
@@ -1685,80 +2502,80 @@ impl Workspace {
             hint: hint.into(),
             action,
         };
-        let (title, subtitle, items) =
-            if let Some(id) = target.and_then(|t| t.strip_prefix("project:")) {
-                let Some(project) = self.projects.iter().find(|p| p.workspace == id) else {
-                    return;
-                };
-                (
-                    project.label.as_deref().unwrap_or(id).to_owned(),
-                    format!("PROJECT / {}", project.host.as_deref().unwrap_or("local")),
-                    vec![
-                        item("Rename project…", "", format!("rename-project:{id}")),
-                        item("Open agent", "", format!("project-space:agent:{id}")),
-                        item(
-                            "Open terminals",
-                            "",
-                            format!("project-space:terminals:{id}"),
-                        ),
-                        item("Open app space", "", format!("project-space:apps:{id}")),
-                        item("New project…", "+", "project:new".into()),
-                    ],
-                )
-            } else if let Some(id) = target
-                .and_then(|t| t.strip_prefix("agent:"))
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                if !self.state.agent_ids().contains(&id) {
-                    return;
-                }
-                (
-                    self.agent_label(id),
-                    "AGENT / INDEPENDENT SESSION".into(),
-                    vec![
-                        item("Rename agent…", "", format!("rename-agent:{id}")),
-                        item("Focus agent", "", format!("agent:{id}")),
-                        item("New agent", "+", "agent:new".into()),
-                    ],
-                )
-            } else if let Some(id) = target
-                .and_then(|t| t.strip_prefix("terminal:"))
-                .and_then(|id| id.parse::<usize>().ok())
-            {
-                if !self.state.terminals.contains(&id) {
-                    return;
-                }
-                (
-                    self.terminal_label(id),
-                    "TERMINAL / SESSION RETAINED".into(),
-                    vec![
-                        item("Rename tab…", "", format!("rename-tab:{id}")),
-                        item("Focus tab", "", format!("terminal:{id}")),
-                        item(
-                            if self.state.split {
-                                "Unsplit terminals"
-                            } else {
-                                "Split with another tab"
-                            },
-                            "",
-                            format!("split-tab:{id}"),
-                        ),
-                        item("New terminal tab", "+", "terminal:new".into()),
-                    ]
-                    .into_iter()
-                    .chain(self.state.split.then(|| {
-                        item(
-                            "Close split pane (keep tab)",
-                            "",
-                            format!("close-pane:{id}"),
-                        )
-                    }))
-                    .collect(),
-                )
-            } else {
-                self.context_menu = None;
+        let (title, subtitle, items) = if let Some(id) =
+            target.and_then(|t| t.strip_prefix("project:"))
+        {
+            let Some(project) = self.projects.iter().find(|p| p.workspace == id) else {
                 return;
             };
+            (
+                project.label.as_deref().unwrap_or(id).to_owned(),
+                format!("PROJECT / {}", project.host.as_deref().unwrap_or("local")),
+                vec![
+                    item("Rename project…", "", format!("rename-project:{id}")),
+                    item(
+                        "Open terminals",
+                        "",
+                        format!("project-space:terminals:{id}"),
+                    ),
+                    item("Open app space", "", format!("project-space:apps:{id}")),
+                    item("New project…", "+", "project:new".into()),
+                ],
+            )
+        } else if let Some(id) = target
+            .and_then(|t| t.strip_prefix("terminal:"))
+            .and_then(|id| id.parse::<usize>().ok())
+        {
+            if !self.state.terminal_ids().contains(&id) {
+                return;
+            }
+            (
+                self.terminal_label(id),
+                "TERMINAL / SESSION RETAINED".into(),
+                vec![
+                    item("Rename tab…", "", format!("rename-tab:{id}")),
+                    item("Focus tab", "", format!("terminal:{id}")),
+                    item(
+                        if self.state.split {
+                            "Unsplit terminals"
+                        } else {
+                            "Split with another tab"
+                        },
+                        "",
+                        format!("split-tab:{id}"),
+                    ),
+                    item("New terminal tab", "+", "terminal:new".into()),
+                ]
+                .into_iter()
+                .chain(self.state.split.then(|| {
+                    item(
+                        "Close split pane (keep tab)",
+                        "",
+                        format!("close-pane:{id}"),
+                    )
+                }))
+                .chain(
+                    self.health
+                        .get(&(
+                            self.config.workspace.clone(),
+                            self.config.canonical_pane(id),
+                        ))
+                        .filter(|v| v["alive"] == false)
+                        .filter(|_| {
+                            !self
+                                .config
+                                .herdr
+                                .as_ref()
+                                .is_some_and(|h| h.panes.contains_key(&id))
+                        })
+                        .map(|_| item("Reopen in a shell", "", format!("restart-terminal:{id}"))),
+                )
+                .collect(),
+            )
+        } else {
+            self.context_menu = None;
+            return;
+        };
         self.release();
         self.context_menu = Some(ContextMenu {
             position: point,
@@ -1790,7 +2607,80 @@ impl Workspace {
         }
         Ok(())
     }
+    fn refresh_ui(&mut self) -> Result<()> {
+        ensure!(
+            self.transfer.is_none() && self.receiving.is_none(),
+            "Finish or cancel the file transfer before refreshing the UI"
+        );
+        self.release();
+        self.save();
+        self.navigation.save(&self.controller_id)?;
+        let selected = self
+            .active_app
+            .as_ref()
+            .and_then(|key| self.app_hosts.get(key))
+            .and_then(|h| h.selected);
+        crate::refresh::request(
+            &self.controller_id,
+            &crate::refresh::View {
+                project: self.config.workspace.clone(),
+                app: self.active_app.clone(),
+                window: selected,
+            },
+        )?;
+        self.effects.push(ServerMessage::Error {
+            message: crate::refresh::SIGNAL.into(),
+        });
+        self.quit = true;
+        Ok(())
+    }
     fn action(&mut self, action: &str) -> Result<()> {
+        let _transaction = if matches!(action, "terminal:new" | "terminal:split" | "agent:new") {
+            Some(crate::project_sync::transaction(&self.config)?)
+        } else {
+            None
+        };
+        self.sync_project()?;
+        self.action_inner(action)
+    }
+    fn sync_project(&mut self) -> Result<()> {
+        if self.state.sync_shared(&self.config)? {
+            let valid = self.state.terminal_ids();
+            let removed = self
+                .registered
+                .iter()
+                .filter(|(p, id)| {
+                    p == &self.config.workspace
+                        && (!valid.contains(id)
+                            || self.session_epochs.get(&(p.clone(), *id))
+                                != Some(&self.state.terminal_epochs.get(id).cloned()))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for key in removed {
+                if let Some(token) = self.session_monitors.remove(&key) {
+                    token.store(true, Ordering::Release)
+                }
+                self.session_epochs.remove(&key);
+                self.registered.remove(&key);
+                self.launched.remove(&key);
+                self.health.remove(&key);
+                self.terminals.remove(&key);
+            }
+            self.ensure_sessions();
+            let selected_app = self.active_app.clone();
+            self.reconnect_saved_apps();
+            if selected_app.is_some() {
+                self.active_app = selected_app;
+            }
+            self.layout();
+        }
+        Ok(())
+    }
+    fn action_inner(&mut self, action: &str) -> Result<()> {
+        if action == "ui:refresh" {
+            return self.refresh_ui();
+        }
         if action == "menu:dismiss" {
             self.context_menu = None;
             return Ok(());
@@ -1814,12 +2704,58 @@ impl Workspace {
             self.modal = None;
             return Ok(());
         }
+        if action == "modal:catalog" {
+            if let Some(catalog) = self.modal.as_mut().and_then(|m| m.catalog.as_mut()) {
+                catalog.visible = true;
+                catalog.focused = true;
+            }
+            return Ok(());
+        }
+        if action == "modal:details" {
+            if let Some(catalog) = self.modal.as_mut().and_then(|m| m.catalog.as_mut()) {
+                catalog.visible = false;
+                catalog.focused = false;
+            }
+            return Ok(());
+        }
+        if let Some(index) = action
+            .strip_prefix("modal:application:")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            self.choose_application(index);
+            return Ok(());
+        }
+        if action == "modal:search" {
+            if let Some(catalog) = self.modal.as_mut().and_then(|m| m.catalog.as_mut()) {
+                catalog.focused = true;
+            }
+            return Ok(());
+        }
+        if action == "modal:apps:up" || action == "modal:apps:down" {
+            if let Some(catalog) = self
+                .modal
+                .as_ref()
+                .and_then(|m| m.catalog.as_ref())
+                .filter(|c| c.visible)
+            {
+                let index = if action.ends_with(":up") {
+                    catalog.selected.saturating_sub(1)
+                } else {
+                    catalog.selected + 1
+                };
+                self.choose_application(index);
+            }
+            return Ok(());
+        }
         if action == "modal:accept" {
             return self.accept_prompt();
         }
         if let Some(index) = action.strip_prefix("modal:field:") {
             if let (Some(modal), Ok(index)) = (&mut self.modal, index.parse::<usize>()) {
-                modal.selected = index.min(modal.fields.len() - 1)
+                modal.selected = index.min(modal.fields.len() - 1);
+                if let Some(catalog) = modal.catalog.as_mut() {
+                    catalog.focused = false;
+                }
             }
             return Ok(());
         }
@@ -1857,13 +2793,53 @@ impl Workspace {
         if let Some(id) = action.strip_prefix("close-pane:") {
             let id = id.parse::<usize>()?;
             ensure!(
-                self.state.terminals.contains(&id),
+                self.state.terminal_ids().contains(&id),
                 "Terminal is not in this project"
             );
-            self.state.terminal = id;
+            self.state.select_terminal(id);
             return self.action("terminal:close-pane");
         }
+        if let Some(id) = action.strip_prefix("restart-terminal:") {
+            self.action(&format!("terminal:{id}"))?;
+            return self.action("terminal:restart");
+        }
         match action {
+            "audio:toggle" | "audio:mute" | "audio:unmute" => {
+                if !self.audio_capable && action != "audio:mute" {
+                    self.note("Audio needs a local player. Install the STAR/KIT Kitty bridge on the listening machine, or launch starmux --ssh HOST --workspace NAME locally. Restarting only the server frontend cannot enable local audio.".into());
+                    return Ok(());
+                }
+                self.navigation.audio_muted = if action == "audio:toggle" {
+                    !self.navigation.audio_muted
+                } else {
+                    action == "audio:mute"
+                };
+                self.audio_failed = None;
+                self.sync_audio();
+                self.navigation.save(&self.controller_id)?;
+                if !self.audio_capable && !self.navigation.audio_muted {
+                    self.note("Local audio requires an audio-enabled STAR/KIT frontend. From your listening machine run starmux --ssh HOST --workspace NAME, or use the Kitty STAR/KIT bridge".into());
+                }
+            }
+            "projects:sort:mode"
+            | "projects:sort:direction"
+            | "projects:sort:manual"
+            | "projects:sort:activity" => {
+                self.project_drag = None;
+                if action == "projects:sort:manual" {
+                    self.navigation.recent = false;
+                } else if action == "projects:sort:activity" {
+                    self.navigation.recent = true;
+                } else if action == "projects:sort:mode" {
+                    self.navigation.recent = !self.navigation.recent;
+                } else {
+                    self.navigation.high_first = !self.navigation.high_first;
+                    self.navigation.recent = true;
+                }
+                self.sort_projects(true);
+                self.navigation.save(&self.controller_id)?;
+                self.navigation_saved_at = Instant::now();
+            }
             "git:details" => {
                 self.release();
                 self.context_menu = None;
@@ -1910,6 +2886,24 @@ impl Workspace {
             }
             "project:new" => self.open_prompt(Prompt::Project),
             "terminal:font:increase" | "terminal:font:decrease" | "terminal:font:reset" => {
+                #[cfg(feature = "lossless-canvas")]
+                if self.desktop.is_none() {
+                    let current = self.native_font_points.context("Use Kitty's font-size shortcuts, or connect through the updated Kitty bridge for header controls")?;
+                    let requested = match action {
+                        "terminal:font:increase" => (current + 1000).min(32000),
+                        "terminal:font:decrease" => current.saturating_sub(1000).max(6000),
+                        _ => 0,
+                    };
+                    self.native_font_points = if requested == 0 {
+                        self.initial_native_font_points
+                    } else {
+                        Some(requested)
+                    };
+                    self.effects.push(ServerMessage::TerminalFont {
+                        size_millipoints: requested,
+                    });
+                    return Ok(());
+                }
                 self.state.terminal_font_size = match action {
                     "terminal:font:increase" => {
                         ((self.font_pixels().round() as u16) + 1).clamp(10, 32)
@@ -1933,18 +2927,21 @@ impl Workspace {
                 self.layout();
                 self.note("New agent / fresh session in the project directory".into());
             }
-            "agent:previous" | "agent:next" => {
-                let ids = self.state.agent_ids();
+            "agent:previous" | "agent:next" | "terminal:previous" | "terminal:next" => {
+                let ids = self.state.terminal_ids();
+                if ids.is_empty() {
+                    return Ok(());
+                }
                 let n = ids
                     .iter()
-                    .position(|id| *id == self.state.agent)
+                    .position(|id| *id == self.state.terminal)
                     .unwrap_or(0);
-                let next = if action == "agent:next" {
+                let next = if action.ends_with(":next") {
                     (n + 1) % ids.len()
                 } else {
                     (n + ids.len() - 1) % ids.len()
                 };
-                self.state.agent = ids[next];
+                self.state.select_terminal(ids[next]);
                 self.set_space(Space::Agent);
             }
             "terminal:new" => {
@@ -1956,12 +2953,8 @@ impl Workspace {
             }
             "terminal:split" => {
                 self.release();
-                if self.state.terminals.len() == 1 {
-                    self.state.add_terminal()?;
-                    self.ensure_sessions();
-                }
-                self.state.split = !self.state.split;
-                self.state.space = Space::Terminals;
+                self.state.toggle_split()?;
+                self.ensure_sessions();
                 self.layout();
                 self.save()
             }
@@ -1970,20 +2963,29 @@ impl Workspace {
                     self.release();
                     if let Some(other) = self
                         .state
-                        .terminals
+                        .visible()
                         .iter()
                         .find(|id| **id != self.state.terminal)
                     {
-                        self.state.terminal = *other;
+                        self.state.select_terminal(*other);
                     }
                     self.state.split = false;
+                    self.state.split_panes = None;
                     self.layout();
                     self.save();
                     self.note("Pane closed / terminal still available in its tab".into());
                 }
             }
-            "launch-app" => self.open_prompt(Prompt::Launch),
+            "launch-app" => {
+                if self.state.space != Space::Apps {
+                    self.set_space(Space::Apps);
+                }
+                self.open_prompt(Prompt::Launch);
+            }
             "run-app" => {
+                if self.state.space != Space::Apps {
+                    self.set_space(Space::Apps);
+                }
                 if self.state.app_command.trim().is_empty() {
                     self.open_prompt(Prompt::RunCommand)
                 } else {
@@ -2000,51 +3002,25 @@ impl Workspace {
                     )?;
                 }
             }
-            "agent:attach" => {
-                let key = (
-                    self.config.workspace.clone(),
-                    self.config.canonical_pane(self.state.agent),
+            "agent:attach" | "terminal:restart" => {
+                let pane = self.state.terminal;
+                ensure!(
+                    !self
+                        .config
+                        .herdr
+                        .as_ref()
+                        .is_some_and(|h| h.panes.contains_key(&pane)),
+                    "Imported terminals remain managed by Herdr"
                 );
-                if self.desktop.is_none()
-                    && !self
-                        .terminals
-                        .get(&key)
-                        .is_some_and(|terminal| !terminal.exited)
-                {
-                    self.terminals.remove(&key);
-                    self.registered.remove(&key);
-                }
-                self.set_space(Space::Agent);
-                let pane = self.state.agent;
-                if self
-                    .health
-                    .get(&(self.config.workspace.clone(), pane))
-                    .is_some_and(|v| v["alive"] == false)
-                {
-                    let command = self.agent_command(pane);
-                    let config = self.config.clone();
-                    let tx = self.tx.clone();
-                    std::thread::spawn(move || {
-                        let result = (|| -> Result<()> {
-                            let mut req = config.request(pane, "restart");
-                            req["argv"] = json!(shell_words::split(&command)?);
-                            req["directory"] = json!(config.directory);
-                            config.call(pane, &req)?;
-                            Ok(())
-                        })();
-                        let _ = tx.send(match result {
-                            Ok(()) => {
-                                Event::Status("Agent restarted in its existing session".into())
-                            }
-                            Err(e) => Event::Error(format!("Agent: {e:#}")),
-                        });
+                let config = self.config.clone();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let result = config.call(pane, &config.request(pane, "restart"));
+                    let _ = tx.send(match result {
+                        Ok(_) => Event::Status("Terminal reopened in a shell".into()),
+                        Err(error) => Event::Error(format!("Terminal: {error:#}")),
                     });
-                } else if !self
-                    .registered
-                    .contains(&(self.config.workspace.clone(), pane))
-                {
-                    self.ensure_sessions();
-                }
+                });
             }
             "apps:reconnect" => {
                 self.release();
@@ -2095,14 +3071,15 @@ impl Workspace {
                         "Agent is not in this project"
                     );
                     self.state.agent = id;
+                    self.state.select_terminal(id);
                     self.set_space(Space::Agent);
                 } else if let Some(id) = action.strip_prefix("terminal:") {
                     let id = id.parse::<usize>()?;
                     ensure!(
-                        self.state.terminals.contains(&id),
+                        self.state.terminal_ids().contains(&id),
                         "Terminal is not in this project"
                     );
-                    self.state.terminal = id;
+                    self.state.select_terminal(id);
                     self.set_space(Space::Terminals);
                 } else if let Some(command) = action.strip_prefix("run:") {
                     let directory = self.config.directory.clone().unwrap_or_else(|| {
@@ -2145,15 +3122,15 @@ impl Workspace {
         let width = if self.state.space != Space::Apps {
             u32::from(content.width)
         } else {
-            u32::from(content.width).clamp(128, 2560)
+            u32::from(content.width).clamp(128, 3840) / 2 * 2
         };
         let height = if self.state.space != Space::Apps {
             u32::from(content.height)
         } else {
-            u32::from(content.height).clamp(64, 1440)
+            u32::from(content.height).clamp(64, 2160) / 2 * 2
         };
         let fps = if self.state.space == Space::Apps {
-            30
+            60
         } else {
             self.terminal_fps
         };
@@ -2184,20 +3161,31 @@ impl Workspace {
         });
         let health = self.health.get(&(
             self.config.workspace.clone(),
-            self.config.canonical_pane(self.state.agent),
+            self.config.canonical_pane(self.state.terminal),
         ));
-        let agent_name = health
-            .and_then(|v| v["command"].as_str())
-            .unwrap_or(self.config.agent.as_deref().unwrap_or("codex"));
+        let agent_name = health.and_then(|v| v["agent"].as_str()).unwrap_or("");
         let raw_agent_state = health
             .and_then(|v| v["state"].as_str())
             .unwrap_or("connecting");
-        let agent_state = if raw_agent_state == "unknown" {
+        let agent_state = if matches!(
+            raw_agent_state,
+            "unknown" | "blocked" | "waiting" | "waiting_for_input"
+        ) {
             if health.is_some_and(|v| v["alive"] == true) {
                 "running"
             } else {
                 "stopped"
             }
+        } else if matches!(
+            raw_agent_state,
+            "needs_input" | "question_pending" | "waiting_for_answer"
+        ) {
+            "question pending"
+        } else if matches!(
+            raw_agent_state,
+            "waiting_for_approval" | "needs_approval" | "needs_permission"
+        ) {
+            "approval requested"
         } else {
             raw_agent_state
         };
@@ -2228,6 +3216,8 @@ impl Workspace {
                 host: c.host.as_deref().unwrap_or("local"),
                 working: self.project_activity(c).working,
                 waiting: self.project_activity(c).waiting,
+                running: self.project_activity(c).running,
+                questions: self.project_activity(c).questions,
             })
             .collect();
         let active_app = &self.active_app;
@@ -2239,12 +3229,42 @@ impl Workspace {
                 h.windows.iter().map(move |w| crate::shelf::AppCard {
                     action: format!("app:{key}:{}", w.id),
                     name: &w.name,
-                    host: h.config.host.as_deref().unwrap_or("local"),
                     selected: active_app.as_ref() == Some(key) && h.selected == Some(w.id),
                 })
             })
             .collect();
         let modal = self.modal.as_ref().map(|m| crate::shelf::Modal {
+            catalog_available: m.catalog.is_some(),
+            applications: m.catalog.as_ref().filter(|c| c.visible).map(|c| {
+                crate::shelf::ApplicationPicker {
+                    query: c.query.text(),
+                    cursor: c.query.cursor(),
+                    focused: c.focused,
+                    status: &c.status,
+                    selection_name: c
+                        .matches()
+                        .get(c.selected)
+                        .and_then(|i| c.apps.get(*i))
+                        .filter(|a| a.command == m.fields[0].1.text())
+                        .map(|a| a.name.as_str()),
+                    selected: c.selected,
+                    count: c.matches().len(),
+                    rows: c
+                        .matches()
+                        .into_iter()
+                        .enumerate()
+                        .skip(c.offset)
+                        .take(crate::shelf::application_rows(v.height as u16))
+                        .map(|(row, index)| {
+                            (
+                                row,
+                                c.apps[index].name.as_str(),
+                                c.apps[index].executable.as_str(),
+                            )
+                        })
+                        .collect(),
+                }
+            }),
             title: match &m.kind {
                 Prompt::RenameProject(_) => "Rename project",
                 Prompt::RenameTab(_) => "Rename terminal tab",
@@ -2282,54 +3302,98 @@ impl Workspace {
                     .unwrap_or(&self.config.workspace),
                 project_offset: self.project_offset,
                 project_total: self.projects.len(),
+                sort_hover: self.sort_hover,
+                sort_mode_hover: self.sort_mode_hover,
+                project_manual: !self.navigation.recent,
+                project_drag: self
+                    .project_drag
+                    .as_ref()
+                    .filter(|d| d.moved)
+                    .map(|d| (d.id.as_str(), d.gap)),
+                project_sort_high: self.navigation.high_first,
                 wave_phase: self.wave_phase,
                 reduced_motion: self.reduced_motion,
                 directory: &directory,
                 host,
                 theme: &self.appearance.name,
+                audio_label: if !self.audio_capable {
+                    "Local audio missing"
+                } else if self.navigation.audio_muted {
+                    "Muted"
+                } else if self.audio_failed.is_some() {
+                    "Audio unavailable"
+                } else {
+                    "Audio on"
+                },
                 space: self.state.space,
                 projects,
                 terminals: self
                     .state
-                    .terminals
+                    .terminal_ids()
                     .iter()
-                    .map(|id| (*id, self.terminal_label(*id)))
+                    .map(|id| {
+                        let label = self.terminal_label(*id);
+                        let profile = self
+                            .health
+                            .get(&(
+                                self.config.workspace.clone(),
+                                self.config.canonical_pane(*id),
+                            ))
+                            .and_then(|v| v["agent"].as_str());
+                        (
+                            *id,
+                            profile.map_or(label.clone(), |p| format!("{label} · {p}")),
+                        )
+                    })
+                    .collect(),
+                terminal_status: self
+                    .state
+                    .terminal_ids()
+                    .into_iter()
+                    .filter_map(|id| {
+                        self.health
+                            .get(&(
+                                self.config.workspace.clone(),
+                                self.config.canonical_pane(id),
+                            ))
+                            .filter(|v| v["agent"].as_str().is_some() || v["alive"] == false)
+                            .map(|v| {
+                                (
+                                    id,
+                                    if v["alive"] == false {
+                                        "stopped"
+                                    } else {
+                                        v["state"].as_str().unwrap_or("idle")
+                                    }
+                                    .to_owned(),
+                                )
+                            })
+                    })
                     .collect(),
                 terminal: self.state.terminal,
                 terminal_font_size: self.font_label(),
                 split: self.state.split,
                 agent_name,
                 agent_state,
-                agent: self.state.agent,
-                agents: self
-                    .state
-                    .agent_ids()
-                    .iter()
-                    .map(|id| crate::shelf::AgentTab {
-                        id: *id,
-                        name: self.agent_label(*id),
-                        state: self
-                            .health
-                            .get(&(
-                                self.config.workspace.clone(),
-                                self.config.canonical_pane(*id),
-                            ))
-                            .map(|v| {
-                                if v["alive"] == false {
-                                    "stopped"
-                                } else {
-                                    v["state"]
-                                        .as_str()
-                                        .filter(|s| *s != "unknown")
-                                        .unwrap_or("running")
-                                }
-                            })
-                            .unwrap_or("starting")
-                            .to_owned(),
-                    })
-                    .collect(),
                 status: &self.status,
                 apps,
+                app_desktop: self
+                    .active_app
+                    .as_ref()
+                    .and_then(|key| self.app_hosts.get(key))
+                    .map(|h| crate::shelf::DesktopMap {
+                        size: h
+                            .client
+                            .latest
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .map_or([self.settings.width, self.settings.height], |f| {
+                                [f.width, f.height]
+                            }),
+                        windows: &h.layout,
+                        selected: h.windows.iter().position(|w| Some(w.id) == h.selected),
+                    }),
                 connected,
                 desktop_host: self
                     .active_app
@@ -2370,7 +3434,23 @@ impl Workspace {
             rect: full,
             surface: chrome,
         });
-        let view = ContentView::new([self.settings.width, self.settings.height], content).unwrap();
+        let source_size = if self.state.space == Space::Apps {
+            self.active_app
+                .as_ref()
+                .and_then(|key| self.app_hosts.get(key))
+                .and_then(|host| {
+                    host.client
+                        .latest
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|frame| [frame.width, frame.height])
+                })
+                .unwrap_or([self.settings.width, self.settings.height])
+        } else {
+            [self.settings.width, self.settings.height]
+        };
+        let view = ContentView::new(source_size, content).unwrap();
         self.view = Some(view);
         let kitty_frame_matches = self.desktop.as_ref().is_some_and(|d| {
             d.latest
@@ -2400,65 +3480,26 @@ impl Workspace {
                 }
                 .into(),
                 view,
-                interactive: self.modal.is_none(),
+                interactive: self.modal.is_none() && self.context_menu.is_none() && !self.git_open,
             });
         }
         if direct {
-            for (pane, r) in self.visible_panes() {
-                if let Some(terminal) = self
-                    .terminals
-                    .get_mut(&(self.config.workspace.clone(), pane))
-                {
-                    terminal.set_metrics(self.typography);
-                    terminal.set_font_size(self.state.terminal_font_size);
-                    if let Err(error) = terminal.resize(r.width, r.height) {
-                        self.status = format!("Terminal resize: {error:#}");
-                    }
-                    let mut surfaces = vec![];
-                    terminal.paint(r, &self.appearance, &mut surfaces);
-                    for mut surface in surfaces {
-                        for node in &mut surface.nodes {
-                            let bounds = match node {
-                                starkit::native_surface::Primitive::Fill { rect, .. }
-                                | starkit::native_surface::Primitive::Border { rect, .. }
-                                | starkit::native_surface::Primitive::Text { rect, .. } => rect,
-                                _ => continue,
-                            };
-                            bounds.x += r.x + content.x;
-                            bounds.y += r.y + content.y;
-                        }
-                        surface.width = v.width as u16;
-                        surface.height = v.height as u16;
-                        // Explicit pane background; subsequent chunks are transparent.
-                        if surface.background != "transparent" {
-                            let background = surface.background.clone();
-                            surface.background = "transparent".into();
-                            surface.nodes.insert(
-                                0,
-                                starkit::native_surface::Primitive::Fill {
-                                    rect: PixelRect::new(
-                                        r.x + content.x,
-                                        r.y + content.y,
-                                        r.width,
-                                        r.height,
-                                    ),
-                                    color: background,
-                                    radius: 0,
-                                },
-                            );
-                        }
-                        scene.components.push(Component::Surface {
-                            rect: full,
-                            surface,
-                        });
-                    }
+            #[cfg(feature = "lossless-canvas")]
+            if self.native_terminal_cells {
+                for (_, pane) in self.visible_panes() {
+                    let (rect, _) = native_terminal_rect(pane, content, v);
+                    scene.components.push(Component::Terminal { rect });
                 }
             }
         }
-        scene.components.push(Component::Surface {
-            rect: full,
-            surface: foreground,
-        });
+        // Empty transparent overlays still cost a full-window alpha composite
+        // in the native frontend. Add the layer only while an overlay exists.
+        if !foreground.nodes.is_empty() {
+            scene.components.push(Component::Surface {
+                rect: full,
+                surface: foreground,
+            });
+        }
         scene
     }
 }
@@ -2467,6 +3508,53 @@ impl Controller for Workspace {
         &mut self,
         capabilities: starkit::terminal_graphics::capabilities::Capabilities,
     ) {
+        self.close_audio();
+        #[cfg(feature = "lossless-canvas")]
+        {
+            self.native_terminal_cells = capabilities.native_terminal_cells;
+            self.native_font_points = capabilities.native_font_millipoints;
+            self.initial_native_font_points = capabilities.native_font_millipoints;
+            self.native_layout_key.clear();
+            for terminal in self.terminals.values_mut() {
+                terminal.reset_native();
+            }
+            if self.desktop.is_none() && !self.native_terminal_cells {
+                self.note(
+                    "Update the local STAR/KIT terminal frontend to enable native Kitty terminals"
+                        .into(),
+                );
+            }
+        }
+        self.pointer_hiding = capabilities.pointer_hiding;
+        self.cursor_policy_sent = None;
+        self.audio_capable = capabilities.audio_relay;
+        self.video.stop();
+        self.video_failed = false;
+        self.video_capable =
+            capabilities.canvas_video && !capabilities.local_frames && capabilities.streamed_frames;
+        self.video_high_quality = serde_json::to_value(capabilities)
+            .ok()
+            .is_some_and(|v| v["canvas_video_high_quality"] == true);
+        self.video.set_high_quality(self.video_high_quality);
+        self.video.set_pipelined(
+            cfg!(feature = "lossless-canvas")
+                && serde_json::to_value(capabilities)
+                    .ok()
+                    .is_some_and(|v| v["canvas_video_pipelined"] == true),
+        );
+        self.terminal_transport = if self.desktop.is_none() {
+            "native-kitty-cells"
+        } else if capabilities.local_frames {
+            "mapped-rgba"
+        } else if serde_json::to_value(capabilities)
+            .ok()
+            .is_some_and(|v| v["lossless_frames"] == true)
+        {
+            "lossless-png-delta"
+        } else {
+            "jpeg-compatibility"
+        };
+        self.audio_failed = None;
         if std::env::var_os("STAR_GRAPHICS_FONT_DEBUG").is_some() {
             eprintln!(
                 "Controller font report: {}",
@@ -2480,6 +3568,13 @@ impl Controller for Workspace {
         self.refresh_kitty_fonts();
     }
     fn tick(&mut self) {
+        if self.shared_synced_at.elapsed() >= Duration::from_millis(250) {
+            if let Err(e) = self.sync_project() {
+                self.note(format!("Shared project: {e:#}"));
+            }
+            self.shared_synced_at = Instant::now();
+        }
+        self.sync_audio();
         self.refresh_git(false);
         self.refresh_activity();
         for event in self.rx.try_iter().collect::<Vec<_>>() {
@@ -2490,20 +3585,54 @@ impl Controller for Workspace {
                     }
                 }
                 Event::Activity(activity) => {
+                    self.navigation.observe(&activity, crate::navigation::now());
                     self.activity = activity;
                     self.activity_pending = false;
                     self.activity_at = Instant::now();
+                    self.sort_projects(false);
                 }
                 Event::Git(id, location, status) => {
                     self.git_pending.remove(&id);
                     self.git.insert(id, (location, *status, Instant::now()));
                 }
+                Event::Applications(source, token, result) => {
+                    if let Some(modal) = self.modal.as_mut()
+                        && let Some(catalog) = modal.catalog.as_mut()
+                        && catalog.source == source
+                        && format!(
+                            "{}\n{}",
+                            modal.fields[2].1.text().trim(),
+                            modal.fields[3].1.text().trim()
+                        ) == source
+                        && catalog.changed == token
+                    {
+                        match result {
+                            Ok(apps) => {
+                                catalog.status = format!("{} registered applications", apps.len());
+                                catalog.apps = apps;
+                            }
+                            Err(error) => catalog.status = error,
+                        }
+                        if modal.fields[0].1.text().is_empty() {
+                            self.choose_application(0);
+                        }
+                    }
+                }
                 Event::Ready(config, pane) => {
                     self.launch(*config, pane);
                     self.note("Project session connected / process retained".into())
                 }
-                Event::Health(project, pane, value) => {
-                    self.health.insert((project, pane), value);
+                Event::Health(project, pane, value, stopped) => {
+                    if stopped.load(Ordering::Acquire) {
+                        continue;
+                    }
+                    if value["exited"] == true && value["reaped"] == true {
+                        if let Err(error) = self.remove_exited_terminal(&project, pane) {
+                            self.note(format!("Close exited terminal: {error:#}"));
+                        }
+                    } else {
+                        self.health.insert((project, pane), value);
+                    }
                 }
                 Event::Status(status) => self.status = status,
                 Event::Delivered(project, pane, path) => {
@@ -2555,6 +3684,82 @@ impl Controller for Workspace {
                 self.status = format!("Terminal: {error:#}");
             }
         }
+        let ended_imports = self
+            .terminals
+            .iter()
+            .filter(|((project, pane), terminal)| {
+                terminal.exited_successfully
+                    && self
+                        .projects
+                        .iter()
+                        .find(|config| &config.workspace == project)
+                        .and_then(|config| config.herdr.as_ref())
+                        .is_some_and(|source| source.panes.contains_key(pane))
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for (project, pane) in ended_imports {
+            if let Err(error) = self.remove_exited_terminal(&project, pane) {
+                self.note(format!("Close exited terminal: {error:#}"));
+            }
+        }
+        #[cfg(feature = "lossless-canvas")]
+        if self.desktop.is_none() && self.native_terminal_cells && self.state.space != Space::Apps {
+            let panes = self.visible_panes();
+            let content = crate::shelf::Layout::new(
+                self.viewport.width as u16,
+                self.viewport.height as u16,
+                self.state.space,
+            )
+            .canvas;
+            let key = format!(
+                "{}:{}:{}:{panes:?}",
+                self.config.workspace,
+                self.viewport.generation,
+                self.state.selected()
+            );
+            if key != self.native_layout_key {
+                for terminal in self.terminals.values_mut() {
+                    terminal.reset_native();
+                }
+                self.native_layout_key = key;
+            }
+            for (pane, area) in panes {
+                let (rect, padding) = native_terminal_rect(area, content, self.viewport);
+                if let Some(terminal) = self
+                    .terminals
+                    .get_mut(&(self.config.workspace.clone(), pane))
+                {
+                    terminal.set_metrics(self.typography);
+                    match terminal.resize_native(
+                        rect,
+                        padding,
+                        [
+                            (self.viewport.width / u32::from(self.viewport.columns.max(1))).max(1)
+                                as u16,
+                            (self.viewport.height / u32::from(self.viewport.rows.max(1))).max(1)
+                                as u16,
+                        ],
+                    ) {
+                        Ok(()) => {
+                            if let Some(frame) = terminal.native_frame(
+                                app_id(&self.config.workspace, pane),
+                                self.viewport.generation,
+                                rect,
+                                &self.appearance,
+                                pane == self.config.canonical_pane(self.state.selected())
+                                    && self.modal.is_none()
+                                    && self.context_menu.is_none()
+                                    && !self.git_open,
+                            ) {
+                                self.effects.push(ServerMessage::TerminalCells { frame });
+                            }
+                        }
+                        Err(error) => self.status = format!("Terminal resize: {error:#}"),
+                    }
+                }
+            }
+        }
         let desktop_events = self
             .desktop
             .as_ref()
@@ -2570,6 +3775,7 @@ impl Controller for Workspace {
                 _ => {}
             }
         }
+        self.refresh_applications();
         let mut errors = vec![];
         for host in self.app_hosts.values_mut() {
             for event in host.client.events.try_iter() {
@@ -2583,6 +3789,7 @@ impl Controller for Workspace {
                         }
                         host.windows = windows;
                     }
+                    DesktopEvent::Layout(layout) => host.layout = layout,
                     DesktopEvent::Error(message) => errors.push(message),
                     _ => {}
                 }
@@ -2666,9 +3873,29 @@ impl Controller for Workspace {
                 self.note(format!("Desktop frame: {e:#}"))
             }
         }
+        if self.navigation.dirty && self.navigation_saved_at.elapsed() >= Duration::from_secs(2) {
+            self.sort_projects(false);
+            if let Err(error) = self.navigation.save(&self.controller_id) {
+                self.note(format!("Could not save project order: {error:#}"));
+            }
+            self.navigation_saved_at = Instant::now();
+        }
         if self.last_inspect.elapsed() > Duration::from_millis(500) {
             self.last_inspect = Instant::now();
             if let Ok(root) = root() {
+                let stamp = project_state::data_root()
+                    .ok()
+                    .and_then(|r| fs::metadata(r.join("catalog-version")).ok())
+                    .and_then(|m| m.modified().ok());
+                if stamp != self.catalog_stamp {
+                    if let Ok(config) = crate::saved(&self.config.workspace) {
+                        self.config = config;
+                    }
+                    self.projects = project_state::catalog(&self.config);
+                    self.navigation.reconcile(&self.projects);
+                    self.sort_projects(false);
+                    self.catalog_stamp = stamp;
+                }
                 if let Ok(bytes) = fs::read(root.join(format!("{}.json", self.config.workspace)))
                     && let Ok(config) = serde_json::from_slice::<Config>(&bytes)
                     && let Ok(theme) = crate::appearance::Appearance::load(&config.theme)
@@ -2684,9 +3911,18 @@ impl Controller for Workspace {
                             .unwrap_or(json!({"state":"starting"}))
                     })
                     .collect::<Vec<_>>();
-                let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"selected":h.selected})).collect::<Vec<_>>();
-                let sessions=self.state.terminals.iter().copied().chain(self.state.agent_ids()).map(|i|json!({"pane":i,"agent":self.state.agent_ids().contains(&i),"health":self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i)))})).collect::<Vec<_>>();
-                let snapshot = json!({"workspace":self.controller_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"direct"}else{"kitty"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starmux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected})).collect::<Vec<_>>();
+                let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
+                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starmux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                snapshot["ui_refresh"] = json!(true);
+                snapshot["frontend"] = json!(self.controller_id);
+                if self.desktop.is_none() {
+                    snapshot["terminal_presentation"]["fps"] = Value::Null;
+                    snapshot["terminal_presentation"]["burst_fps"] = Value::Null;
+                    snapshot["terminal_presentation"]["native_cells"] = json!(true);
+                    snapshot["terminal_presentation"]["renderer_owner"] = json!("host Kitty");
+                    snapshot["terminal_presentation"]["terminal_virtual_desktop"] = json!(false);
+                }
                 let _ = starkit::fs::write_private(
                     &root.join(format!("{}.state.json", self.controller_id)),
                     &serde_json::to_vec_pretty(&snapshot).unwrap(),
@@ -2717,6 +3953,58 @@ impl Controller for Workspace {
         self.draw(v)
     }
     fn input(&mut self, input: Input) {
+        let refresh = match &input {
+            Input::Key { code, modifiers } => {
+                code == "f5" || (matches!(code.as_str(), "char:r" | "char:R") && modifiers & 3 == 3)
+            }
+            Input::Embedded { event, .. } => {
+                matches!(&event.kind,EmbeddedKind::Key{code,modifiers,phase} if *phase!=KeyPhase::Release && matches!(code.as_str(),"char:r"|"char:R") && modifiers&3==3)
+            }
+            _ => false,
+        };
+        if refresh {
+            if let Err(error) = self.refresh_ui() {
+                self.note(format!("Refresh UI: {error:#}"));
+            }
+            return;
+        }
+
+        match &input {
+            Input::Pointer {
+                action,
+                pixel,
+                x,
+                y,
+                ..
+            } if action == "move" => {
+                let point = pixel.unwrap_or([
+                    u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
+                    u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+                ]);
+                self.sort_mode_hover = self.modal.is_none()
+                    && self.context_menu.is_none()
+                    && !self.git_open
+                    && self.chrome_hits.iter().any(|h| {
+                        h.action == "projects:sort:mode"
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    });
+                self.sort_hover = self.modal.is_none()
+                    && self.context_menu.is_none()
+                    && !self.git_open
+                    && self.chrome_hits.iter().any(|h| {
+                        h.action == "projects:sort:direction"
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    });
+            }
+            Input::CancelPointer | Input::Embedded { .. } => {
+                self.sort_hover = false;
+                self.sort_mode_hover = false;
+            }
+            _ => {}
+        }
+        if self.project_order_input(&input) {
+            return;
+        }
         let result = (|| -> Result<()> {
             // An overlay can also open via an action while a canvas owns keys.
             // Normalize those keys before dispatch, never forwarding them to a PTY.
@@ -2851,7 +4139,14 @@ impl Controller for Workspace {
                     Input::Key { code, modifiers } => self.modal_key(code, modifiers)?,
                     Input::Paste { text } => {
                         let modal = self.modal.as_mut().unwrap();
-                        modal.fields[modal.selected].1.paste(&text)
+                        if let Some(catalog) =
+                            modal.catalog.as_mut().filter(|c| c.visible && c.focused)
+                        {
+                            catalog.query.paste(&text);
+                            self.choose_application(0);
+                        } else {
+                            modal.fields[modal.selected].1.paste(&text)
+                        }
                     }
                     Input::Pointer {
                         action,
@@ -2876,6 +4171,15 @@ impl Controller for Workspace {
                             self.action(&action)?
                         }
                     }
+                    Input::Pointer { action, .. }
+                        if action == "scroll_up" || action == "scroll_down" =>
+                    {
+                        self.action(if action == "scroll_up" {
+                            "modal:apps:up"
+                        } else {
+                            "modal:apps:down"
+                        })?;
+                    }
                     Input::Osc72 { text } => self.drop_message(&text)?,
                     _ => {}
                 }
@@ -2892,6 +4196,7 @@ impl Controller for Workspace {
                     "char:2" => self.set_space(Space::Terminals),
                     "char:3" => self.set_space(Space::Apps),
                     "char:n" => self.action("terminal:new")?,
+                    "char:m" => self.action("audio:toggle")?,
                     "char:a" => self.action("launch-app")?,
                     "char:r" => self.action("run-app")?,
                     "char:p" => self.open_prompt(Prompt::Project),
@@ -2961,7 +4266,12 @@ impl Controller for Workspace {
                     }
                 }
                 Input::Notice { message } => {
-                    if let Some(paths) = message.strip_prefix("drop:") {
+                    if message == "focus-canvas:terminals" && self.state.space != Space::Apps {
+                        self.desktop_send(DesktopCommand::FocusApp(app_id(
+                            &self.config.workspace,
+                            self.config.canonical_pane(self.state.selected()),
+                        )));
+                    } else if let Some(paths) = message.strip_prefix("drop:") {
                         self.deliver(self.state.selected(), serde_json::from_str(paths)?)
                     } else if let Some(action) = message.strip_prefix("action:") {
                         self.action(action)?
@@ -2978,25 +4288,184 @@ impl Controller for Workspace {
             self.note(format!("{e:#}"));
         }
     }
+    #[cfg(feature = "lossless-canvas")]
+    fn tick_interval(&self) -> Duration {
+        if self.desktop.is_none() && self.state.space != Space::Apps {
+            Duration::from_millis(8)
+        } else {
+            Duration::from_millis(33)
+        }
+    }
     fn frame_interval(&self) -> Duration {
-        Duration::from_millis(33)
+        // Live terminal/app frames have their own 60 Hz transport. Periodic
+        // chrome follows SCREEN's cadence; input still requests an immediate scene.
+        Duration::from_millis(100)
+    }
+    #[cfg(feature = "lossless-canvas")]
+    fn lossless_canvas(&self, stream: &str) -> bool {
+        stream == "terminals"
     }
     fn live_frames(&mut self) -> Vec<Update> {
-        self.frames.drain()
+        let source = if self.state.space == Space::Apps && self.video_capable && !self.video_failed
+        {
+            self.active_app.clone()
+        } else {
+            None
+        };
+        if self.video_source != source {
+            self.video.stop();
+            self.video_source = source.clone();
+        }
+        let updates = self.frames.drain();
+        if source.is_none() {
+            return updates;
+        }
+        let mut other = vec![];
+        for update in updates {
+            if matches!(&update, Update::Frame{stream,..}|Update::Close{stream,..} if stream=="apps")
+            {
+                if let Err(e) = self.video.submit(update) {
+                    self.video_failed = true;
+                    self.video.stop();
+                    self.note(format!("App video: {e:#}"));
+                }
+            } else {
+                other.push(update);
+            }
+        }
+        other
+    }
+    fn detached(&mut self) {
+        if self.controller_id != self.workspace_id {
+            self.quit = true;
+        }
+        #[cfg(feature = "lossless-canvas")]
+        {
+            self.remote_drop = None;
+        }
+        self.receiving = None;
+        self.drop_target = None;
+        self.drop_stage = None;
+        self.video.stop();
+        self.video_capable = false;
+        self.close_audio();
+        self.audio_capable = false;
+    }
+    fn media(&mut self, message: starkit::terminal_graphics::media::ToHost) {
+        use starkit::terminal_graphics::media::ToHost;
+        self.video.receive(&message);
+        match message {
+            ToHost::AudioCredit {
+                session,
+                epoch,
+                blocks,
+            } if session == AUDIO_SESSION => {
+                if let Some(route) = self.audio_route.as_mut().filter(|r| r.epoch == epoch) {
+                    route.credits = route.credits.saturating_add(blocks as u64);
+                    route.source.grant(blocks);
+                }
+            }
+            ToHost::AudioError {
+                session,
+                epoch,
+                message,
+            } if session == AUDIO_SESSION
+                && self.audio_route.as_ref().is_some_and(|r| r.epoch == epoch) =>
+            {
+                self.audio_failed = self.audio_route.as_ref().map(|r| r.key.clone());
+                self.close_audio();
+                self.note(message);
+            }
+            _ => {}
+        }
+    }
+    fn media_chunks(&mut self) -> Vec<ServerMessage> {
+        if let Some(route) = self.audio_route.as_mut()
+            && let Ok(samples) = route.source.data.try_recv()
+        {
+            route.sent += 1;
+            return vec![ServerMessage::Media {
+                message: starkit::terminal_graphics::media::ToClient::AudioChunk {
+                    session: AUDIO_SESSION,
+                    epoch: route.epoch,
+                    samples,
+                },
+            }];
+        }
+        if let Some(error) = self.video.warning() {
+            self.video_failed = true;
+            self.note(error);
+        }
+        match self.video.messages(1) {
+            Ok(messages) => messages,
+            Err(error) => {
+                self.video_failed = true;
+                self.video.stop();
+                self.note(format!("App video: {error:#}"));
+                vec![]
+            }
+        }
     }
     fn effects(&mut self) -> Vec<ServerMessage> {
+        let hidden = self.state.space == Space::Apps
+            && self.modal.is_none()
+            && self.context_menu.is_none()
+            && !self.git_open
+            && self
+                .active_app
+                .as_ref()
+                .and_then(|key| self.app_hosts.get(key))
+                .is_some_and(|host| {
+                    host.client.connected.load(Ordering::Acquire)
+                        && host.client.cursor_hidden.load(Ordering::Acquire)
+                });
+        if self.pointer_hiding && self.cursor_policy_sent != Some(hidden) {
+            self.effects.push(ServerMessage::PointerPolicy {
+                canvas: "apps".into(),
+                hidden,
+            });
+            self.cursor_policy_sent = Some(hidden);
+        }
         std::mem::take(&mut self.effects)
     }
     fn closed(&self) -> bool {
         self.quit
     }
     fn shutdown(&mut self) {
+        self.close_audio();
+        let _ = self.navigation.save(&self.controller_id);
+        // Keep startup preferences when the last window closes; active peers keep theirs.
+        if self.controller_id != self.workspace_id
+            && crate::frontend::active(&self.workspace_id).is_ok_and(|v| v.len() <= 1)
+        {
+            let _ = self.navigation.save(&self.workspace_id);
+        }
         self.release();
         if let Some(cancel) = &self.transfer {
             cancel.store(true, Ordering::Release)
         }
         self.save();
     }
+}
+fn drop_image_mime(offered: &[String]) -> Option<(usize, Option<&'static str>)> {
+    for (mime, extension) in [
+        ("image/png", "png"),
+        ("image/jpeg", "jpg"),
+        ("image/webp", "webp"),
+        ("image/gif", "gif"),
+    ] {
+        if let Some(index) = offered.iter().position(|s| s == mime) {
+            return Some((index, Some(extension)));
+        }
+    }
+    None
+}
+fn drop_mime(offered: &[String]) -> Option<(usize, Option<&'static str>)> {
+    offered
+        .iter()
+        .position(|s| s == "text/uri-list")
+        .map(|i| (i, None))
+        .or_else(|| drop_image_mime(offered))
 }
 pub fn uri_paths(text: &str) -> Result<Vec<PathBuf>> {
     let mut paths = vec![];
@@ -3045,5 +4514,31 @@ mod tests {
         assert!(uri_paths("file://remote/tmp/a").is_err());
         assert!(uri_paths("https://example.com/a").is_err());
         assert!(uri_paths("").is_err());
+    }
+}
+
+#[cfg(all(test, feature = "lossless-canvas"))]
+mod native_terminal_tests {
+    use super::*;
+    #[test]
+    fn terminal_grid_and_pointer_padding_share_the_real_kitty_cells() {
+        let viewport = Viewport {
+            columns: 248,
+            rows: 85,
+            width: 1984,
+            height: 1615,
+            generation: 1,
+        };
+        let canvas = PixelRect::new(267, 161, 1702, 1297);
+        let (rect, pad) = native_terminal_rect(PixelRect::new(0, 0, 1702, 1297), canvas, viewport);
+        assert_eq!(
+            (u32::from(rect.x) * 8, u32::from(rect.y) * 19),
+            (
+                u32::from(canvas.x) + u32::from(pad[0]),
+                u32::from(canvas.y) + u32::from(pad[1])
+            )
+        );
+        assert!(u32::from(rect.x + rect.width) * 8 <= u32::from(canvas.x + canvas.width));
+        assert!(u32::from(rect.y + rect.height) * 19 <= u32::from(canvas.y + canvas.height));
     }
 }

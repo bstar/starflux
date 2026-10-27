@@ -57,6 +57,7 @@ pub enum DesktopCommand {
     Resize(Settings),
     Background(starkit::native_surface::style::workspace::Wallpaper),
     RelayAudio(bool),
+    InputBurst(bool),
     Focus(usize),
     Maximize(usize),
     Close(usize),
@@ -79,6 +80,7 @@ pub enum DesktopEvent {
     Error(String),
     CaptureStopped(String),
     Locked(bool),
+    CursorHidden(bool),
 }
 
 pub struct Desktop {
@@ -108,6 +110,19 @@ impl Desktop {
             join: Some(join),
         }
     }
+    #[cfg(test)]
+    pub fn test_transport(
+        events: Receiver<DesktopEvent>,
+        commands: Sender<DesktopCommand>,
+        latest: Arc<Mutex<Option<Frame>>>,
+    ) -> Self {
+        Self {
+            commands,
+            events,
+            latest,
+            join: None,
+        }
+    }
     pub fn send(&self, c: DesktopCommand) {
         let _ = self.commands.send(c);
     }
@@ -118,5 +133,50 @@ impl Drop for Desktop {
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+    }
+}
+
+/// Ignore unchanged pointer modifier state so adjacent motion can coalesce.
+#[derive(Default)]
+pub struct PointerModifiers(Option<u8>);
+impl PointerModifiers {
+    pub fn reset(&mut self) {
+        self.0 = None;
+    }
+    pub fn forward(&mut self, input: &Input) -> bool {
+        match input {
+            Input::Modifiers { modifiers } => {
+                if self.0 == Some(*modifiers) {
+                    return false;
+                }
+                self.0 = Some(*modifiers);
+            }
+            Input::Motion { .. } | Input::Button { .. } | Input::Scroll { .. } => {}
+            _ => self.reset(),
+        }
+        true
+    }
+}
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+    #[test]
+    fn motion_bursts_do_not_repeat_modifier_barriers() {
+        let mut filter = PointerModifiers::default();
+        let mut modifiers = 0;
+        for n in 0..1000 {
+            modifiers += usize::from(filter.forward(&Input::Modifiers { modifiers: 1 }));
+            assert!(filter.forward(&Input::Motion { x: n as f64, y: 2. }));
+        }
+        assert_eq!(modifiers, 1);
+        assert!(filter.forward(&Input::Modifiers { modifiers: 0 }));
+        assert!(filter.forward(&Input::NamedKey {
+            code: "char:a".into(),
+            pressed: true,
+            modifiers: 0
+        }));
+        assert!(filter.forward(&Input::Modifiers { modifiers: 0 }));
+        filter.reset();
+        assert!(filter.forward(&Input::Modifiers { modifiers: 0 }));
     }
 }

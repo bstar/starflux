@@ -33,6 +33,23 @@ pub struct Source {
     pub panes: BTreeMap<usize, Pane>,
 }
 impl Source {
+    pub fn observed_status(&self, pane: &str, profile: Option<&str>) -> Option<(String, String)> {
+        if !matches!(profile, Some("codex" | "claude")) {
+            return None;
+        }
+        crate::activity::screen_observation(self.command(&[
+            "pane",
+            "read",
+            pane,
+            "--source",
+            "detection",
+            "--lines",
+            "32",
+            "--format",
+            "text",
+            "--raw",
+        ]))
+    }
     pub fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new(&self.executable);
         c.args(["--session", &self.session])
@@ -50,8 +67,16 @@ impl Source {
         );
         let data: Value = serde_json::from_slice(&out.stdout)?;
         let p = &data["result"]["pane"];
+        let observed = self.observed_status(&self.panes[&pane].pane_id, p["agent"].as_str());
+        let state = observed.as_ref().map(|v| v.0.as_str()).unwrap_or_else(|| {
+            if matches!(p["agent"].as_str(), Some("codex" | "claude")) {
+                "unknown"
+            } else {
+                p["agent_status"].as_str().unwrap_or("unknown")
+            }
+        });
         Ok(
-            json!({"alive":true,"command":p["agent"].as_str().unwrap_or("Herdr shell"),"state":p["agent_status"],"source":"herdr","read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]}),
+            json!({"alive":true,"command":p["agent"].as_str().unwrap_or("Herdr shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":"herdr","read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]}),
         )
     }
 }
@@ -194,6 +219,7 @@ pub fn import(session: &str) -> Result<Config> {
             label: Some(label.clone()),
             collection: Some(collection.clone()),
             herdr: Some(source),
+            adopted: Default::default(),
             theme: crate::appearance::default_theme(),
             host: None,
             ssh_config: None,

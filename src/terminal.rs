@@ -33,10 +33,29 @@ const PAD: u16 = 12;
 const PASTE_LIMIT: usize = 1024 * 1024;
 
 pub fn direct() -> bool {
-    std::env::var("STAR_TERMINAL_RENDERER").as_deref() == Ok("direct")
+    if cfg!(feature = "lossless-canvas") {
+        std::env::var("STAR_TERMINAL_RENDERER").as_deref() != Ok("kitty-pixels")
+    } else {
+        std::env::var("STAR_TERMINAL_RENDERER").as_deref() == Ok("direct")
+    }
 }
 pub fn socket(project: &str, pane: usize) -> Result<PathBuf> {
-    Ok(crate::runtime::root()?.join(format!("terminal-{project}-{pane}.sock")))
+    Ok(crate::runtime::root()?.join(format!(
+        "t-{}-{}",
+        std::process::id(),
+        socket_suffix(project, pane)
+    )))
+}
+pub(crate) fn socket_suffix(project: &str, pane: usize) -> String {
+    use sha2::{Digest, Sha256};
+    // Project names and temporary runtime roots can together exceed sun_path.
+    // Keep the process discriminator while bounding the project contribution.
+    let digest = Sha256::digest(project.as_bytes());
+    let key = digest[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    format!("{key}-{pane}.sock")
 }
 
 #[derive(Clone)]
@@ -180,12 +199,19 @@ pub struct Terminal {
     path: PathBuf,
     stopped: Arc<AtomicBool>,
     pub exited: bool,
+    pub exited_successfully: bool,
     pub pid: Option<u32>,
     font_size: u16,
     metrics: Option<FontMetrics>,
     selection: Option<((u16, u16), (u16, u16))>,
     mouse_button: Option<u8>,
     clipboard: Option<String>,
+    padding: [u16; 2],
+    #[cfg(feature = "lossless-canvas")]
+    native_previous: Option<starkit::terminal_graphics::terminal_cells::Frame>,
+    #[cfg(feature = "lossless-canvas")]
+    native_dirty: bool,
+    native_cell: Option<[u16; 2]>,
 }
 impl Terminal {
     pub fn spawn(argv: &[String], path: PathBuf) -> Result<Self> {
@@ -198,6 +224,10 @@ impl Terminal {
         })?;
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
+        // Attachment helpers choose the project's directory themselves. Match
+        // ordinary subprocesses here instead of portable-pty's implicit HOME,
+        // which need not exist in a service or isolated package builder.
+        command.cwd(std::env::current_dir()?);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         for name in [
@@ -285,12 +315,19 @@ impl Terminal {
             path,
             stopped,
             exited: false,
+            exited_successfully: false,
             pid,
             font_size: crate::project_state::default_terminal_font_size(),
             metrics: None,
             selection: None,
             mouse_button: None,
             clipboard: None,
+            padding: [PAD; 2],
+            #[cfg(feature = "lossless-canvas")]
+            native_previous: None,
+            #[cfg(feature = "lossless-canvas")]
+            native_dirty: true,
+            native_cell: None,
         })
     }
     pub fn set_metrics(&mut self, metrics: Option<FontMetrics>) {
@@ -304,6 +341,9 @@ impl Terminal {
         }
     }
     fn cell_size(&self) -> [u16; 2] {
+        if let Some(cell) = self.native_cell {
+            return cell;
+        }
         if let Some(m) = self.metrics {
             if self.font_size == 0 {
                 m.cell
@@ -337,11 +377,19 @@ impl Terminal {
         };
     }
     pub fn set_palette(&mut self, theme: &crate::appearance::Appearance) {
+        #[cfg(feature = "lossless-canvas")]
+        {
+            self.native_dirty = true;
+        }
         self.parser.callbacks_mut().palette = Some([theme.fg.clone(), theme.bg.clone()]);
     }
     pub fn poll(&mut self) -> Result<()> {
         for bytes in self.output.try_iter().take(32) {
             self.parser.process(&bytes);
+            #[cfg(feature = "lossless-canvas")]
+            {
+                self.native_dirty = true;
+            }
         }
         self.writer
             .bracketed
@@ -353,7 +401,10 @@ impl Terminal {
         if let Some(text) = self.parser.callbacks_mut().clipboard.take() {
             self.clipboard = Some(text);
         }
-        self.exited = self.child.0.try_wait()?.is_some();
+        if let Some(status) = self.child.0.try_wait()? {
+            self.exited = true;
+            self.exited_successfully = status.success();
+        }
         Ok(())
     }
     pub fn resize(&mut self, width: u16, height: u16) -> Result<()> {
@@ -371,6 +422,169 @@ impl Terminal {
         }
         Ok(())
     }
+    #[cfg(feature = "lossless-canvas")]
+    pub fn reset_native(&mut self) {
+        self.native_previous = None;
+        self.native_dirty = true;
+    }
+    #[cfg(feature = "lossless-canvas")]
+    pub fn resize_native(
+        &mut self,
+        rect: starkit::terminal_graphics::protocol::Rect,
+        padding: [u16; 2],
+        cell: [u16; 2],
+    ) -> Result<()> {
+        self.padding = padding;
+        self.native_cell = Some(cell);
+        self.font_size = 0; // The presenting Kitty owns the font and cell metrics.
+        let rows = rect.height.clamp(1, 192);
+        let cols = rect.width.clamp(2, 512);
+        if self.parser.screen().size() != (rows, cols) {
+            self.parser.screen_mut().set_size(rows, cols);
+            self.master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: cols * self.cell_size()[0],
+                pixel_height: rows * self.cell_size()[1],
+            })?;
+            self.native_previous = None;
+            self.native_dirty = true;
+            self.selection = None;
+        }
+        Ok(())
+    }
+    #[cfg(feature = "lossless-canvas")]
+    pub fn native_frame(
+        &mut self,
+        stream: String,
+        generation: u64,
+        rect: starkit::terminal_graphics::protocol::Rect,
+        theme: &crate::appearance::Appearance,
+        focused: bool,
+    ) -> Option<starkit::terminal_graphics::terminal_cells::Frame> {
+        use starkit::terminal_graphics::terminal_cells::{Frame, Row, Run};
+        let screen = self.parser.screen();
+        let (row, col) = screen.cursor_position();
+        let cursor = (focused
+            && !screen.hide_cursor()
+            && screen.scrollback() == 0
+            && row < rect.height
+            && col < rect.width)
+            .then_some([col, row]);
+        if !self.native_dirty
+            && let Some(old) = self.native_previous.as_mut().filter(|old| {
+                old.stream == stream && old.generation == generation && old.rect == rect
+            })
+        {
+            if old.cursor == cursor {
+                return None;
+            }
+            old.cursor = cursor;
+            return Some(Frame {
+                stream,
+                generation,
+                rect,
+                complete: false,
+                rows: vec![],
+                cursor,
+            });
+        }
+        self.native_dirty = false;
+        let rgb = |value: String| -> [u8; 3] {
+            std::array::from_fn(|i| {
+                u8::from_str_radix(value.get(1 + i * 2..3 + i * 2).unwrap_or("00"), 16).unwrap_or(0)
+            })
+        };
+        let screen = self.parser.screen();
+        let mut rows = Vec::with_capacity(usize::from(rect.height));
+        for row in 0..rect.height {
+            let mut runs: Vec<Run> = vec![];
+            let mut previous_style = None;
+            for col in 0..rect.width {
+                let cell = screen.cell(row, col)?;
+                if cell.is_wide_continuation() {
+                    if let Some(run) = runs.last_mut() {
+                        run.columns += 1;
+                    }
+                    continue;
+                }
+                let selected = self.selected(row, col);
+                let attributes = u8::from(cell.bold())
+                    | (u8::from(cell.dim()) << 1)
+                    | (u8::from(cell.italic()) << 2)
+                    | (u8::from(cell.underline()) << 3)
+                    | (u8::from(cell.inverse() && !selected) << 4);
+                let style = (cell.fgcolor(), cell.bgcolor(), attributes, selected);
+                let text = if cell.has_contents() {
+                    cell.contents()
+                } else {
+                    " "
+                };
+                if previous_style == Some(style) {
+                    let run = runs.last_mut().unwrap();
+                    run.columns += 1;
+                    run.text.push_str(text);
+                } else {
+                    let fg = rgb(color(cell.fgcolor(), &theme.fg, theme));
+                    let bg = rgb(if selected {
+                        theme.selection.clone()
+                    } else {
+                        color(cell.bgcolor(), &theme.bg, theme)
+                    });
+                    runs.push(Run {
+                        text: text.into(),
+                        columns: 1,
+                        foreground: fg,
+                        background: bg,
+                        attributes,
+                    });
+                    previous_style = Some(style);
+                }
+            }
+            rows.push(Row { index: row, runs });
+        }
+        let (row, col) = screen.cursor_position();
+        let cursor = (focused
+            && !screen.hide_cursor()
+            && screen.scrollback() == 0
+            && row < rect.height
+            && col < rect.width)
+            .then_some([col, row]);
+        let complete = self.native_previous.as_ref().is_none_or(|old| {
+            old.stream != stream || old.generation != generation || old.rect != rect
+        });
+        let changed = if complete {
+            rows.clone()
+        } else {
+            rows.iter()
+                .zip(&self.native_previous.as_ref().unwrap().rows)
+                .filter(|(a, b)| a != b)
+                .map(|(row, _)| row.clone())
+                .collect()
+        };
+        if !complete
+            && changed.is_empty()
+            && self.native_previous.as_ref().unwrap().cursor == cursor
+        {
+            return None;
+        }
+        self.native_previous = Some(Frame {
+            stream: stream.clone(),
+            generation,
+            rect,
+            complete: true,
+            rows,
+            cursor,
+        });
+        Some(Frame {
+            stream,
+            generation,
+            rect,
+            complete,
+            rows: changed,
+            cursor,
+        })
+    }
     pub fn text(&self) -> String {
         self.parser.screen().contents()
     }
@@ -385,6 +599,10 @@ impl Terminal {
         self.clipboard.take()
     }
     pub fn key(&mut self, code: &str, modifiers: u8) -> Result<()> {
+        #[cfg(feature = "lossless-canvas")]
+        {
+            self.native_dirty = true;
+        }
         if modifiers & 3 == 3 && code.eq_ignore_ascii_case("char:c") {
             self.copy_selection();
             return Ok(());
@@ -407,9 +625,19 @@ impl Terminal {
         point: [f64; 2],
         modifiers: u8,
     ) -> Result<()> {
+        #[cfg(feature = "lossless-canvas")]
+        {
+            if action != "move" || self.selection.is_some() {
+                self.native_dirty = true;
+            }
+        }
         let screen = self.parser.screen();
-        let x = ((point[0] - f64::from(PAD)).max(0.) / f64::from(self.cell_size()[0])) as u16 + 1;
-        let y = ((point[1] - f64::from(PAD)).max(0.) / f64::from(self.cell_size()[1])) as u16 + 1;
+        let x = ((point[0] - f64::from(self.padding[0])).max(0.) / f64::from(self.cell_size()[0]))
+            as u16
+            + 1;
+        let y = ((point[1] - f64::from(self.padding[1])).max(0.) / f64::from(self.cell_size()[1]))
+            as u16
+            + 1;
         if screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None || modifiers & 1 != 0 {
             if action.starts_with("scroll_") {
                 self.selection = None;
@@ -756,6 +984,67 @@ fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "lossless-canvas")]
+    #[test]
+    fn native_pty_frames_preserve_unicode_styles_and_only_changed_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal =
+            Terminal::spawn(&["cat".into()], temp.path().join("native.sock")).unwrap();
+        let rect = starkit::terminal_graphics::protocol::Rect {
+            x: 5,
+            y: 7,
+            width: 20,
+            height: 4,
+        };
+        terminal.resize_native(rect, [12, 12], [8, 19]).unwrap();
+        terminal
+            .parser
+            .process("\x1b[1;31mHi世界\x1b[0m\r\nline2".as_bytes());
+        let theme = crate::appearance::Appearance::load("kanagawa").unwrap();
+        let first = terminal
+            .native_frame("native".into(), 1, rect, &theme, true)
+            .unwrap();
+        first.validate().unwrap();
+        assert!(first.complete);
+        assert_eq!(first.rows.len(), 4);
+        assert!(
+            first.rows[0]
+                .runs
+                .iter()
+                .any(|run| run.text.contains("Hi世界") && run.attributes & 1 != 0)
+        );
+        assert!(
+            terminal
+                .native_frame("native".into(), 1, rect, &theme, true)
+                .is_none()
+        );
+        let unfocused = terminal
+            .native_frame("native".into(), 1, rect, &theme, false)
+            .unwrap();
+        assert!(unfocused.rows.is_empty());
+        assert_eq!(unfocused.cursor, None);
+        let focused = terminal
+            .native_frame("native".into(), 1, rect, &theme, true)
+            .unwrap();
+        assert!(focused.rows.is_empty());
+        assert!(focused.cursor.is_some());
+        terminal.parser.process(b"\x1b[2;1HChanged");
+        terminal.native_dirty = true;
+        let next = terminal
+            .native_frame("native".into(), 1, rect, &theme, true)
+            .unwrap();
+        next.validate().unwrap();
+        assert!(!next.complete);
+        assert_eq!(next.rows.len(), 1);
+        assert_eq!(next.rows[0].index, 1);
+        terminal.reset_native();
+        assert!(
+            terminal
+                .native_frame("native".into(), 1, rect, &theme, true)
+                .unwrap()
+                .complete
+        );
+    }
     #[test]
     fn pty_resize_paste_and_native_surface_contract() {
         let dir = tempfile::tempdir().unwrap();

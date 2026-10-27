@@ -105,19 +105,19 @@ with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
         assert s['git']['staged']==1 and s['git']['unstaged']==1 and s['git']['untracked']==1
         pids=[p['pid'] for p in s['panes']]
         # Right-clicking another project must not activate it.
-        click(70,143,right=True)
+        click(70,171,right=True)
         menu=wait(lambda:state().get('context_menu'),'Project context menu missing')
         assert state()['active_project']==names[0] and menu['title']=='SSH project'
         screenshot('project-menu.png')
         rc('send-key','down','enter');rename('Remote / test rig')
         assert state()['active_project']==names[0]
         assert json.loads((data_root/(names[1]+'.json')).read_text())['label']=='Remote / test rig'
-        click(70,108,right=True);wait(lambda:state().get('context_menu'),'Active project menu missing')
+        click(70,136,right=True);wait(lambda:state().get('context_menu'),'Active project menu missing')
         rc('send-key','down','enter');rename('Agent workshop')
         wait(lambda:state()['project_label']=='Agent workshop','Project name not updated')
         # Outside click dismisses without switching to that project underneath.
-        click(70,108,right=True);wait(lambda:state().get('context_menu'),'Dismiss test menu missing')
-        click(20,143);wait(lambda:state().get('context_menu') is None,'Menu did not dismiss')
+        click(70,136,right=True);wait(lambda:state().get('context_menu'),'Dismiss test menu missing')
+        click(20,171);wait(lambda:state().get('context_menu') is None,'Menu did not dismiss')
         assert state()['active_project']==names[0]
         action('view:terminals')
         s=wait(lambda:state() if state()['project_state']['space']=='terminals' else None,'Terminal view missing')

@@ -2,6 +2,7 @@
 use crate::{project_state::ProjectState, runtime::Config};
 use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     io::{Read, Seek},
@@ -11,23 +12,39 @@ use std::{
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Activity {
+    pub running: usize,
     pub working: usize,
     pub waiting: usize,
+    pub questions: usize,
+    #[serde(skip)]
+    pub signals: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub source_sequence: u64,
 }
 impl Activity {
     pub fn observe(&mut self, state: &str) {
+        if matches!(
+            state,
+            "needs_input" | "question_pending" | "waiting_for_answer"
+        ) {
+            self.questions += 1;
+        }
+        if !matches!(state, "stopped" | "missing" | "disconnected") {
+            self.running += 1;
+        }
         match state {
             "working" | "busy" | "thinking" | "executing" => self.working += 1,
-            "waiting"
-            | "needs_input"
-            | "waiting_for_input"
+            "needs_input"
+            | "question_pending"
+            | "waiting_for_answer"
             | "waiting_for_approval"
+            | "needs_approval"
             | "needs_permission" => self.waiting += 1,
             _ => {}
         }
     }
 }
-fn read(mut command: Command) -> Option<Value> {
+fn read_output(mut command: Command) -> Option<Vec<u8>> {
     let mut output = tempfile::tempfile().ok()?;
     let mut child = command
         .stdin(Stdio::null())
@@ -53,7 +70,78 @@ fn read(mut command: Command) -> Option<Value> {
     output.rewind().ok()?;
     let mut bytes = Vec::new();
     output.take(1024 * 1024).read_to_end(&mut bytes).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    Some(bytes)
+}
+fn read(command: Command) -> Option<Value> {
+    serde_json::from_slice(&read_output(command)?).ok()
+}
+pub fn screen_state(text: &str) -> &'static str {
+    let footer = text
+        .lines()
+        .rev()
+        .take(32)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
+    let choices: Vec<_> = footer
+        .lines()
+        .filter_map(|line| {
+            let line =
+                line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|>›❯●*".contains(c));
+            let tail = line.trim_start_matches(|c: char| c.is_ascii_digit());
+            if tail.len() < line.len() && (tail.starts_with('.') || tail.starts_with(')')) {
+                Some(tail[1..].trim_start())
+            } else {
+                line.strip_prefix("y)")
+                    .or_else(|| line.strip_prefix("n)"))
+                    .map(str::trim_start)
+            }
+        })
+        .collect();
+    let yes = choices
+        .iter()
+        .any(|c| c.starts_with("yes") || c.starts_with("allow once"));
+    let no = choices
+        .iter()
+        .any(|c| c.starts_with("no") || c.starts_with("don't allow") || c.starts_with("deny this"));
+    let question = footer.lines().any(|line| {
+        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|>›❯●*".contains(c));
+        line.starts_with("question ")
+            || line.starts_with("question:")
+            || line.starts_with("user input requested")
+    });
+    if question
+        && !choices.is_empty()
+        && ["enter to submit", "enter to confirm", "enter to select"]
+            .iter()
+            .any(|s| footer.contains(s))
+    {
+        return "needs_input";
+    }
+    if yes && no && (footer.contains("esc") || footer.contains("enter")) {
+        return "waiting_for_approval";
+    }
+    if footer.lines().any(|line| {
+        line.split_once("esc to interrupt")
+            .is_some_and(|(before, _)| {
+                before
+                    .rsplit_once('(')
+                    .is_some_and(|(_, elapsed)| elapsed.chars().any(|c| c.is_ascii_digit()))
+            })
+    }) {
+        return "working";
+    }
+    "idle"
+}
+pub fn screen_observation(command: Command) -> Option<(String, String)> {
+    let bytes = read_output(command)?;
+    Some((
+        screen_state(&String::from_utf8_lossy(&bytes)).into(),
+        format!("{:x}", Sha256::digest(&bytes)),
+    ))
 }
 pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
     let mut activity = BTreeMap::new();
@@ -68,8 +156,22 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
         }
     }
     for source in sources.values() {
+        let mut sequences = BTreeMap::<String, u64>::new();
         if let Some(data) = read(source.command(&["agent", "list"]))
             && let Some(agents) = data["result"]["agents"].as_array()
+        {
+            for agent in agents {
+                if let (Some(workspace), Some(sequence)) = (
+                    agent["workspace_id"].as_str(),
+                    agent["state_change_seq"].as_u64(),
+                ) {
+                    let value = sequences.entry(workspace.into()).or_default();
+                    *value = (*value).max(sequence);
+                }
+            }
+        }
+        if let Some(data) = read(source.command(&["api", "snapshot"]))
+            && let Some(agents) = data["result"]["snapshot"]["panes"].as_array()
         {
             for project in projects.iter().filter(|p| {
                 p.herdr.as_ref().is_some_and(|h| {
@@ -77,11 +179,45 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                 })
             }) {
                 let state = activity.get_mut(&project.workspace).unwrap();
+                state.source_sequence = project
+                    .herdr
+                    .as_ref()
+                    .and_then(|h| sequences.get(&h.workspace_id))
+                    .copied()
+                    .unwrap_or(0);
                 for agent in agents.iter().filter(|a| {
                     Some(a["workspace_id"].as_str().unwrap_or(""))
                         == project.herdr.as_ref().map(|h| h.workspace_id.as_str())
                 }) {
-                    state.observe(agent["agent_status"].as_str().unwrap_or("unknown"));
+                    let profile = agent["agent"].as_str();
+                    let observed = agent["pane_id"]
+                        .as_str()
+                        .and_then(|id| source.observed_status(id, profile));
+                    let status = observed.as_ref().map(|v| v.0.as_str()).unwrap_or_else(|| {
+                        if matches!(profile, Some("codex" | "claude")) {
+                            "unknown"
+                        } else {
+                            agent["agent_status"].as_str().unwrap_or("unknown")
+                        }
+                    });
+                    if profile.is_some() {
+                        state.observe(status);
+                    }
+                    let id = agent["terminal_id"]
+                        .as_str()
+                        .or_else(|| agent["pane_id"].as_str())
+                        .unwrap_or("agent");
+                    state.signals.insert(
+                        format!("herdr:{id}"),
+                        format!(
+                            "{}:{}",
+                            observed
+                                .as_ref()
+                                .map(|v| v.1.clone())
+                                .unwrap_or_else(|| agent["revision"].to_string()),
+                            status
+                        ),
+                    );
                 }
             }
         }
@@ -90,15 +226,34 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
         let Ok(state) = ProjectState::load(project) else {
             continue;
         };
-        for pane in state.agent_ids().into_iter().filter(|id| {
-            !project
-                .herdr
-                .as_ref()
-                .is_some_and(|h| h.panes.contains_key(id))
-        }) {
-            if let Some(value) = read(project.command(pane, &json!({"workspace": project.workspace, "pane": format!("p{pane}"), "action": "inspect"}), false))
-                && value["alive"] == true {
-                activity.get_mut(&project.workspace).unwrap().observe(value["state"].as_str().unwrap_or("unknown"));
+        for pane in state
+            .agent_ids()
+            .into_iter()
+            .chain(state.terminals.iter().copied())
+            .filter(|id| {
+                !project
+                    .herdr
+                    .as_ref()
+                    .is_some_and(|h| h.panes.contains_key(id))
+            })
+        {
+            let value = if let Some(terminal) = project.adopted_terminal(pane) {
+                terminal.inspect().ok()
+            } else {
+                read(project.command(pane, &json!({"workspace": project.workspace, "pane": format!("p{pane}"), "action": "inspect"}), false))
+            };
+            if let Some(value) = value {
+                let activity = activity.get_mut(&project.workspace).unwrap();
+                if value["alive"] == true && value["agent"].as_str().is_some() {
+                    activity.observe(value["state"].as_str().unwrap_or("unknown"));
+                }
+                activity.signals.insert(
+                    format!("native:{pane}"),
+                    format!(
+                        "{}:{}:{}:{}",
+                        value["pid"], value["alive"], value["state"], value["output_fingerprint"]
+                    ),
+                );
             }
         }
     }
@@ -107,6 +262,38 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_footer_distinguishes_work_requests_and_idle() {
+        assert_eq!(
+            screen_state("Working (56m 33s · esc to interrupt)"),
+            "working"
+        );
+        assert_eq!(
+            screen_state(
+                "Working (1s · esc to interrupt)\nQuestion 1/1\n› 1. Yes\n  2. No\nEnter to submit"
+            ),
+            "needs_input"
+        );
+        assert_eq!(
+            screen_state("1. Yes, proceed\n2. No, and tell Codex\nEsc to cancel"),
+            "waiting_for_approval"
+        );
+        for idle in [
+            "Done. › Type a request",
+            "Press Enter to continue; Esc to cancel",
+            "The previous tool was blocked",
+            "Should we change this?",
+        ] {
+            assert_eq!(screen_state(idle), "idle", "{idle}");
+        }
+        let mut activity = Activity::default();
+        activity.observe("needs_input");
+        assert_eq!(
+            (activity.working, activity.questions, activity.waiting),
+            (0, 1, 1)
+        );
+    }
+
     #[test]
     fn living_but_idle_agents_do_not_animate() {
         let mut activity = Activity::default();
@@ -123,7 +310,8 @@ mod tests {
         assert_eq!(activity.working, 0);
         activity.observe("working");
         activity.observe("thinking");
-        activity.observe("waiting_for_input");
+        activity.observe("waiting_for_approval");
+        activity.observe("blocked");
         assert_eq!(activity.working, 2);
         assert_eq!(activity.waiting, 1);
     }

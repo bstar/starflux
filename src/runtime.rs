@@ -32,6 +32,8 @@ pub struct Config {
     pub collection: Option<String>,
     #[serde(default)]
     pub herdr: Option<crate::herdr::Source>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub adopted: std::collections::BTreeMap<usize, crate::adoption::Terminal>,
     #[serde(default = "crate::appearance::default_theme")]
     pub theme: String,
     pub host: Option<String>,
@@ -61,6 +63,9 @@ pub fn fresh_agent_command(command: &str) -> String {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         crate::appearance::Appearance::load(&self.theme)?;
+        for terminal in self.adopted.values() {
+            terminal.validate()?;
+        }
         ensure!(
             !self.workspace.is_empty()
                 && self.workspace.len() <= 32
@@ -94,7 +99,21 @@ impl Config {
         Ok(())
     }
     pub fn request(&self, pane: usize, action: &str) -> Value {
-        json!({"workspace":self.workspace,"pane":format!("p{pane}"),"action":action})
+        let mut request =
+            json!({"workspace":self.workspace,"pane":format!("p{pane}"),"action":action});
+        if let Some(terminal) = self.adopted_terminal(pane) {
+            request["server"] = json!(terminal.server);
+            request["original_pid"] = json!(terminal.pid);
+        }
+        request
+    }
+    pub fn adopted_terminal(&self, pane: usize) -> Option<&crate::adoption::Terminal> {
+        let terminal = self.adopted.get(&pane)?;
+        let path = crate::project_state::data_root()
+            .ok()?
+            .join(format!("{}.model.json", self.workspace));
+        let state: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+        (state["terminal_epochs"][pane.to_string()] == terminal.epoch).then_some(terminal)
     }
     pub fn remote(&self, pane: usize) -> bool {
         self.host.is_some() && (pane != 0 || self.project_host)
@@ -137,6 +156,39 @@ impl Config {
         }
     }
     pub fn call(&self, pane: usize, request: &Value) -> Result<Value> {
+        if request["action"] == "inspect"
+            && let Some(terminal) = self.adopted_terminal(pane)
+        {
+            return terminal.inspect();
+        }
+        if let Some(terminal) = self.adopted_terminal(pane) {
+            if request["action"] == "restart" && request["argv"].is_null() {
+                let mut request = request.clone();
+                request["argv"] = json!(terminal.argv());
+                return self.call(pane, &request);
+            }
+            if request["action"] == "stop" && terminal.inspect()?["alive"] == true {
+                // An explicit project stop hangs up the original controlling session,
+                // rather than stopping only its presentation proxy.
+                let stat = fs::read_to_string(format!("/proc/{}/stat", terminal.pid))?;
+                let fields = stat
+                    .rsplit_once(')')
+                    .context("Invalid original terminal process")?
+                    .1
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                ensure!(
+                    fields.get(3).and_then(|v| v.parse::<u32>().ok()) == Some(terminal.pid),
+                    "Original terminal session identity changed; it was left running"
+                );
+                if unsafe { libc::kill(terminal.pid as libc::pid_t, libc::SIGHUP) } != 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(error.into());
+                    }
+                }
+            }
+        }
         if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
             return match request["action"].as_str() {
                 Some("inspect" | "ensure") => source.inspect(pane),
@@ -168,7 +220,9 @@ impl Config {
             json!(std::env::current_dir()?.to_string_lossy())
         };
         req["replace_fixture"] = json!(self.agent.is_none());
-        if let Some(command) = agent_command {
+        if let Some(terminal) = self.adopted_terminal(pane) {
+            req["argv"] = json!(terminal.argv());
+        } else if let Some(command) = agent_command {
             req["argv"] = json!(shell_words::split(command)?);
         }
         self.call(pane, &req)?;
@@ -192,6 +246,28 @@ impl Config {
         if socket.exists() {
             return crate::terminal::paste(&socket, text);
         }
+        // A CLI delivery can run outside the presenting controller process.
+        // Every native attachment reaches the same backend terminal, so use an open one.
+        if let Ok(entries) = fs::read_dir(root()?) {
+            let expected = format!("{}-{}.sock", self.workspace, self.canonical_pane(pane));
+            let compact =
+                crate::terminal::socket_suffix(&self.workspace, self.canonical_pane(pane));
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name
+                    .strip_prefix("terminal-")
+                    .or_else(|| name.strip_prefix("t-"))
+                    .and_then(|s| s.split_once('-'))
+                    .is_some_and(|(pid, target)| {
+                        pid.bytes().all(|b| b.is_ascii_digit())
+                            && (target == expected || target == compact)
+                    })
+                {
+                    return crate::terminal::paste(&entry.path(), text);
+                }
+            }
+        }
         if self
             .herdr
             .as_ref()
@@ -203,22 +279,21 @@ impl Config {
                 socket.exists(),
                 "Open the imported terminal before pasting into it"
             );
-            let mut child = Command::new(
-                std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "/usr/bin/kitten".into()),
-            )
-            .args([
-                "@",
-                "--to",
-                &format!("unix:{}", socket.display()),
-                "send-text",
-                "--stdin",
-                "--bracketed-paste",
-                "enable",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            let mut child =
+                Command::new(std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()))
+                    .args([
+                        "@",
+                        "--to",
+                        &format!("unix:{}", socket.display()),
+                        "send-text",
+                        "--stdin",
+                        "--bracketed-paste",
+                        "enable",
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()?;
             child
                 .stdin
                 .take()
@@ -239,6 +314,9 @@ impl Config {
         Ok(())
     }
     pub fn attach_argv(&self, pane: usize) -> Vec<String> {
+        self.attach_argv_with_shell(pane, false)
+    }
+    pub fn attach_argv_with_shell(&self, pane: usize, ensure_shell: bool) -> Vec<String> {
         if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
             let p = &source.panes[&pane];
             if !p.terminal_id.is_empty() {
@@ -269,7 +347,24 @@ impl Config {
             ];
         }
 
-        let encoded = STANDARD.encode(serde_json::to_vec(&self.request(pane, "attach")).unwrap());
+        let mut request = self.request(pane, "attach");
+        if ensure_shell {
+            if let Some(terminal) = self.adopted_terminal(pane) {
+                request["argv"] = json!(terminal.argv());
+            }
+            request["ensure_shell"] = json!(true);
+            request["replace_fixture"] = json!(self.agent.is_none());
+            request["directory"] = if (pane != 0 || self.project_host) && self.directory.is_some() {
+                json!(self.directory)
+            } else {
+                json!(
+                    std::env::current_dir()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                )
+            };
+        }
+        let encoded = STANDARD.encode(serde_json::to_vec(&request).unwrap());
         if self.remote(pane) {
             {
                 let mut v = vec!["ssh".into()];
@@ -367,6 +462,26 @@ impl Config {
         Ok(response)
     }
 }
+pub fn initialize_environment() -> Result<()> {
+    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+        use std::os::unix::fs::MetadataExt;
+        let uid = unsafe { libc::geteuid() };
+        let native = PathBuf::from(format!("/run/user/{uid}"));
+        let runtime = if fs::metadata(&native)
+            .is_ok_and(|m| m.is_dir() && m.uid() == uid && m.mode() & 0o077 == 0)
+        {
+            native
+        } else {
+            PathBuf::from(format!("/tmp/starmux-{uid}"))
+        };
+        starkit::terminal_graphics::session::private_root(&runtime)?;
+        // CLI entry calls this before starting any threads or frontend probes.
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", runtime);
+        }
+    }
+    Ok(())
+}
 pub fn root() -> Result<PathBuf> {
     let r = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -390,6 +505,26 @@ pub fn config_path(name: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fresh_shell_attach_combines_setup_and_attach_in_project_directory() {
+        let config: Config = serde_json::from_value(json!({
+            "workspace":"shell-attach", "host":null,
+            "directory":"/tmp/project with spaces", "agent":null, "executable":"starmux"
+        }))
+        .unwrap();
+        let args = config.attach_argv_with_shell(2, true);
+        assert_eq!(args[0], "python3");
+        let req: Value =
+            serde_json::from_slice(&STANDARD.decode(args.last().unwrap()).unwrap()).unwrap();
+        assert_eq!(req["action"], "attach");
+        assert_eq!(req["ensure_shell"], true);
+        assert_eq!(req["directory"], "/tmp/project with spaces");
+        assert!(req.get("argv").is_none());
+        let ordinary = config.attach_argv(2);
+        let req: Value =
+            serde_json::from_slice(&STANDARD.decode(ordinary.last().unwrap()).unwrap()).unwrap();
+        assert!(req.get("ensure_shell").is_none());
+    }
     #[test]
     fn additional_codex_agents_never_reuse_resume_or_fork_arguments() {
         for command in [
@@ -473,6 +608,7 @@ mod tests {
             label: None,
             collection: None,
             herdr: None,
+            adopted: Default::default(),
             theme: crate::appearance::default_theme(),
             host: None,
             ssh_config: None,

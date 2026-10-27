@@ -1,15 +1,23 @@
 mod activity;
+mod adoption;
+mod app_audio;
 mod app_desktop;
 mod appearance;
+mod applications;
 #[cfg(test)]
 mod blueprint;
 mod compositor;
 mod fixture;
+mod frontend;
 mod git;
 mod herdr;
 mod kitty_selection;
+mod navigation;
 mod project;
 mod project_state;
+mod project_sync;
+mod refresh;
+mod remote_video;
 mod runtime;
 mod selection;
 mod shelf;
@@ -25,9 +33,9 @@ use starkit::terminal_graphics::{
 };
 use std::{
     fs,
-    os::unix::{fs::OpenOptionsExt, io::AsRawFd, net::UnixStream, process::CommandExt},
+    os::unix::net::UnixStream,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
 #[derive(Parser)]
@@ -39,12 +47,21 @@ struct Args {
     /// Named workspace to create or reopen; unnamed launches are independent
     #[arg(long, default_value = "demo")]
     workspace: String,
+    /// Identity of this presentation; retained across UI refreshes
+    #[arg(long, hide = true)]
+    frontend: Option<String>,
     /// List saved workspace names for reattachment
     #[arg(long)]
     sessions: bool,
     /// Import the default Herdr session as an isolated interactive collection
     #[arg(long)]
     import_herdr: bool,
+    /// Transfer live default Herdr terminals into STAR/MUX without restarting them
+    #[arg(long)]
+    migrate_herdr: bool,
+    /// Prepare and back up a live Herdr migration without applying it
+    #[arg(long)]
+    plan_herdr_migration: bool,
     /// Shared Kitty/chrome theme (see --themes); saved per workspace
     #[arg(long)]
     theme: Option<String>,
@@ -54,13 +71,19 @@ struct Args {
     /// SSH destination for this project (legacy workspaces retain their sessions)
     #[arg(long)]
     host: Option<String>,
+    /// Render locally while attaching to a saved STAR/MUX workspace over SSH
+    #[arg(long, conflicts_with = "host")]
+    ssh: Option<String>,
+    /// STAR/MUX executable on the workspace host
+    #[arg(long, default_value = "starmux", requires = "ssh")]
+    remote_executable: String,
     /// OpenSSH configuration file for the remote host
     #[arg(long)]
     ssh_config: Option<PathBuf>,
     /// Project working directory on its host
     #[arg(long)]
     directory: Option<String>,
-    /// Project agent command (default: codex)
+    /// Optional command to start in an initial terminal (compatibility shortcut)
     #[arg(long)]
     agent: Option<String>,
     /// Report live session state as JSON
@@ -87,6 +110,9 @@ struct Args {
     /// Send a workspace action (e.g. view:apps, terminal:new, run-app)
     #[arg(long)]
     action: Option<String>,
+    /// Reload the UI from the latest build while keeping sessions and apps running
+    #[arg(long)]
+    refresh: bool,
     /// Close the workspace while keeping its sessions running
     #[arg(long)]
     close: bool,
@@ -107,6 +133,9 @@ struct Args {
 fn terminal_event(event: &starkit::crossterm::event::Event) -> Option<Input> {
     match event {
         starkit::crossterm::event::Event::Osc72(text) => Some(Input::Osc72 { text: text.clone() }),
+        starkit::crossterm::event::Event::FocusGained => Some(Input::Notice {
+            message: "focus-canvas:terminals".into(),
+        }),
         _ => None,
     }
 }
@@ -142,24 +171,6 @@ fn socket_active(path: &std::path::Path) -> Result<bool> {
         Err(e) => Err(e.into()),
     }
 }
-fn attachment_lease(root: &std::path::Path, name: &str) -> Result<Option<fs::File>> {
-    session::socket_path(root, name)?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(root.join(format!("{name}.attach.lock")))?;
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.kind() == std::io::ErrorKind::WouldBlock {
-            return Ok(None);
-        }
-        return Err(error.into());
-    }
-    Ok(Some(file))
-}
 fn auto_workspace() -> String {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -167,68 +178,65 @@ fn auto_workspace() -> String {
         .as_millis();
     format!("session-{}-{stamp:x}", std::process::id())
 }
-fn relay(name: &str) -> Result<()> {
-    let root = root()?;
-    let Some(_lease) = attachment_lease(&root, name)? else {
-        starkit::terminal_graphics::protocol::write_message(
-            &starkit::terminal_graphics::protocol::ServerMessage::Error {
-                message: format!(
-                    "Workspace '{name}' is already open in another tab or window. Run starmux without --workspace for an independent session, or close the other frontend before reattaching."
-                ),
-            },
-            &mut std::io::stdout(),
-        )?;
-        return Ok(());
-    };
-    let socket = session::socket_path(&root, name)?;
-    if socket.exists() && !socket_active(&socket)? {
-        fs::remove_file(&socket)?;
-    }
-    if !socket.exists() {
-        let _ = fs::remove_file(root.join(format!("{name}.close")));
-        let log = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(root.join(format!("{name}.log")))?;
-        let mut child = Command::new(std::env::current_exe()?)
-            .args(["--serve", name])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(log)
-            .process_group(0)
-            .spawn()?;
-        let started = Instant::now();
-        while !socket.exists() {
-            if let Some(status) = child.try_wait()? {
-                anyhow::bail!(
-                    "Workspace exited during startup ({status}); see {}",
-                    root.join(format!("{name}.log")).display()
-                );
-            }
-            if started.elapsed() >= Duration::from_secs(20) {
-                let _ = child.kill();
-                let _ = child.wait();
-                anyhow::bail!(
-                    "Workspace startup timed out; see {}",
-                    root.join(format!("{name}.log")).display()
-                );
-            }
-            ensure!(
-                started.elapsed() < Duration::from_secs(20),
-                "Workspace startup timed out; see {}",
-                root.join(format!("{name}.log")).display()
-            );
-            std::thread::sleep(Duration::from_millis(30));
-        }
-    }
-    session::relay(&socket)
+fn relay(route: &str) -> Result<()> {
+    let view = frontend::View::parse(route)?;
+    session::relay(&view.ensure()?)
 }
 fn main() -> Result<()> {
+    refresh::finish(run())
+}
+fn run() -> Result<()> {
+    runtime::initialize_environment()?;
     let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).is_some_and(|s| s == "--validate-pty-plan") {
+        return adoption::validate_plan(raw.get(2).context("Missing migration plan")?);
+    }
+    if raw.get(1).is_some_and(|s| s == "--native-pty-import") {
+        return adoption::receive(
+            raw.get(2).context("Missing migration plan")?,
+            raw.get(3).context("Missing handoff socket")?,
+            raw.get(4).context("Missing handoff token")?,
+        );
+    }
+    if raw
+        .get(1)
+        .is_some_and(|s| s == "--graphical-terminal-client")
+    {
+        return client::run_terminal_socket_with_events(
+            std::path::Path::new(raw.get(2).context("Missing terminal socket")?),
+            terminal_event,
+        );
+    }
     if raw.get(1).is_some_and(|s| s == "--herdr-view") {
         return herdr::viewer(
             raw.get(2).context("Missing Herdr session")?,
             raw.get(3).context("Missing Herdr pane")?,
+        );
+    }
+    if raw.get(1).is_some_and(|s| s == "--wait-ui-refresh") {
+        return refresh::wait(raw.get(2).context("Missing refresh workspace")?);
+    }
+    if raw.get(1).is_some_and(|s| s == "--system-applications") {
+        println!("{}", serde_json::to_string(&applications::installed()?)?);
+        return Ok(());
+    }
+    if raw
+        .get(1)
+        .is_some_and(|s| s == "--launch-system-application")
+    {
+        return applications::launch(raw.get(2).context("Missing application ID")?);
+    }
+    if let Some(mode) = raw.get(1).filter(|s| {
+        matches!(
+            s.as_str(),
+            "--desktop-audio-worker" | "--desktop-audio-relay"
+        )
+    }) {
+        app_audio::environment();
+        return app_audio::internal(
+            mode,
+            raw.get(2).context("Missing desktop session")?,
+            raw.get(3).context("Missing desktop owner")?.parse()?,
         );
     }
     if let Some(mode) = raw.get(1).filter(|s| {
@@ -238,6 +246,15 @@ fn main() -> Result<()> {
         )
     }) {
         return app_desktop::internal(mode, raw.get(2).context("Missing desktop session")?);
+    }
+    if raw.get(1).is_some_and(|s| s == "--serve-view") {
+        let workspace = raw.get(2).context("Missing workspace")?;
+        let id = raw.get(3).context("Missing frontend identity")?;
+        return session::serve_exclusive(
+            &root()?,
+            id,
+            ui::Workspace::new_view(saved(workspace)?, id.clone())?,
+        );
     }
     if raw.get(1).is_some_and(|s| s == "--fixture") {
         return fixture::run(raw.get(2).context("Missing workspace")?);
@@ -254,6 +271,39 @@ fn main() -> Result<()> {
         };
     }
     let mut a = Args::parse();
+    if a.migrate_herdr || a.plan_herdr_migration {
+        return adoption::migrate(a.plan_herdr_migration);
+    }
+    if let Some(host) = &a.ssh {
+        if a.refresh {
+            return refresh::request_remote(
+                host,
+                &a.workspace,
+                &a.remote_executable,
+                a.ssh_config.as_deref(),
+            );
+        }
+        let view = frontend::View::new(&a.workspace, a.frontend.as_deref())?;
+        refresh::register_remote(
+            host,
+            &a.workspace,
+            &a.remote_executable,
+            a.ssh_config.as_deref(),
+            &view.id,
+        )?;
+        return client::run_with_events(
+            Launch {
+                executable: a.remote_executable.clone(),
+                host: Some(host.clone()),
+                ssh_config: a.ssh_config.clone(),
+                session: view.route(),
+                directory: None,
+                attach_only: true,
+                play: None,
+            },
+            terminal_event,
+        );
+    }
     if let Some(name) = a.app_launch.as_ref().or(a.app_list.as_ref()) {
         let launch = if a.app_launch.is_some() {
             ensure!(!a.app_argv.is_empty(), "Provide an application after --");
@@ -306,16 +356,28 @@ fn main() -> Result<()> {
     let explicit_workspace = raw
         .iter()
         .any(|s| s == "--workspace" || s.starts_with("--workspace="));
-    let management =
-        a.inspect || a.close || a.stop || a.capture || a.deliver.is_some() || a.action.is_some();
+    let management = a.inspect
+        || a.close
+        || a.stop
+        || a.refresh
+        || a.capture
+        || a.deliver.is_some()
+        || a.action.is_some();
     if !explicit_workspace && !management {
         a.workspace = auto_workspace();
+    }
+    if !management {
+        adoption::wait(&a.workspace)?;
+        if a.frontend.is_none() {
+            a.frontend = adoption::resumed_frontend(&a.workspace);
+        }
     }
     let mut config = Config {
         workspace: a.workspace.clone(),
         label: None,
         collection: None,
         herdr: None,
+        adopted: Default::default(),
         theme: a.theme.clone().unwrap_or_else(appearance::default_theme),
         host: a.host,
         ssh_config: a.ssh_config,
@@ -337,24 +399,37 @@ fn main() -> Result<()> {
         config.ssh_config =
             Some(fs::canonicalize(ssh_config).context("SSH configuration not found")?);
     }
-    if let Some(action) = &a.action {
+    if let Some(action) = a
+        .action
+        .as_deref()
+        .or(if a.refresh { Some("ui:refresh") } else { None })
+    {
+        let views = frontend::active(&a.workspace)?;
         ensure!(
-            socket_active(&session::socket_path(&root()?, &a.workspace)?)?,
+            !views.is_empty(),
             "Workspace is not running; open it before sending actions"
         );
-        let directory = root()?.join(format!("{}.actions", a.workspace));
-        fs::create_dir_all(&directory)?;
-        let id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos();
-        starkit::fs::write_private(
-            &directory.join(format!("{id}.json")),
-            &serde_json::to_vec(action)?,
-        )?;
+        for view in views
+            .iter()
+            .filter(|v| a.frontend.as_ref().is_none_or(|id| id == &v.id))
+        {
+            frontend::action(view, action)?;
+            // Model-changing commands execute once; other views observe shared state.
+            if !matches!(action, "ui:refresh" | "view:apps" | "view:terminals") {
+                break;
+            }
+        }
         return Ok(());
     }
     if a.inspect {
-        let snapshot = root()?.join(format!("{}.state.json", a.workspace));
+        let views = frontend::active(&a.workspace)?;
+        let snapshot = root()?.join(format!(
+            "{}.state.json",
+            a.frontend
+                .as_deref()
+                .or_else(|| views.first().map(|v| v.id.as_str()))
+                .unwrap_or(&a.workspace)
+        ));
         let mut data: serde_json::Value = if snapshot.exists() {
             serde_json::from_slice(&fs::read(snapshot)?)?
         } else {
@@ -374,10 +449,14 @@ fn main() -> Result<()> {
             })
             .collect();
         data["panes"] = serde_json::json!(health);
-        data["controller_running"] = serde_json::json!(socket_active(&session::socket_path(
-            &root()?,
-            &a.workspace
-        )?)?);
+        data["controller_running"] = serde_json::json!(!views.is_empty());
+        data["frontends"] = serde_json::json!(
+            views
+                .iter()
+                .map(|v| frontend::snapshot(v)
+                    .unwrap_or_else(|_| serde_json::json!({"frontend":v.id})))
+                .collect::<Vec<_>>()
+        );
         println!("{}", serde_json::to_string_pretty(&data)?);
         return Ok(());
     }
@@ -395,23 +474,21 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if a.close || a.stop {
-        let socket = session::socket_path(&root()?, &a.workspace)?;
-        let marker = root()?.join(format!("{}.close", a.workspace));
-        if socket_active(&socket)? {
-            fs::write(&marker, b"close")?;
-            let started = Instant::now();
+        for view in frontend::active(&a.workspace)? {
+            if a.frontend.as_ref().is_some_and(|id| id != &view.id) {
+                continue;
+            }
+            let socket = session::socket_path(&root()?, &view.id)?;
+            fs::write(root()?.join(format!("{}.close", view.id)), b"close")?;
+            let start = Instant::now();
             while socket_active(&socket)? {
                 ensure!(
-                    started.elapsed() < Duration::from_secs(10),
-                    "Workspace did not close within ten seconds"
+                    start.elapsed() < Duration::from_secs(10),
+                    "Frontend did not close within ten seconds"
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
-        if socket.exists() {
-            fs::remove_file(&socket)?;
-        }
-        let _ = fs::remove_file(marker);
         if a.stop {
             let state = project_state::ProjectState::load(&config)?;
             for i in state
@@ -431,6 +508,8 @@ fn main() -> Result<()> {
             let data = project_state::data_root()?;
             let _ = fs::remove_file(data.join(format!("{}.json", config.workspace)));
             let _ = fs::remove_file(data.join(format!("{}.layout.json", config.workspace)));
+            let _ = fs::remove_file(data.join(format!("{}.model.json", config.workspace)));
+            project_state::catalog_changed()?;
         }
         return Ok(());
     }
@@ -502,10 +581,13 @@ fn main() -> Result<()> {
         starkit::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
         return Ok(());
     }
+    if let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()? {
+        let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
+        refresh::register_local(&config.workspace, &view.id)?;
+        return bridge.relay(&view.ensure()?);
+    }
     if unsafe { libc::isatty(0) } == 0 || std::env::var_os("KITTY_WINDOW_ID").is_none() {
-        let mut c = Command::new(
-            std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "/usr/bin/kitty".into()),
-        );
+        let mut c = Command::new(std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "kitty".into()));
         c.args([
             "--title",
             "S T A R / M U X",
@@ -523,12 +605,14 @@ fn main() -> Result<()> {
         c.spawn()?;
         return Ok(());
     }
+    let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
+    refresh::register_local(&config.workspace, &view.id)?;
     client::run_with_events(
         Launch {
             executable: std::env::current_exe()?.to_string_lossy().into_owned(),
             host: None,
             ssh_config: None,
-            session: config.workspace,
+            session: view.route(),
             directory: None,
             attach_only: false,
             play: None,
@@ -541,14 +625,16 @@ fn main() -> Result<()> {
 mod workspace_tests {
     use super::*;
     #[test]
-    fn one_named_workspace_has_one_controlling_attachment() {
-        let root = tempfile::tempdir().unwrap();
-        let first = attachment_lease(root.path(), "first").unwrap().unwrap();
-        assert!(attachment_lease(root.path(), "first").unwrap().is_none());
-        assert!(attachment_lease(root.path(), "second").unwrap().is_some());
-        drop(first);
-        assert!(attachment_lease(root.path(), "first").unwrap().is_some());
-        assert!(attachment_lease(root.path(), "../outside").is_err());
+    fn frontend_ids_are_independent_of_the_shared_workspace() {
+        let first = frontend::View::new("shared", None).unwrap();
+        let second = frontend::View::new("shared", None).unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.workspace, second.workspace);
+        assert_eq!(
+            frontend::View::new("shared", Some(&first.id)).unwrap().id,
+            first.id
+        );
+        assert!(frontend::View::new("shared", Some("../outside")).is_err());
     }
     #[test]
     fn generated_workspace_names_fit_the_runtime_contract() {
@@ -558,6 +644,7 @@ mod workspace_tests {
             label: None,
             collection: None,
             herdr: None,
+            adopted: Default::default(),
             theme: appearance::default_theme(),
             host: None,
             ssh_config: None,
