@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-multiwindow-') as tmp:
         (tmp/'sshd_config').write_text(f'Port {port}\nListenAddress 127.0.0.1\nHostKey {tmp}/host\nPidFile {tmp}/sshd.pid\nAuthorizedKeysFile {tmp}/authorized_keys\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers {getpass.getuser()}\nPerSourcePenalties no\nLogLevel ERROR\n')
         (tmp/'known_hosts').write_text(f'[127.0.0.1]:{port} '+(tmp/'host.pub').read_text())
         daemon=subprocess.Popen([shutil.which('sshd') or '/usr/sbin/sshd','-D','-e','-f',str(tmp/'sshd_config')],stderr=(tmp/'sshd.log').open('w'),env={k:v for k,v in os.environ.items() if k!='NOTIFY_SOCKET'})
-        ssh_args=['ssh','-T','-p',str(port),'-i',str(tmp/'client'),'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(tmp/'known_hosts'),'127.0.0.1']
+        ssh_args=['ssh','-F','/dev/null','-T','-p',str(port),'-i',str(tmp/'client'),'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(tmp/'known_hosts'),'127.0.0.1']
         deadline=time.monotonic()+3
         while True:
             try:
@@ -55,8 +55,10 @@ with tempfile.TemporaryDirectory(prefix='starmux-multiwindow-') as tmp:
             self.identity=identity;self.cols=cols;self.rows=rows;self.messages=queue.Queue();self.types=set();self.fonts=[];self.scene=None;self.allow_refresh=False;self.refresh_requested=False
             self.log=(tmp/(identity+'.log')).open('a')
             command=[str(app),'--graphical-relay',workspace+'@'+identity]
+            # This loopback host shares one backend installation. Preserve its
+            # tool PATH so SSH cannot select an incompatible system tmux.
             if ssh_args and identity.startswith('v-b'):
-                command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','SHELL','STAR_TERMINAL_RENDERER')],*command])]
+                command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','SHELL','STAR_TERMINAL_RENDERER','PATH')],*command])]
             self.process=subprocess.Popen(command,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log)
             processes.append(self.process)
             def receive():

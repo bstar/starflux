@@ -4,9 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 scripts/check-version.py
 cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -A dead_code
-cargo test --locked --workspace --all-features
-cargo test --locked --workspace --no-default-features
+cargo clippy --release --locked --workspace --all-targets --all-features -- -D warnings -A dead_code
+cargo test --release --locked --workspace --all-features
+cargo test --release --locked --workspace --no-default-features
 cargo deny --all-features check advisories bans licenses sources
 cargo build --locked --workspace --release
 cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o target/release/starmux-pty-proxy.new

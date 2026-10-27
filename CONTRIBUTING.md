@@ -8,7 +8,7 @@ nix develop -c scripts/check-release
 nix flake check --print-build-logs
 ```
 
-The release gate follows STAR/FOLD: manifest/lock/tag consistency, formatting, strict Clippy across every target and feature (`dead_code` is the one allowed lint), tests with all features and without defaults, dependency advisories/licences/source checks, and a release build. Linux builds include the native C PTY handoff helper. Release overflow checks remain enabled.
+The release gate follows STAR/FOLD: manifest/lock/tag consistency, formatting, strict Clippy across every target and feature (`dead_code` is the one allowed lint), tests of the shipping release profile with all features and without defaults, dependency advisories/licences/source checks, and a release build. Linux builds include the native C PTY handoff helper. Release overflow checks remain enabled.
 
 The headless behavior gate uses private fake shells, tmux servers and an SSH daemon. It checks process persistence, multiple frontends, selection and split state, tab exit, sidebar overlays and terminal font commands. It opens no desktop windows and sends no prompts to live agents. `scripts/test-herdr-adoption.py` additionally checks private Herdr handoff and rollback when Herdr is installed. Physical audio, file-manager dragging and sustained app streaming require separate acceptance checks; unit tests do not prove them.
 
