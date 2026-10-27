@@ -66,6 +66,7 @@ cp -a /usr/share/alsa "$appdir/usr/share/"
 cp -R /usr/local/share/licenses/starmux/. "$appdir/usr/share/doc/starmux/third-party/"
 curl --retry 5 -fsSL https://raw.githubusercontent.com/bstar/starkit/f60a8fb3ffb41a5625c0c3d43e97394f2249ce61/LICENSE -o "$appdir/usr/share/doc/starmux/third-party/STAR-KIT-LICENSE"
 cp README.md LICENSE "$appdir/usr/share/doc/starmux/"
+cp -R LICENSES "$appdir/usr/share/doc/starmux/"
 cp -R docs "$appdir/usr/share/doc/starmux/"
 python3 scripts/dist/bundle-libraries.py "$appdir"
 # The source archive URLs/hashes are immutable in deps-debian.sh.

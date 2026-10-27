@@ -44,6 +44,7 @@
           postInstall = ''
             install -m755 starmux-pty-proxy $out/bin/starmux-pty-proxy
             install -Dm644 LICENSE $out/share/licenses/starmux/LICENSE
+            cp -R LICENSES/. $out/share/licenses/starmux/
             install -Dm644 README.md $out/share/doc/starmux/README.md
             install -Dm644 ${./packaging/starmux.desktop} $out/share/applications/starmux.desktop
             install -Dm644 ${./packaging/starmux.svg} $out/share/icons/hicolor/scalable/apps/starmux.svg

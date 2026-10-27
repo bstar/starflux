@@ -19,6 +19,7 @@ cp scripts/install-kitty-audio.py "$stage/"
 kit_rev=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["dependencies"]["starkit"]["rev"])')
 curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starkit/$kit_rev/integrations/kitty/star_kit.py" -o "$stage/star_kit.py"
 cp LICENSE "$stage/"
+cp -R LICENSES "$stage/"
 curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starkit/$kit_rev/LICENSE" -o "$stage/STAR-KIT-LICENSE"
 cat > "$stage/INSTALL.txt" <<'INSTALL'
 Apple Silicon presentation client for a Linux STAR/MUX workspace host.

@@ -40,6 +40,7 @@ package() {
     install -Dm644 packaging/starmux.desktop "$pkgdir/usr/share/applications/starmux.desktop"
     install -Dm644 packaging/starmux.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/starmux.svg"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/starmux/LICENSE"
+    cp -R LICENSES/. "$pkgdir/usr/share/licenses/starmux/"
     install -Dm644 README.md "$pkgdir/usr/share/doc/starmux/README.md"
     cp -R docs "$pkgdir/usr/share/doc/starmux/"
 }
