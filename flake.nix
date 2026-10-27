@@ -20,9 +20,13 @@
           version = cargoToml.package.version;
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
-            # Workflow-only edits cannot change the shipped program.
-            filter = path: type: pkgs.lib.cleanSourceFilter path type
-              && builtins.baseNameOf path != ".github";
+            # Distribution recipes do not change the Nix program. Keep its
+            # derivation stable while AppImage/Arch packaging is verified.
+            filter = path: type:
+              let relative = pkgs.lib.removePrefix "${toString ./.}/" path;
+              in pkgs.lib.cleanSourceFilter path type
+                && builtins.baseNameOf path != ".github"
+                && !(builtins.elem relative [ "scripts/dist" "packaging/AppRun" "packaging/arch" "docs/releases" ]);
           };
           cargoLock.lockFile = ./Cargo.lock;
           cargoLock.allowBuiltinFetchGit = true;

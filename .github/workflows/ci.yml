@@ -2,7 +2,17 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: &distribution
+      - '**/*.md'
+      - 'docs/**'
+      - 'packaging/AppRun'
+      - 'packaging/arch/**'
+      - 'scripts/dist/**'
+      - '.github/workflows/appimage.yml'
+      - '.github/workflows/arch.yml'
+      - '.github/workflows/release.yml'
   pull_request:
+    paths-ignore: *distribution
   workflow_dispatch:
   workflow_call:
 permissions:

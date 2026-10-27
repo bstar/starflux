@@ -13,7 +13,13 @@ libdir.mkdir(parents=True, exist_ok=True)
 exclude = re.compile(r'^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libutil\.so|libnsl\.so|libgcc_s\.so|libstdc\+\+\.so)')
 def is_elf(path):
     with path.open('rb') as stream:
-        return stream.read(4) == b'\x7fELF'
+        header = stream.read(18)
+        # Python's config directory also carries relocatable .o files. Only
+        # executables/shared objects have a dynamic loader/RPATH to rewrite.
+        if len(header) != 18 or header[:4] != b'\x7fELF':
+            return False
+        byteorder = 'little' if header[5] == 1 else 'big'
+        return int.from_bytes(header[16:18], byteorder) in (2, 3)
 
 elfs = [p for p in root.rglob('*') if p.is_file() and not p.is_symlink() and is_elf(p)]
 packages = set()
