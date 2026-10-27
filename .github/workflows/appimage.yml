@@ -1,0 +1,78 @@
+name: AppImage builds
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: python3 scripts/check-version.py
+      - run: python3 scripts/dist/test-apprun.py
+  appimage:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    container: debian:bullseye-slim
+    steps:
+      - name: Prepare frozen glibc 2.31 build environment
+        run: |
+          printf 'deb http://snapshot.debian.org/archive/debian/20260830T000000Z bullseye main\ndeb http://snapshot.debian.org/archive/debian-security/20260830T000000Z bullseye-security main\n' > /etc/apt/sources.list
+          printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99bullseye-eol
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build, test and package
+        shell: bash
+        run: scripts/dist/appimage.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: starmux-appimage-${{ matrix.arch }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+  verify-appimage:
+    needs: appimage
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        image: ['ubuntu:20.04', 'ubuntu:22.04', 'ubuntu:24.04', 'debian:11', 'debian:12', 'fedora:41', 'rockylinux:9', 'archlinux:latest']
+        exclude:
+          - arch: aarch64
+            image: archlinux:latest
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: starmux-appimage-${{ matrix.arch }}
+      - name: Exercise bundled tools and live video encoder in a clean distro
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          chmod +x starmux-*.AppImage
+          for app in starmux-*.AppImage; do ./"$app" --check-bundle; done
+  verify-fuse:
+    needs: appimage
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: starmux-appimage-${{ matrix.runner == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}
+      - run: sudo apt-get update && sudo apt-get install -y libfuse2t64
+      - run: |
+          chmod +x starmux-*.AppImage
+          for app in starmux-*.AppImage; do ./"$app" --check-bundle; done

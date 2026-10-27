@@ -39,7 +39,7 @@ while read -r component digest; do
   case "$component" in
     gstreamer) extra=(-Dtools=enabled) ;;
     gst-plugins-base) extra=(-Dapp=enabled -Dvideoconvertscale=enabled -Dvideorate=enabled -Daudioconvert=enabled -Daudioresample=enabled -Dvideotestsrc=enabled -Dorc=enabled) ;;
-    gst-plugins-ugly) extra=(-Dx264=enabled) ;;
+    gst-plugins-ugly) extra=(-Dgpl=enabled -Dx264=enabled) ;;
   esac
   meson setup "$source_work/$component-build" "$source_work/$component-1.24.13" \
     --prefix=/usr/local --libdir=lib --buildtype=release --wrap-mode=nodownload \
