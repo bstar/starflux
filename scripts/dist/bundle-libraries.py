@@ -10,7 +10,7 @@ import sys
 root = Path(sys.argv[1]).resolve()
 libdir = root / 'usr/lib'
 libdir.mkdir(parents=True, exist_ok=True)
-exclude = re.compile(r'^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libutil\.so|libnsl\.so|libgcc_s\.so|libstdc\+\+\.so)')
+exclude = re.compile(r'^(ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libutil\.so|libnsl\.so\.1(?:\.|$)|libgcc_s\.so|libstdc\+\+\.so)')
 def is_elf(path):
     with path.open('rb') as stream:
         header = stream.read(18)
