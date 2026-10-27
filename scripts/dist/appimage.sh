@@ -25,7 +25,7 @@ done
 install -m755 /usr/bin/dbus-run-session "$appdir/usr/libexec/dbus-run-session"
 cat > "$appdir/usr/bin/dbus-run-session" <<'DBUS'
 #!/bin/sh
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 exec "$HERE/libexec/dbus-run-session" --dbus-daemon="$HERE/bin/dbus-daemon" --config-file="$HERE/share/dbus-1/session.conf" "$@"
 DBUS
 chmod +x "$appdir/usr/bin/dbus-run-session"
@@ -37,7 +37,7 @@ cp -a /usr/lib/python3.9 "$appdir/usr/lib/"
 find "$appdir/usr/lib/python3.9" -type d -name __pycache__ -prune -exec rm -rf {} +
 cat > "$appdir/usr/bin/python3" <<'PYTHON'
 #!/bin/sh
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 PYTHONHOME="$HERE" exec "$HERE/libexec/python3.9" "$@"
 PYTHON
 chmod +x "$appdir/usr/bin/python3"

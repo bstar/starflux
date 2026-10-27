@@ -5,7 +5,8 @@ cd "$(dirname "$0")/../.."
 [ "$(uname -s)" = Darwin ] || exit 1
 ver=$(sed -n 's/^version = "\(.*\)"/\1/p' terminal-client/Cargo.toml | head -1)
 brew list ffmpeg pkg-config llvm >/dev/null 2>&1 || brew install ffmpeg pkg-config llvm
-export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+export LIBCLANG_PATH
 cargo build --locked --release -p starmux-terminal-client --target aarch64-apple-darwin
 bin="${CARGO_TARGET_DIR:-target}/aarch64-apple-darwin/release/starmux-terminal-client"
 "$bin" --help

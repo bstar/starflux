@@ -11,11 +11,12 @@ apt-get install -y -qq --no-install-recommends \
   libglib2.0-dev libx264-dev liborc-0.4-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-bad gstreamer1.0-libav \
   python3 python3-pip python3-dev ninja-build patchelf squashfs-tools \
-  libevent-dev libncurses-dev bison tmux openssh-client pulseaudio-utils dbus dbus-x11 xkb-data
+  libevent-dev libncurses-dev bison flex tmux openssh-client pulseaudio-utils dbus dbus-x11 xkb-data
 # Lock both the Rust compiler and the source dependencies in the portable build.
 if ! command -v rustup >/dev/null; then
   curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --no-modify-path
 fi
+# shellcheck source=/dev/null
 . "$HOME/.cargo/env"
 rustup default 1.98.1
 python3 -m pip install --disable-pip-version-check meson==1.7.2
@@ -25,7 +26,8 @@ export LIBCLANG_PATH=/usr/lib/llvm-11/lib
 # remain ABI-compatible with the newer core and travel in the AppImage too.
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
 export LD_LIBRARY_PATH=/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-export GST_PLUGIN_SYSTEM_PATH_1_0=/usr/local/lib/gstreamer-1.0:/usr/lib/$(gcc -dumpmachine)/gstreamer-1.0
+GST_PLUGIN_SYSTEM_PATH_1_0=/usr/local/lib/gstreamer-1.0:/usr/lib/$(gcc -dumpmachine)/gstreamer-1.0
+export GST_PLUGIN_SYSTEM_PATH_1_0
 source_work=$(mktemp -d)
 while read -r component digest; do
   archive="$component-1.24.13.tar.xz"
