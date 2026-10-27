@@ -9,6 +9,7 @@ if [ "${STARMUX_DIST_DEPS_READY:-0}" = 1 ]; then
 else
     . scripts/dist/deps-debian.sh
 fi
+. scripts/dist/patchelf.sh
 ver=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
 mkdir -p dist
 work=$(mktemp -d)

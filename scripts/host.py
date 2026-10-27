@@ -63,7 +63,7 @@ def main():
         # must find the host's Python, codecs and audio configuration.
         if 'STARMUX_SYSTEM_PATH' in os.environ:
             clean=['/usr/bin/env']
-            for key in ['GST_PLUGIN_SYSTEM_PATH_1_0','GST_PLUGIN_SCANNER','GST_REGISTRY','ALSA_CONFIG_DIR','ALSA_CONFIG_PATH','ALSA_PLUGIN_DIR']:
+            for key in ['STARMUX_SYSTEM_PATH','GST_PLUGIN_SYSTEM_PATH_1_0','GST_PLUGIN_SCANNER','GST_REGISTRY','ALSA_CONFIG_DIR','ALSA_CONFIG_PATH','ALSA_PLUGIN_DIR']:
                 clean+=['-u',key]
             argv=clean+['PATH='+os.environ['STARMUX_SYSTEM_PATH']]+argv
         return shlex.join(argv)

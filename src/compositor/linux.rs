@@ -893,6 +893,7 @@ impl State {
             if let Some(path) = std::env::var_os("STARMUX_SYSTEM_PATH") {
                 command.env("PATH", path);
                 for key in [
+                    "STARMUX_SYSTEM_PATH",
                     "GST_PLUGIN_SYSTEM_PATH_1_0",
                     "GST_PLUGIN_SCANNER",
                     "GST_REGISTRY",

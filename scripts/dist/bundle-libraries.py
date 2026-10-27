@@ -40,9 +40,11 @@ for elf in elfs:
 # Each extension/helper gets an RPATH relative to its own installed location.
 for elf in root.rglob('*'):
     if elf.is_file() and not elf.is_symlink() and is_elf(elf):
+        # strip must precede patchelf: old binutils can corrupt an ELF after
+        # RPATH growth moves its dynamic string table to a new segment.
+        subprocess.run(['strip', '--strip-unneeded', str(elf)], check=True)
         rel = os.path.relpath(libdir, elf.parent)
         subprocess.run(['patchelf', '--set-rpath', '$ORIGIN/' + rel, str(elf)], check=True)
-        subprocess.run(['strip', '--strip-unneeded', str(elf)], check=True)
 notice = root / 'usr/share/doc/starmux/third-party'
 notice.mkdir(parents=True, exist_ok=True)
 for package in sorted(packages | {'python3.9', 'tmux', 'pulseaudio-utils', 'dbus', 'alsa-plugins'}):
