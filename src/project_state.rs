@@ -583,6 +583,24 @@ pub fn catalog(current: &Config) -> Vec<Config> {
 mod tests {
     use super::*;
     #[test]
+    fn app_view_and_metadata_survive_model_repair() {
+        let mut state = ProjectState {
+            space: Space::Apps,
+            app_command: "saved-app".into(),
+            app_targets: vec![AppTarget {
+                host: Some("remote".into()),
+                directory: "/project".into(),
+                helper: "starmux".into(),
+            }],
+            ..ProjectState::default()
+        };
+        state.repair_view();
+        assert_eq!(state.space, Space::Apps);
+        assert!(state.visible().is_empty());
+        assert_eq!(state.app_command, "saved-app");
+        assert_eq!(state.app_targets[0].host.as_deref(), Some("remote"));
+    }
+    #[test]
     fn exiting_a_split_terminal_focuses_its_neighbor_and_removes_its_metadata() {
         let mut state = ProjectState::default();
         state.add_terminal().unwrap();

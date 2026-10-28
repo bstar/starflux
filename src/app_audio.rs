@@ -1,5 +1,5 @@
 //! Isolated app-desktop capture. KIT owns frontend PCM transport and playback.
-//! A separate SSH pipe keeps audio independent of PNG/video throughput.
+//! A private host capture pipe feeds the frontend's negotiated PCM protocol.
 use crate::{
     app_desktop::{command_extra, directory, lock, paths, read, write},
     runtime::Config,
@@ -23,6 +23,76 @@ use std::{
     },
     time::{Duration, Instant},
 };
+/// Match STAR/SCREEN's buffered PCM player on capable frontends while retaining
+/// the fixed stereo protocol for older clients. Capture remains private per app.
+#[derive(Clone, Copy)]
+pub enum Playback {
+    Legacy,
+    Pcm,
+}
+impl Playback {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy-stereo",
+            Self::Pcm => "pcm-v2",
+        }
+    }
+    pub fn open(self, session: u64, epoch: u64) -> starkit::terminal_graphics::media::ToClient {
+        use starkit::terminal_graphics::media::ToClient;
+        match self {
+            Self::Legacy => ToClient::AudioOpen { session, epoch },
+            Self::Pcm => ToClient::PcmOpen {
+                session,
+                epoch,
+                spec: starkit::pcm::Spec {
+                    sample_rate: 48000,
+                    channels: 2,
+                    channel_mask: 3,
+                    format: starkit::pcm::SampleFormat::F32,
+                    valid_bits: None,
+                },
+                compatibility: true,
+            },
+        }
+    }
+    pub fn chunk(
+        self,
+        session: u64,
+        epoch: u64,
+        samples: Vec<i16>,
+    ) -> starkit::terminal_graphics::media::ToClient {
+        use starkit::terminal_graphics::media::ToClient;
+        match self {
+            Self::Legacy => ToClient::AudioChunk {
+                session,
+                epoch,
+                samples,
+            },
+            Self::Pcm => {
+                use base64::Engine as _;
+                let bytes = samples
+                    .into_iter()
+                    .flat_map(|s| (f32::from(s) / 32768.).to_le_bytes())
+                    .collect::<Vec<_>>();
+                ToClient::PcmChunk {
+                    session,
+                    epoch,
+                    format: starkit::pcm::SampleFormat::F32,
+                    processed: true,
+                    data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                }
+            }
+        }
+    }
+    pub fn close(self, session: u64, epoch: u64) -> starkit::terminal_graphics::media::ToClient {
+        use starkit::terminal_graphics::media::ToClient;
+        match self {
+            Self::Legacy => ToClient::AudioClose { session },
+            Self::Pcm => ToClient::PcmClose { session, epoch },
+        }
+    }
+}
+
 pub const BLOCK: usize = 1920;
 pub const WINDOW: usize = 8;
 #[derive(Serialize, Deserialize)]
@@ -542,6 +612,45 @@ impl Drop for Source {
 #[cfg(test)]
 mod viewer_tests {
     use super::*;
+    #[test]
+    fn modern_pcm_preserves_stereo_samples_and_legacy_is_unchanged() {
+        use base64::Engine as _;
+        use starkit::terminal_graphics::media::ToClient;
+        assert!(
+            matches!(Playback::Pcm.open(7,9),ToClient::PcmOpen{spec,..} if spec.sample_rate==48000 && spec.channels==2)
+        );
+        let original = vec![i16::MIN, i16::MAX, 0, 1, -1, 42];
+        let ToClient::PcmChunk {
+            data,
+            session,
+            epoch,
+            ..
+        } = Playback::Pcm.chunk(7, 9, original.clone())
+        else {
+            panic!("Expected PCM")
+        };
+        assert_eq!((session, epoch), (7, 9));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .unwrap();
+        let restored = bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| (f32::from_le_bytes(*b) * 32768.) as i16)
+            .collect::<Vec<_>>();
+        assert_eq!(restored, original);
+        assert!(
+            matches!(Playback::Legacy.chunk(7,9,original.clone()),ToClient::AudioChunk{samples,..} if samples==original)
+        );
+        assert!(matches!(
+            Playback::Pcm.close(7, 9),
+            ToClient::PcmClose {
+                session: 7,
+                epoch: 9
+            }
+        ));
+    }
     #[test]
     fn audio_connections_have_independent_credits_and_lifetimes() {
         let (first, _first_peer) = UnixStream::pair().unwrap();

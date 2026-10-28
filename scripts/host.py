@@ -101,14 +101,14 @@ def main():
         if not exists():
             run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',shell_command(argv))
             run('set-option','-g','status','off')
-            run('set-option','-g','mouse','off')
             run('set-option','-g','history-limit','20000')
             run('set-option','-g','allow-passthrough','on')
             run('set-option','-g','extended-keys','on')
             run('set-option','-g','remain-on-exit','on')
             run('set-option','-g','set-clipboard','on')
             run('set-option','-g','default-terminal','tmux-256color')
-        run('set-option','-w','-t',target,'window-size','smallest')
+        run('set-option','-g','mouse','on')
+        run('set-option','-w','-t',target,'window-size','latest')
         if action=='attach':
             lifecycle_lock.close()
             os.execvp('tmux',tm+['attach-session','-t',pane])
@@ -121,7 +121,8 @@ def main():
         run('respawn-pane','-t',target,'-c',os.path.expanduser(req.get('directory') or '~'),shell_command(argv))
         print(json.dumps({'restarted':True}))
     elif action=='attach':
-        run('set-option','-w','-t',target,'window-size','smallest')
+        run('set-option','-g','mouse','on')
+        run('set-option','-w','-t',target,'window-size','latest')
         os.execvp('tmux',tm+['attach-session','-t',pane])
     elif action=='inspect':
         if not exists():print(json.dumps({'alive':False,'state':'missing'}));return

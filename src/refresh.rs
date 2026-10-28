@@ -46,17 +46,19 @@ fn marker(workspace: &str) -> Result<PathBuf> {
     let _ = starkit::terminal_graphics::session::socket_path(&root, workspace)?;
     Ok(root.join(format!("{workspace}.refresh")))
 }
-pub fn register_local(workspace: &str, frontend: &str) -> Result<()> {
-    register(
-        frontend,
-        vec![
-            "--workspace".into(),
-            workspace.into(),
-            "--frontend".into(),
-            frontend.into(),
-        ],
-        None,
-    )
+pub fn register_local(
+    workspace: &str,
+    frontend: &str,
+    mode: crate::presentation::Mode,
+) -> Result<()> {
+    let mut args = vec![
+        "--workspace".into(),
+        workspace.into(),
+        "--frontend".into(),
+        frontend.into(),
+    ];
+    args.extend(mode.args().iter().map(OsString::from));
+    register(frontend, args, None)
 }
 pub fn register_remote(
     host: &str,
@@ -64,6 +66,7 @@ pub fn register_remote(
     executable: &str,
     config: Option<&Path>,
     frontend: &str,
+    mode: crate::presentation::Mode,
 ) -> Result<()> {
     let mut args = vec![
         "--ssh".into(),
@@ -75,6 +78,7 @@ pub fn register_remote(
         "--remote-executable".into(),
         executable.into(),
     ];
+    args.extend(mode.args().iter().map(OsString::from));
     if let Some(path) = config {
         args.extend(["--ssh-config".into(), path.as_os_str().to_owned()]);
     }

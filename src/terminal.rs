@@ -33,12 +33,9 @@ const PAD: u16 = 12;
 const PASTE_LIMIT: usize = 1024 * 1024;
 
 pub fn direct() -> bool {
-    if cfg!(feature = "lossless-canvas") {
-        std::env::var("STAR_TERMINAL_RENDERER").as_deref() != Ok("kitty-pixels")
-    } else {
-        std::env::var("STAR_TERMINAL_RENDERER").as_deref() == Ok("direct")
-    }
+    std::env::var("STAR_TERMINAL_RENDERER").as_deref() != Ok("kitty-pixels")
 }
+
 pub fn socket(project: &str, pane: usize) -> Result<PathBuf> {
     Ok(crate::runtime::root()?.join(format!(
         "t-{}-{}",
@@ -207,9 +204,7 @@ pub struct Terminal {
     mouse_button: Option<u8>,
     clipboard: Option<String>,
     padding: [u16; 2],
-    #[cfg(feature = "lossless-canvas")]
     native_previous: Option<starkit::terminal_graphics::terminal_cells::Frame>,
-    #[cfg(feature = "lossless-canvas")]
     native_dirty: bool,
     native_cell: Option<[u16; 2]>,
 }
@@ -323,9 +318,7 @@ impl Terminal {
             mouse_button: None,
             clipboard: None,
             padding: [PAD; 2],
-            #[cfg(feature = "lossless-canvas")]
             native_previous: None,
-            #[cfg(feature = "lossless-canvas")]
             native_dirty: true,
             native_cell: None,
         })
@@ -377,19 +370,13 @@ impl Terminal {
         };
     }
     pub fn set_palette(&mut self, theme: &crate::appearance::Appearance) {
-        #[cfg(feature = "lossless-canvas")]
-        {
-            self.native_dirty = true;
-        }
+        self.native_dirty = true;
         self.parser.callbacks_mut().palette = Some([theme.fg.clone(), theme.bg.clone()]);
     }
     pub fn poll(&mut self) -> Result<()> {
         for bytes in self.output.try_iter().take(32) {
             self.parser.process(&bytes);
-            #[cfg(feature = "lossless-canvas")]
-            {
-                self.native_dirty = true;
-            }
+            self.native_dirty = true;
         }
         self.writer
             .bracketed
@@ -422,12 +409,10 @@ impl Terminal {
         }
         Ok(())
     }
-    #[cfg(feature = "lossless-canvas")]
     pub fn reset_native(&mut self) {
         self.native_previous = None;
         self.native_dirty = true;
     }
-    #[cfg(feature = "lossless-canvas")]
     pub fn resize_native(
         &mut self,
         rect: starkit::terminal_graphics::protocol::Rect,
@@ -436,7 +421,7 @@ impl Terminal {
     ) -> Result<()> {
         self.padding = padding;
         self.native_cell = Some(cell);
-        self.font_size = 0; // The presenting Kitty owns the font and cell metrics.
+        self.font_size = 0; // The parent terminal owns the font and cell metrics.
         let rows = rect.height.clamp(1, 192);
         let cols = rect.width.clamp(2, 512);
         if self.parser.screen().size() != (rows, cols) {
@@ -453,7 +438,6 @@ impl Terminal {
         }
         Ok(())
     }
-    #[cfg(feature = "lossless-canvas")]
     pub fn native_frame(
         &mut self,
         stream: String,
@@ -599,10 +583,7 @@ impl Terminal {
         self.clipboard.take()
     }
     pub fn key(&mut self, code: &str, modifiers: u8) -> Result<()> {
-        #[cfg(feature = "lossless-canvas")]
-        {
-            self.native_dirty = true;
-        }
+        self.native_dirty = true;
         if modifiers & 3 == 3 && code.eq_ignore_ascii_case("char:c") {
             self.copy_selection();
             return Ok(());
@@ -625,11 +606,8 @@ impl Terminal {
         point: [f64; 2],
         modifiers: u8,
     ) -> Result<()> {
-        #[cfg(feature = "lossless-canvas")]
-        {
-            if action != "move" || self.selection.is_some() {
-                self.native_dirty = true;
-            }
+        if action != "move" || self.selection.is_some() {
+            self.native_dirty = true;
         }
         let screen = self.parser.screen();
         let x = ((point[0] - f64::from(self.padding[0])).max(0.) / f64::from(self.cell_size()[0]))
@@ -754,6 +732,65 @@ impl Terminal {
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             a != b && (row, col) >= a && (row, col) <= b
         })
+    }
+    /// Cell-only composition for popup overlays; never rasterize terminal text.
+    pub fn paint_cells(
+        &self,
+        buffer: &mut starkit::ratatui::buffer::Buffer,
+        rect: starkit::terminal_graphics::protocol::Rect,
+        theme: &crate::appearance::Appearance,
+    ) {
+        use starkit::ratatui::style::{Color, Modifier, Style};
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        for row in 0..rows.min(rect.height) {
+            for col in 0..cols.min(rect.width) {
+                let Some(cell) = screen.cell(row, col) else {
+                    continue;
+                };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let selected = self.selected(row, col);
+                let fg = color(cell.fgcolor(), &theme.fg, theme)
+                    .parse::<Color>()
+                    .unwrap_or(Color::Reset);
+                let bg = if selected {
+                    theme.selection.clone()
+                } else {
+                    color(cell.bgcolor(), &theme.bg, theme)
+                }
+                .parse::<Color>()
+                .unwrap_or(Color::Reset);
+                let mut style = Style::default().fg(fg).bg(bg);
+                for (enabled, modifier) in [
+                    (cell.bold(), Modifier::BOLD),
+                    (cell.dim(), Modifier::DIM),
+                    (cell.italic(), Modifier::ITALIC),
+                    (cell.underline(), Modifier::UNDERLINED),
+                    (cell.inverse() && !selected, Modifier::REVERSED),
+                ] {
+                    if enabled {
+                        style = style.add_modifier(modifier);
+                    }
+                }
+                let x = rect.x + col;
+                let y = rect.y + row;
+                if x < buffer.area.width && y < buffer.area.height {
+                    buffer.set_stringn(
+                        x,
+                        y,
+                        if cell.has_contents() {
+                            cell.contents()
+                        } else {
+                            " "
+                        },
+                        usize::from((rect.width - col).min(buffer.area.width - x)),
+                        style,
+                    );
+                }
+            }
+        }
     }
     pub fn paint(
         &self,
@@ -984,7 +1021,6 @@ fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "lossless-canvas")]
     #[test]
     fn native_pty_frames_preserve_unicode_styles_and_only_changed_rows() {
         let temp = tempfile::tempdir().unwrap();
@@ -1005,6 +1041,26 @@ mod tests {
             .native_frame("native".into(), 1, rect, &theme, true)
             .unwrap();
         first.validate().unwrap();
+        let mut backdrop = starkit::ratatui::buffer::Buffer::empty(
+            starkit::ratatui::layout::Rect::new(0, 0, 25, 12),
+        );
+        terminal.paint_cells(&mut backdrop, rect, &theme);
+        assert_eq!(backdrop[(5, 7)].symbol(), "H");
+        assert_eq!(backdrop[(7, 7)].symbol(), "世");
+        assert_eq!(backdrop[(9, 7)].symbol(), "界");
+        assert!(
+            backdrop[(5, 7)]
+                .modifier
+                .contains(starkit::ratatui::style::Modifier::BOLD)
+        );
+        assert_eq!(
+            backdrop[(5, 7)].fg,
+            starkit::ratatui::style::Color::Rgb(
+                first.rows[0].runs[0].foreground[0],
+                first.rows[0].runs[0].foreground[1],
+                first.rows[0].runs[0].foreground[2]
+            )
+        );
         assert!(first.complete);
         assert_eq!(first.rows.len(), 4);
         assert!(

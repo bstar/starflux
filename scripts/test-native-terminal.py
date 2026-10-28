@@ -17,6 +17,8 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--exit-lifecycle',action='store_true')
 parser.add_argument('--context-menu',action='store_true')
 parser.add_argument('--font-controls',action='store_true')
+parser.add_argument('--render-cache',action='store_true')
+parser.add_argument('--app-capabilities',action='store_true')
 args=parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
@@ -57,6 +59,8 @@ with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
                     native_surfaces=True, physical_text=True, pixel_layout=True)
         if args.font_controls:
             caps['native_font_millipoints']=12500
+        if args.app_capabilities:
+            caps['streamed_frames']=True
         def send(message):
             peer.sendall(json.dumps(message).encode() + b'\n')
         send(dict(type='hello', version=1, viewport=viewport, client='native-proof', capabilities=caps))
@@ -73,6 +77,8 @@ with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
         font_requests=[]
         font_actions=['increase','decrease','reset']
         font_sent=0
+        cache_baseline=None
+        cache_verified=False
         while time.monotonic() < deadline:
             try:
                 data = peer.recv(65536)
@@ -104,6 +110,21 @@ with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
                 assert metadata['terminal_renderer'] == 'native-kitty', metadata['terminal_renderer']
                 assert metadata['terminal_presentation']['transport'] == 'native-kitty-cells'
                 assert metadata['desktop']['windows'] == 0
+                if args.app_capabilities:
+                    assert metadata['app_view_available']
+                    if latest_scene is None:continue
+                    actions=[hit['action'] for component in latest_scene['components'] if component['kind']=='surface' for hit in component['surface'].get('hits',[])]
+                    assert 'view:apps' in actions,actions
+                if args.render_cache:
+                    stats=metadata['graphical_render']
+                    if cache_baseline is None and latest_scene is not None:
+                        cache_baseline=dict(stats)
+                        send(dict(type='input',id=1,revision=latest_scene['revision'],generation=1,input=dict(kind='paste',text='UNCHANGED_CHROME_INPUT')))
+                    if cache_baseline is not None and 'UNCHANGED_CHROME_INPUT' in metadata['direct_terminals'][0]['text'] and stats['scene_cache_hits']>cache_baseline['scene_cache_hits']:
+                        assert stats['scene_builds']<=cache_baseline['scene_builds']+1, (cache_baseline,stats)
+                        cache_verified=True
+                        break
+                    continue
                 if args.font_controls:
                     if len(font_requests)==3:
                         assert font_requests==[13500,12500,0],font_requests
@@ -138,13 +159,15 @@ with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
                     break
         assert found, 'PTY did not deliver native styled terminal rows'
         assert not types.intersection({'canvas_frame', 'canvas_pixels', 'canvas_stream'}), types
+        if args.render_cache:
+            assert cache_verified, 'Terminal input did not reuse unchanged graphical chrome'
         if args.context_menu:
             assert menu_kept_terminal, f'Sidebar menu failed to preserve terminal: acks={acks}, menu={metadata.get("context_menu")}, status={metadata.get("status")}'
         if args.font_controls:
             assert font_requests==[13500,12500,0],font_requests
         if args.exit_lifecycle:
             assert exit_removed_tab and reopened, 'Exited terminal was not removed and reopened'
-        print(json.dumps(dict(font_requests=font_requests, sidebar_menu_kept_terminal=menu_kept_terminal, exit_removed_tab=exit_removed_tab, reused_slot=0 if reopened else None, result='PASS', renderer='host Kitty text cells',
+        print(json.dumps(dict(app_view_available=metadata['app_view_available'], render_cache_verified=cache_verified, font_requests=font_requests, sidebar_menu_kept_terminal=menu_kept_terminal, exit_removed_tab=exit_removed_tab, reused_slot=0 if reopened else None, result='PASS', renderer='host Kitty text cells',
                               frame_bytes=len(json.dumps(found).encode()), terminal_pixel_frames=0,
                               messages=sorted(types))))
     finally:

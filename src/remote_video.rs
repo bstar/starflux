@@ -29,6 +29,8 @@ struct Encoder {
     size: (u32, u32),
     count: u64,
     encoding: bool,
+    output_size: (u32, u32),
+    format: &'static str,
 }
 
 impl Drop for Encoder {
@@ -53,6 +55,15 @@ pub struct Video {
     high_quality: bool,
     delivered: u64,
     feedback: u64,
+    last_packet: Option<Instant>,
+    last_source_size: Option<(u32, u32)>,
+    responsive_stage: u8,
+    reopen: bool,
+    credit_wait_started: Option<Instant>,
+    slow_credit_waits: VecDeque<Instant>,
+    max_credit_wait_ms: f64,
+    packet_sizes: VecDeque<usize>,
+    delivery_gaps_ms: VecDeque<f64>,
 }
 impl Default for Video {
     fn default() -> Self {
@@ -73,6 +84,15 @@ impl Default for Video {
             high_quality: false,
             delivered: 0,
             feedback: 0,
+            last_packet: None,
+            last_source_size: None,
+            responsive_stage: 0,
+            reopen: false,
+            credit_wait_started: None,
+            slow_credit_waits: VecDeque::new(),
+            max_credit_wait_ms: 0.,
+            packet_sizes: VecDeque::new(),
+            delivery_gaps_ms: VecDeque::new(),
         }
     }
 }
@@ -80,8 +100,31 @@ impl Video {
     pub fn counters(&self) -> (u64, u64) {
         (self.delivered, self.feedback)
     }
-    pub fn size(&self) -> Option<(u32, u32)> {
-        self.encoder.as_ref().map(|e| e.size)
+    pub fn statistics(&self) -> serde_json::Value {
+        let mut sizes = self.packet_sizes.iter().copied().collect::<Vec<_>>();
+        sizes.sort_unstable();
+        let mut gaps = self.delivery_gaps_ms.iter().copied().collect::<Vec<_>>();
+        gaps.sort_by(f64::total_cmp);
+        serde_json::json!({
+            "bitrate_limit_kbps":if self.high_quality {24000} else {12000},
+            "refresh":"cyclic",
+            "max_packet_bytes":sizes.last(),
+            "p95_packet_bytes":sizes.get(sizes.len()*95/100),
+            "max_delivery_gap_ms":gaps.last(),
+            "p95_delivery_gap_ms":gaps.get(gaps.len()*95/100),
+            "source_size":self.encoder.as_ref().map(|e| e.size).or(self.last_source_size),
+            "active":self.encoder.is_some(),
+            "responsive_stage":self.responsive_stage,
+            "encoded_size":self.encoder.as_ref().map(|e|e.output_size),
+            "chroma":self.encoder.as_ref().map(|e|e.format),
+            "max_frontend_credit_wait_ms":self.max_credit_wait_ms,
+            "delivery_fps":if gaps.is_empty() {None} else {Some(1000.*gaps.len() as f64/gaps.iter().sum::<f64>().max(0.001))},
+            "high_quality":self.high_quality,
+            "frame_window":if self.pipelined {2} else {1},
+            "available_credits":self.credit,
+            "packets_sent":self.delivered,
+            "presentation_credits":self.feedback
+        })
     }
     pub fn set_pipelined(&mut self, enabled: bool) {
         self.pipelined = enabled;
@@ -93,7 +136,8 @@ impl Video {
         }
     }
     pub fn stop(&mut self) {
-        if self.encoder.take().is_some() {
+        if let Some(encoder) = self.encoder.take() {
+            self.last_source_size = Some(encoder.size);
             self.pending.push_back(ToClient::CanvasVideoClose {
                 session: self.session,
                 generation: self.generation,
@@ -102,6 +146,8 @@ impl Video {
         }
         self.credit = 0;
         self.latest = None;
+        self.last_packet = None;
+        self.credit_wait_started = None;
     }
     fn open(&mut self, stream: String, generation: u64, frame: &Frame) -> Result<()> {
         gst::init()?;
@@ -111,23 +157,38 @@ impl Video {
             "Live video needs packed pixels"
         );
         self.stop();
+        self.packet_sizes.clear();
+        self.delivery_gaps_ms.clear();
+        self.slow_credit_waits.clear();
+        self.max_credit_wait_ms = 0.;
+        self.reopen = false;
         let (max_width, max_height, max_packet, format, quality) = if self.high_quality {
             (
                 3840,
                 2160,
                 8 * 1024 * 1024,
-                "Y444",
-                "pass=qual quantizer=18 bitrate=100000",
+                if self.responsive_stage == 0 {
+                    "Y444"
+                } else {
+                    "I420"
+                },
+                "pass=qual quantizer=18 bitrate=24000 vbv-buf-capacity=600",
             )
         } else {
-            (1280, 720, 2 * 1024 * 1024, "I420", "bitrate=12000")
+            (
+                1280,
+                720,
+                2 * 1024 * 1024,
+                "I420",
+                "bitrate=12000 vbv-buf-capacity=50",
+            )
         };
         let factor = (f64::from(max_width) / frame.width as f64)
             .min(f64::from(max_height) / frame.height as f64)
             .min(1.);
         let width = ((frame.width as f64 * factor) as u32 / 2 * 2).max(2);
         let height = ((frame.height as f64 * factor) as u32 / 2 * 2).max(2);
-        let pipeline=gst::parse::launch(&format!("appsrc name=source is-live=true format=time block=false max-buffers=1 ! videoconvert ! videoscale ! video/x-raw,format={format},width={width},height={height} ! x264enc tune=zerolatency speed-preset=ultrafast threads=2 {quality} key-int-max=60 bframes=0 byte-stream=true ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=video sync=false max-buffers=1 drop=false"))?.downcast::<gst::Pipeline>().map_err(|_|anyhow::anyhow!("Invalid live video encoder"))?;
+        let pipeline=gst::parse::launch(&format!("appsrc name=source is-live=true format=time block=false max-buffers=1 ! videoconvert ! videoscale ! video/x-raw,format={format},width={width},height={height} ! x264enc tune=zerolatency speed-preset=ultrafast {quality} key-int-max=60 intra-refresh=true bframes=0 byte-stream=true ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=video sync=false max-buffers=1 drop=false"))?.downcast::<gst::Pipeline>().map_err(|_|anyhow::anyhow!("Invalid live video encoder"))?;
         let input = pipeline
             .by_name("source")
             .unwrap()
@@ -178,6 +239,8 @@ impl Video {
             size: (frame.width, frame.height),
             count: 0,
             encoding: false,
+            output_size: (width, height),
+            format,
         };
         encoder.pipeline.set_state(gst::State::Playing)?;
         self.encoder = Some(encoder);
@@ -214,11 +277,13 @@ impl Video {
                 generation,
                 frame,
             } => {
-                if self.encoder.as_ref().is_none_or(|e| {
-                    self.stream != stream
-                        || self.generation != generation
-                        || e.size != (frame.width, frame.height)
-                }) {
+                if self.reopen
+                    || self.encoder.as_ref().is_none_or(|e| {
+                        self.stream != stream
+                            || self.generation != generation
+                            || e.size != (frame.width, frame.height)
+                    })
+                {
                     self.open(stream, generation, &frame)?;
                 }
                 self.latest = Some(frame);
@@ -237,6 +302,16 @@ impl Video {
                 session,
                 generation,
             } if *session == self.session && *generation == self.generation => {
+                if let Some(began) = self.credit_wait_started.take() {
+                    let wait = began.elapsed().as_secs_f64() * 1000.;
+                    self.max_credit_wait_ms = self.max_credit_wait_ms.max(wait);
+                    if wait > 20. {
+                        self.slow_credit_waits.push_back(Instant::now());
+                        if self.slow_credit_waits.len() > 64 {
+                            self.slow_credit_waits.pop_front();
+                        }
+                    }
+                }
                 self.credit = (self.credit + 1).min(if self.pipelined { 2 } else { 1 });
                 self.feedback += 1;
             }
@@ -268,6 +343,34 @@ impl Video {
         }
         self.failure.take()
     }
+    fn adapt_to_frontend(&mut self) {
+        // Decoder support does not guarantee it can present native 4:4:4 at
+        // interactive rates. Adapt only after sustained, measured credit stalls,
+        // never for a quiet source or a single resize/startup interruption.
+        while self
+            .slow_credit_waits
+            .front()
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(3))
+        {
+            self.slow_credit_waits.pop_front();
+        }
+        let count = self.delivery_gaps_ms.len();
+        if self.high_quality
+            && self.encoder.is_some()
+            && !self.reopen
+            && self.responsive_stage == 0
+            && count >= 60
+            && self.slow_credit_waits.len() >= 6
+            && self.delivery_gaps_ms.iter().sum::<f64>() / count as f64 > 1000. / 45.
+        {
+            self.responsive_stage += 1;
+            self.reopen = true;
+            tracing::info!(
+                stage = self.responsive_stage,
+                "Adapting app video to frontend presentation pressure"
+            );
+        }
+    }
     pub fn messages(&mut self, limit: usize) -> Result<Vec<ServerMessage>> {
         let mut messages = Vec::new();
         while messages.len() < limit {
@@ -278,11 +381,26 @@ impl Video {
             let Some(encoder) = &mut self.encoder else {
                 break;
             };
+            if self.credit == 0 && (self.latest.is_some() || !encoder.packets.is_empty()) {
+                self.credit_wait_started.get_or_insert_with(Instant::now);
+            }
             if self.credit > 0
                 && let Ok(packet) = encoder.packets.try_recv()
             {
                 if std::env::var_os("STARMUX_RENDER_TIMING").is_some() {
                     eprintln!("Video encode: us={}", self.sent_at.elapsed().as_micros());
+                }
+                let now = Instant::now();
+                if let Some(prior) = self.last_packet.replace(now) {
+                    self.delivery_gaps_ms
+                        .push_back(now.duration_since(prior).as_secs_f64() * 1000.);
+                    if self.delivery_gaps_ms.len() > 240 {
+                        self.delivery_gaps_ms.pop_front();
+                    }
+                }
+                self.packet_sizes.push_back(packet.len());
+                if self.packet_sizes.len() > 240 {
+                    self.packet_sizes.pop_front();
                 }
                 self.credit -= 1;
                 encoder.encoding = false;
@@ -296,9 +414,12 @@ impl Video {
                 });
                 continue;
             }
-            // Prepare one frame while the previous frame travels and decodes.
-            // Keep every encoded access unit; coalesce only untouched raw frames.
-            if !encoder.encoding
+            // Do not encode ahead of presentation capacity. A prepared H.264
+            // frame cannot be replaced safely when newer input arrives, whereas
+            // raw frames can keep coalescing until the viewer has room. The
+            // negotiated window still overlaps encoding with network/presentation.
+            if self.credit > 0
+                && !encoder.encoding
                 && let Some(frame) = self.latest.take()
             {
                 let mut buffer = gst::Buffer::from_slice(SharedPixels(frame.pixels));
@@ -324,6 +445,7 @@ impl Video {
             }
             break;
         }
+        self.adapt_to_frontend();
         if self.stats_began.elapsed() >= Duration::from_secs(2) {
             tracing::debug!(
                 frames = self.stats_frames,
@@ -359,6 +481,68 @@ mod tests {
                 pixels: Arc::new(vec![color; 64 * 32 * 4]),
             },
         }
+    }
+    #[test]
+    fn slow_frontend_renegotiates_chroma_without_reducing_native_resolution() {
+        let mut video = Video::default();
+        video.set_high_quality(true);
+        video.submit(update(1, 90)).unwrap();
+        video.messages(1).unwrap();
+        assert_eq!(video.encoder.as_ref().unwrap().format, "Y444");
+        video.delivery_gaps_ms.extend([16.; 60]);
+        video.slow_credit_waits = std::iter::repeat_n(Instant::now(), 8).collect();
+        video.adapt_to_frontend();
+        assert_eq!(
+            video.responsive_stage, 0,
+            "Fast presentation must keep native chroma"
+        );
+        video.delivery_gaps_ms = std::iter::repeat_n(35., 60).collect();
+        video.slow_credit_waits.clear();
+        video.adapt_to_frontend();
+        assert_eq!(
+            video.responsive_stage, 0,
+            "A slow producer without credit pressure must not degrade quality"
+        );
+        for _ in 0..8 {
+            video.credit = 0;
+            video.credit_wait_started = Some(Instant::now() - Duration::from_millis(30));
+            video.receive(&ToHost::CanvasVideoCredit {
+                session: video.session,
+                generation: 1,
+            });
+        }
+        video.adapt_to_frontend();
+        assert_eq!(video.responsive_stage, 1);
+        let previous = video.session;
+        video.submit(update(1, 100)).unwrap();
+        assert_ne!(
+            video.session, previous,
+            "The decoder must receive a new session for a new format"
+        );
+        let encoder = video.encoder.as_ref().unwrap();
+        assert_eq!(encoder.format, "I420");
+        assert_eq!(encoder.output_size, (64, 32));
+        video.delivery_gaps_ms = std::iter::repeat_n(35., 60).collect();
+        video.slow_credit_waits = std::iter::repeat_n(Instant::now(), 8).collect();
+        video.adapt_to_frontend();
+        video
+            .submit(Update::Frame {
+                stream: "desktop".into(),
+                generation: 1,
+                frame: Frame {
+                    width: 1920,
+                    height: 1080,
+                    stride: 1920 * 4,
+                    format: PixelFormat::Rgba8,
+                    presentation_ns: 0,
+                    pixels: Arc::new(vec![128; 1920 * 1080 * 4]),
+                },
+            })
+            .unwrap();
+        let encoder = video.encoder.as_ref().unwrap();
+        assert_eq!(encoder.size, (1920, 1080));
+        assert_eq!(encoder.output_size, (1920, 1080));
+        assert_eq!(video.statistics()["responsive_stage"], 1);
     }
     #[test]
     fn full_hd_stream_preserves_native_pixels_and_color_edges() {
@@ -492,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn encoder_prepares_one_frame_ahead_but_sends_only_with_current_epoch_credit() {
+    fn encoder_keeps_cursor_frames_replaceable_until_current_epoch_credit() {
         gst::init().unwrap();
         let mut video = Video::default();
         video.submit(update(1, 20)).unwrap();
@@ -512,11 +696,13 @@ mod tests {
             generation: 0,
         });
         video.messages(1).unwrap();
-        assert_eq!(video.encoder.as_ref().unwrap().count, 1);
+        assert_eq!(video.encoder.as_ref().unwrap().count, 0);
         video.receive(&ToHost::CanvasVideoCredit {
             session,
             generation: 1,
         });
+        video.messages(1).unwrap();
+        assert_eq!(video.encoder.as_ref().unwrap().count, 1);
         video.submit(update(1, 120)).unwrap();
         video.submit(update(1, 150)).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -542,27 +728,25 @@ mod tests {
         assert_eq!(video.latest.as_ref().unwrap().pixels[0], 150);
         video.sent_at = Instant::now() - Duration::from_secs(1);
         assert!(video.messages(1).unwrap().is_empty());
-        assert_eq!(video.encoder.as_ref().unwrap().count, 2);
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while video.encoder.as_ref().unwrap().packets.is_empty() {
+        assert_eq!(video.encoder.as_ref().unwrap().count, 1);
+        let deadline = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < deadline {
             assert!(video.messages(1).unwrap().is_empty());
-            assert!(Instant::now() < deadline, "lookahead encoding stalled");
+            video.submit(update(1, 180)).unwrap();
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(
-            video.messages(1).unwrap().is_empty(),
-            "encoded frames still require credit"
-        );
+        assert_eq!(video.encoder.as_ref().unwrap().count, 1);
+        assert_eq!(video.latest.as_ref().unwrap().pixels[0], 180);
         video.receive(&ToHost::CanvasVideoCredit {
             session,
             generation: 1,
         });
-        assert!(matches!(
-            video.messages(1).unwrap().as_slice(),
-            [ServerMessage::Media {
-                message: ToClient::CanvasVideoPacket { .. }
-            }]
-        ));
+        assert!(video.messages(1).unwrap().is_empty());
+        assert_eq!(video.encoder.as_ref().unwrap().count, 2);
+        assert!(
+            video.latest.is_none(),
+            "The latest cursor position was encoded"
+        );
         video.submit(update(2, 200)).unwrap();
         video.receive(&ToHost::CanvasVideoCredit {
             session,
@@ -575,8 +759,18 @@ mod tests {
             assert!(video.messages(1).unwrap().is_empty());
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(video.encoder.as_ref().unwrap().count, 1);
+        assert_eq!(video.encoder.as_ref().unwrap().count, 0);
+        let diagnostics = video.statistics();
         video.stop();
         assert!(video.latest.is_none() && video.encoder.is_none());
+        assert_eq!(
+            video.statistics()["source_size"],
+            diagnostics["source_size"]
+        );
+        assert_eq!(
+            video.statistics()["max_packet_bytes"],
+            diagnostics["max_packet_bytes"]
+        );
+        assert_eq!(video.statistics()["active"], false);
     }
 }

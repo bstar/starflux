@@ -1,5 +1,10 @@
 # App Shelf
 
+> App Space is available in graphical frontends with local or streamed app-frame
+> support, including Kitty over SSH. Cells mode hides app controls. Open it with
+> **App Space** in the terminal header or **Open App Space** in a project's
+> right-click menu. Terminal space keeps the full terminal area.
+
 STAR/MUX now uses the App Shelf direction from the design studies. A project owns its agent, terminal tabs, launch command and virtual app desktops. Agents and shells now use Kitty’s own renderer, presented at native pixel resolution. Graphical apps retain their private compositor. The chrome uses single pixel borders, a drafting grid and the selected STAR/KIT palette.
 
 ## Start a project
@@ -22,7 +27,7 @@ Project metadata is saved privately under `$XDG_DATA_HOME/starmux/projects` (nor
 - **+ Launch app** inside app space adds another application. Its command, directory, host and remote helper are editable. A supporting app can run locally or on another SSH host.
 - App cards remain in the shelf while working with the agent or shells. Select a card to open that app's host desktop and focus its window.
 - The virtual app space offers **Tile**, **Maximize**, **Close** and **Reconnect**. Application title bars and Alt-drag support moving windows; Alt-right-drag resizes. Each host has its own private desktop, so selecting an app also selects the correct host and input route.
-- The persistent **Projects** sidebar lists project names and hosts in the saved manual or activity order, with the active container marked by an accent strip. Twenty projects fit at normal window heights; shorter windows use a scrollable list with a visible count and scrollbar. Switching keeps sessions alive. After releasing embedded input, `[` and `]` cycle saved projects. **+ New project** or `p` opens the new-project dialog.
+- The persistent **Projects** sidebar lists project names and hosts in the saved manual or activity order, with the active container marked by an accent strip. Its full row, including padding and the activity mark, selects the project; more specific actions and menus sit above that selection target. Twenty projects fit at normal window heights; shorter windows use a scrollable list with a visible count and scrollbar. Switching keeps sessions alive. After releasing embedded input, `[` and `]` cycle saved projects. **+ New project** or `p` opens the new-project dialog.
 
 Click a terminal or app to capture its input. **Ctrl+Esc** releases it. With input released: `1` or `2` selects Terminals, `3` selects Apps, `n` adds a terminal, `a` launches another app, `r` runs the project app, `t` cycles themes, and `q` closes the workspace. Project and space changes release embedded keys and pointer buttons.
 
@@ -48,9 +53,11 @@ The wave completes a back-and-forth cycle in about 5.3 seconds only while a proj
 
 ## Terminal response time
 
+Wheel scrolling over a terminal uses the persistent backend history, including text produced before attachment or refresh. A plan remains readable while new output arrives; scrolling back to the bottom returns to the live approval prompt. In a split, the wheel targets the pane under the pointer without moving keyboard focus.
+
 The default terminal path polls PTY updates independently of chrome and sends only changed styled rows. The presenting Kitty renders real character cells, using its own fonts and text engine. Terminal scrolling has no GPU readback, screenshot encoder, image upload or per-frame round-trip acknowledgment. App space retains its independent 60 Hz compositor and negotiated video transport.
 
-The older offscreen path is available only with `STAR_TERMINAL_RENDERER=kitty-pixels`. Historical pixel-capture and latency scripts target that diagnostic path; they do not validate the native terminal path. `scripts/test-native-terminal.py` checks the native path without a display or real agent.
+The older offscreen path is available only with `STAR_TERMINAL_RENDERER=kitty-pixels`. `scripts/test-native-terminal.py` checks the native path without a display or real agent. `scripts/bench-terminal-latency.py` compares direct Kitty, cells and graphical native terminal input locally and over private authenticated SSH; see [render performance](render-performance.md) for measurements and limits.
 
 ## Multiple agents in a project
 
@@ -96,7 +103,7 @@ For SSH graphical apps, install a compatible STAR/MUX executable on that host, p
 
 Closing or killing a frontend does not terminate the app compositor. **Reconnect** and reopening the workspace attach to the same app processes. A host reboot or explicit `--stop` ends them. Failed remote startup is reported in the workspace; the agent and shell spaces stay available.
 
-The app compositor targets 60 frames per second, up to 3840×2160. Local worker IPC uses private, immutable raw frame files with one outstanding acknowledgement, avoiding PNG encoding and decoding. Compatible SSH frontends use STAR/SCREEN’s low latency H.264 model: local decoding, bounded frame credits, and coalescing before encoding. Encoding and GPU readback still use CPU memory; sustained rates depend on resolution, host, client and network. Older workers and app hosts on a separate SSH connection retain the PNG compatibility path, capped at 2560×1440. An already-running app desktop needs a one-time relaunch to adopt the new worker; reconnecting a frontend preserves existing apps and does not upgrade that worker. App audio uses a separate bounded SSH pipe and STAR/KIT’s negotiated 48 kHz stereo PCM relay.
+The app compositor targets 60 frames per second, up to 1920×1080. App Space displays native pixels at 1:1 size, centered within larger workspaces; smaller simultaneous viewers crop the shared desktop rather than scaling it. Local worker IPC uses private, immutable raw frame files with one outstanding acknowledgement, avoiding PNG encoding and decoding. Compatible SSH frontends use STAR/SCREEN’s low latency H.264 model: local decoding, bounded frame credits, and coalescing before encoding. Encoding and GPU readback still use CPU memory; sustained rates depend on resolution, host, client and network. Older workers and app hosts on a separate SSH connection retain the PNG compatibility path, capped at 1920×1080. An already-running app desktop needs a one-time relaunch to adopt the new worker; reconnecting a frontend preserves existing apps and does not upgrade that worker. App audio uses a separate bounded SSH pipe and STAR/KIT’s negotiated 48 kHz stereo PCM relay.
 
 Embedded Kitty terminal frames use a separate native-resolution, lossless PNG patch transport in compatible KIT candidate builds. Encoding runs on a worker, unchanged pixels are omitted, and acknowledgement-scoped bases prevent stale patches. Text bypasses the JPEG thumbnail compatibility path. Older frontends retain the image compatibility transport. Runtime snapshots identify the negotiated terminal transport and app video delivery counters.
 
@@ -223,8 +230,10 @@ connection lifetime. A slow or muted viewer does not replace another subscriber.
 App input ownership transfers between viewers, releasing the preceding viewer's
 held input; stale release events cannot release the current owner's keys.
 
-A terminal has one underlying TUI screen. STAR-owned tmux sessions use the smallest
-attached terminal size to avoid resize oscillation. The app desktop likewise has
+A terminal has one underlying TUI screen. STAR-owned tmux sessions follow the most
+recently active attachment's size. An inactive smaller window therefore does not
+leave tmux's dotted unused-area filler around a larger cells frontend. Other
+viewers clip the shared screen to their own viewport until they become active. The app desktop likewise has
 shared geometry, negotiated from its viewers, while each frontend uses its own
 placement and coordinate transform.
 

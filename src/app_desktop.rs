@@ -474,20 +474,19 @@ impl Drop for Viewer {
     }
 }
 fn viewer_settings(clients: &BTreeMap<u64, Viewer>) -> Settings {
-    let remote = clients.values().any(|v| !v.shared);
     Settings {
         width: clients
             .values()
             .map(|v| v.settings.width)
             .max()
             .unwrap_or(1280)
-            .min(if remote { 2560 } else { 3840 }),
+            .min(crate::app_view::MAX_WIDTH),
         height: clients
             .values()
             .map(|v| v.settings.height)
             .max()
             .unwrap_or(720)
-            .min(if remote { 1440 } else { 2160 }),
+            .min(crate::app_view::MAX_HEIGHT),
         fps: 60,
     }
 }

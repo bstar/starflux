@@ -45,15 +45,11 @@ impl Layout {
         let x = margin;
         let w = width.saturating_sub(margin * 2).max(1);
         let y = 90.min(height.saturating_sub(100));
-        let shelf_h = if space == Space::Apps {
-            0
-        } else {
-            if height < 550 { 72 } else { 116 }
-        };
+        let shelf_h = 0;
         let bottom = height.saturating_sub(40 + shelf_h);
         let frame = R::new(x, y, w, bottom.saturating_sub(y).max(1));
         let tab_h = if space != Space::Apps { 34 } else { 0 };
-        let canvas = R::new(
+        let mut canvas = R::new(
             x + 1,
             y + 37 + tab_h,
             w.saturating_sub(2).max(1),
@@ -62,6 +58,9 @@ impl Layout {
                 .saturating_sub(38 + tab_h + if space == Space::Apps { 34 } else { 0 })
                 .max(1),
         );
+        if space == Space::Apps {
+            canvas = crate::app_view::canvas(canvas);
+        }
         Self {
             width,
             height,
@@ -74,6 +73,7 @@ impl Layout {
         }
     }
 }
+#[derive(serde::Serialize)]
 pub struct ProjectTab<'a> {
     pub id: &'a str,
     pub name: &'a str,
@@ -83,22 +83,25 @@ pub struct ProjectTab<'a> {
     pub running: usize,
     pub questions: usize,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize)]
 pub struct DesktopMap<'a> {
     pub size: [u32; 2],
     pub windows: &'a [crate::project::WindowLayout],
     pub selected: Option<usize>,
 }
+#[derive(serde::Serialize)]
 pub struct AppCard<'a> {
     pub action: String,
     pub name: &'a str,
     pub selected: bool,
 }
+#[derive(serde::Serialize)]
 pub struct ModalField<'a> {
     pub label: &'a str,
     pub text: &'a str,
     pub cursor: usize,
 }
+#[derive(serde::Serialize)]
 pub struct ApplicationPicker<'a> {
     pub query: &'a str,
     pub cursor: usize,
@@ -109,6 +112,7 @@ pub struct ApplicationPicker<'a> {
     pub count: usize,
     pub rows: Vec<(usize, &'a str, &'a str)>,
 }
+#[derive(serde::Serialize)]
 pub struct Modal<'a> {
     pub applications: Option<ApplicationPicker<'a>>,
     pub catalog_available: bool,
@@ -117,12 +121,13 @@ pub struct Modal<'a> {
     pub selected: usize,
     pub error: &'a str,
 }
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct MenuItem {
     pub label: String,
     pub hint: String,
     pub action: String,
 }
+#[derive(serde::Serialize)]
 pub struct ContextMenu {
     pub position: [u16; 2],
     pub title: String,
@@ -142,7 +147,9 @@ impl ContextMenu {
         )
     }
 }
+#[derive(serde::Serialize)]
 pub struct Model<'a> {
+    pub app_view: bool,
     pub project: &'a str,
     pub project_label: &'a str,
     pub project_offset: usize,
@@ -549,12 +556,11 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         let working = project.working > 0;
         if project.waiting > 0 {
             let r = R::new(w.saturating_sub(33), y + 5, 14, 14);
-            p.border(r, &t.warning);
             p.text(
-                R::new(r.x + 3, r.y, 10, 15),
+                R::new(r.x + 3, r.y.saturating_sub(2), 10, 19),
                 if project.questions > 0 { "?" } else { "!" },
                 &t.warning,
-                12,
+                16,
                 true,
             );
         } else if working {
@@ -666,7 +672,9 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             9,
             false,
         );
-        p.hit(r, format!("project:{}", project.id));
+        // The entire row is the selection target, including its padding and
+        // activity mark. More specific controls are layered after this target.
+        p.hit(R::new(0, y, w, 34), format!("project:{}", project.id));
     }
     if let Some((_, Some(gap))) = m.project_drag
         && gap >= start
@@ -691,7 +699,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     if l.height > 140 {
         p.button(
             R::new(14, l.height - 66, w.saturating_sub(28), 30),
-            "+ New project",
+            "+ Add project",
             "project:new",
             t,
             false,
@@ -726,6 +734,11 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
 }
 
 fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) {
+    let space = if !m.app_view && m.space == Space::Apps {
+        Space::Terminals
+    } else {
+        m.space
+    };
     let mut p = Pen::new(l.width, l.height, &t.bg);
     let mut fg = Pen::new(l.width, l.height, "transparent");
     p.grid(R::new(0, 84, l.width, l.height.saturating_sub(84)), &t.grid);
@@ -774,7 +787,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         t,
         false,
     );
-    if l.width > 600 {
+    if m.app_view && l.width > 600 {
         p.button(
             R::new(l.width.saturating_sub(theme_w + 144), 10, 122, 26),
             m.audio_label,
@@ -817,7 +830,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
     p.fill(l.frame, &t.bg);
     p.fill(R::new(l.frame.x, l.frame.y, l.frame.width, 37), &t.panel);
     p.border(l.frame, if m.hover { &t.warning } else { &t.accent });
-    let title = match m.space {
+    let title = match space {
         Space::Agent | Space::Terminals => {
             if m.agent_state == "stopped" {
                 "Terminal exited · right-click its tab to reopen a shell".into()
@@ -829,12 +842,14 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         }
         Space::Apps => format!("Virtual app desktop / {}", m.desktop_host),
     };
-    if m.space != Space::Apps {
+    if space != Space::Apps {
         p.text(
             R::new(
                 l.frame.x + 12,
                 l.frame.y + 9,
-                l.frame.width.saturating_sub(310),
+                l.frame
+                    .width
+                    .saturating_sub(if m.app_view { 430 } else { 310 }),
                 24,
             ),
             title,
@@ -843,7 +858,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
-    if m.space == Space::Apps {
+    if space == Space::Apps {
         let y = l.frame.y + 6;
         p.button(
             R::new(
@@ -877,7 +892,16 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             );
         }
     }
-    if m.space != Space::Apps {
+    if m.app_view && space != Space::Apps && l.frame.width >= 420 {
+        p.button(
+            R::new(l.width.saturating_sub(306), l.frame.y + 6, 106, 26),
+            "App Space",
+            "view:apps",
+            t,
+            false,
+        );
+    }
+    if space != Space::Apps {
         let x = l.width.saturating_sub(190);
         let y = l.frame.y + 6;
         p.button(
@@ -902,7 +926,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
-    if m.space != Space::Apps {
+    if space != Space::Apps {
         let tab_left = l.tabs.x;
         let mut x = tab_left + TAB_LEAD;
         let mut controls = if m.split { 275 } else { 175 };
@@ -1028,7 +1052,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
-    if m.space != Space::Apps && m.terminals.is_empty() {
+    if space != Space::Apps && m.terminals.is_empty() {
         p.centered_text(
             R::new(
                 l.canvas.x + 12,
@@ -1042,7 +1066,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
-    if m.space == Space::Apps && !m.connected {
+    if space == Space::Apps && !m.connected {
         p.text(
             R::new(
                 l.canvas.x + 24,
@@ -1057,7 +1081,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         );
         p.text(R::new(l.canvas.x+24,l.canvas.y+88,l.canvas.width.saturating_sub(48),60),"The app host needs S T A R / M U X and a usable graphics device.\nAgent and terminal sessions stay available.",&t.muted,12,false);
     }
-    if m.space != Space::Apps && l.shelf.height > 0 {
+    if m.app_view && space != Space::Apps && l.shelf.height > 0 {
         let card = R::new(l.shelf.x, l.shelf.y, 190.min(l.shelf.width), l.shelf.height);
         p.fill(card, &t.panel);
         p.border(card, if m.connected { &t.accent } else { &t.border });
@@ -1103,7 +1127,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         );
         p.hit(card, "view:apps");
     }
-    if m.space == Space::Apps {
+    if space == Space::Apps {
         p.fill(
             R::new(
                 14,
@@ -1172,8 +1196,6 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
     }
-    // A corner pixel keeps the otherwise transparent overlay nonempty in GPU mode.
-    fg.fill(R::new(0, 0, 1, 1), &t.border);
     if let Some(modal) = &m.modal {
         draw_modal(&mut fg, l, t, modal)
     }
@@ -1826,6 +1848,7 @@ mod tests {
         for (width, height) in [(320, 240), (800, 600), (1400, 900), (3424, 2150)] {
             for space in [Space::Agent, Space::Terminals, Space::Apps] {
                 let mut model = Model {
+                    app_view: false,
                     project: "sample",
                     project_label: "sample",
                     project_offset: 0,
@@ -1880,44 +1903,26 @@ mod tests {
                 };
                 let (chrome, foreground) =
                     surfaces(Layout::new(width, height, space), &theme, &model);
-                if space != Space::Apps {
-                    let shelf = Layout::new(width, height, space).shelf;
-                    assert_eq!(
-                        chrome
-                            .hits
-                            .iter()
-                            .filter(|h| h.action == "view:apps" && h.rect.y >= shelf.y)
-                            .count(),
-                        1,
-                        "Multiple app windows must share one desktop card"
-                    );
-                    assert!(
-                        !chrome.hits.iter().any(|h| h.action.starts_with("app:")),
-                        "Individual app selectors belong inside app space"
-                    );
-                }
-                assert_eq!(
-                    chrome
+                assert!(
+                    !chrome
                         .hits
                         .iter()
-                        .filter(|h| h.action == "launch-app")
-                        .count(),
-                    usize::from(space == Space::Apps),
-                    "The app launcher belongs exclusively to app space"
+                        .any(|h| crate::features::app_action(&h.action)),
+                    "Unsupported frontends must hide app controls, including restored app space"
                 );
-                if space == Space::Apps {
-                    assert!(
-                        chrome.hits.iter().any(|h| h.action == "view:terminals"),
-                        "App space must always provide a return to terminals"
-                    );
-                } else {
-                    assert!(
-                        !chrome.hits.iter().any(|h| h.action == "view:terminals"),
-                        "Terminal space uses the desktop card, without a view tab row"
-                    );
-                }
                 chrome.validate().unwrap();
                 foreground.validate().unwrap();
+                model.app_view = true;
+                let layout = Layout::new(width, height, space);
+                let (enabled, _) = surfaces(layout, &theme, &model);
+                if space == Space::Apps {
+                    assert!(enabled.hits.iter().any(|h| h.action == "launch-app"));
+                    assert!(enabled.hits.iter().any(|h| h.action == "view:terminals"));
+                } else if layout.frame.width >= 420 {
+                    assert!(enabled.hits.iter().any(|h| h.action == "view:apps"));
+                }
+                enabled.validate().unwrap();
+                model.app_view = false;
                 let menu = ContextMenu {
                     position: [width - 2, height - 2],
                     title: "Project".into(),
@@ -1958,6 +1963,7 @@ mod tests {
             .collect::<Vec<_>>();
         for (height, offset) in [(900, 0), (500, 5)] {
             let model = Model {
+                app_view: false,
                 project: &ids[18],
                 project_label: "Zendocon decompile",
                 project_offset: offset,
@@ -2018,8 +2024,9 @@ mod tests {
             assert_eq!(hits.len(), 20.min(project_rows(height)));
             assert_eq!(hits[0].action, format!("project:{}", ids[offset]));
             assert!(
-                hits.iter()
-                    .all(|h| h.rect.x + h.rect.width < l.sidebar.width)
+                hits.iter().all(|h| h.rect.x == 0
+                    && h.rect.width == l.sidebar.width
+                    && h.rect.height == 34)
             );
             assert!(
                 !chrome
@@ -2030,14 +2037,17 @@ mod tests {
         }
     }
     #[test]
-    fn shelf_leaves_one_full_width_terminal() {
+    fn hidden_app_shelf_returns_space_to_terminal() {
         let l = Layout::new(1400, 900, Space::Agent);
         assert_eq!(l.sidebar.width, 252);
         assert_eq!(l.canvas.width, 1118);
         assert!(l.canvas.x > l.sidebar.width);
-        assert!(l.shelf.height > 80);
-        assert!(l.canvas.y + l.canvas.height < l.shelf.y);
+        assert_eq!(l.shelf.height, 0);
+        assert_eq!(l.canvas.x, l.sidebar.width + 15);
+        assert_eq!(l.canvas.x + l.canvas.width + 15, l.width);
+        assert_eq!(l.canvas.y + l.canvas.height + 13, l.footer.y);
         let apps = Layout::new(1400, 900, Space::Apps);
-        assert!(apps.canvas.height > l.canvas.height);
+        assert!(apps.canvas.height >= l.canvas.height);
+        assert!(apps.canvas.y < l.canvas.y);
     }
 }

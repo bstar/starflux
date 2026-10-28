@@ -237,9 +237,9 @@ def receive(plan_path,socket_path,token):
             result=subprocess.run(['tmux','-L',p['server'],'-f','/dev/null','new-session','-d','-s',p['session'],'-x',str(state['cols']),'-y',str(state['rows']),'-c',p['cwd'],' '.join(__import__('shlex').quote(s) for s in argv)],env=env,capture_output=True)
             if result.returncode:raise RuntimeError('Could not stage tmux proxy: '+result.stderr.decode(errors='replace'))
             staged.append(p)
-            for option,value in [('status','off'),('mouse','off'),('history-limit','20000'),('remain-on-exit','on'),('set-clipboard','on'),('extended-keys','on'),('allow-passthrough','on')]:
+            for option,value in [('status','off'),('mouse','on'),('history-limit','20000'),('remain-on-exit','on'),('set-clipboard','on'),('extended-keys','on'),('allow-passthrough','on')]:
                 subprocess.run(['tmux','-L',p['server'],'set-option','-g',option,value],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            subprocess.run(['tmux','-L',p['server'],'set-option','-w','-t',p['target'],'window-size','smallest'],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            subprocess.run(['tmux','-L',p['server'],'set-option','-w','-t',p['target'],'window-size','latest'],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         deadline=time.monotonic()+15
         while any(t['peer'] is None for t in broker.terms.values()):
             if time.monotonic()>deadline:

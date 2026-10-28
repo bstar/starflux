@@ -5,6 +5,8 @@ Uses disposable Kitty windows/sessions. Screen capture adds sampling overhead;
 these are software-path comparisons, not hardware input-to-photon measurements.
 """
 import json
+import getpass
+import shlex
 import os
 from pathlib import Path
 import socket
@@ -19,7 +21,8 @@ app=repo/'scripts/run-local.sh'
 runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
 phase=os.environ.get('STARMUX_LATENCY_PHASE','before')
 out=repo/'target/terminal-latency-proof';out.mkdir(parents=True,exist_ok=True)
-name='latency-'+uuid.uuid4().hex[:8]
+base_name='latency-'+uuid.uuid4().hex[:8]
+names=[]
 original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
 
 def wait(fn,label,timeout=30,pause=.03):
@@ -38,7 +41,7 @@ def stats(values):
 
 with tempfile.TemporaryDirectory(prefix='starmux-latency-') as temp:
     temp=Path(temp);children=[];addresses=[];results={}
-    fixture=temp/'fixture.py'
+    fixture=temp/'codex'
     fixture.write_text('''import json,os,sys,time,tty,termios,subprocess
 old=termios.tcgetattr(0);tty.setraw(0)
 n=0
@@ -49,6 +52,7 @@ with open(sys.argv[1],'a') as log:
   patch='\\x1b[?25l\\x1b[48;2;%d;%d;%dm'%color
   patch+=''.join('\\x1b[%d;6H'%row+' '*12 for row in range(6,10))
   os.write(1,patch.encode())
+ os.write(1,b'\\x1b[2;1HWorking (0s esc to interrupt)')
  draw((24,40,56))
  log.write(json.dumps({'ready':True,'pid':os.getpid()})+'\\n');log.flush()
  try:
@@ -72,21 +76,46 @@ with open(sys.argv[1],'a') as log:
             sock.sendall(b'\x1bP@kitty-cmd'+json.dumps(packet).encode()+b'\x1b\\')
         return sent
     width=int(os.environ.get('STARMUX_LATENCY_WIDTH','1400'));height=int(os.environ.get('STARMUX_LATENCY_HEIGHT','1000'))
+    daemon=None
+    ssh_config=None
+    remote=None
+    shell=temp/'quiet-shell';shell.write_text('#!/bin/sh\nif [ "$1" = "-c" ]; then exec /bin/sh "$@"; fi\nexec cat\n');shell.chmod(0o700)
+    if any('ssh' in kind for kind in os.environ.get('STARMUX_LATENCY_KINDS','').split(',')):
+        for key in ['host','client']:
+            subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(temp/key)],check=True)
+        (temp/'authorized_keys').write_text((temp/'client.pub').read_text())
+        with socket.socket() as probe:probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
+        (temp/'known_hosts').write_text(f'[127.0.0.1]:{port} '+(temp/'host.pub').read_text())
+        (temp/'sshd_config').write_text(f'Port {port}\nListenAddress 127.0.0.1\nHostKey {temp}/host\nPidFile {temp}/sshd.pid\nAuthorizedKeysFile {temp}/authorized_keys\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers {getpass.getuser()}\nPerSourcePenalties no\nLogLevel ERROR\n')
+        daemon=subprocess.Popen(['/usr/bin/sshd','-D','-e','-f',str(temp/'sshd_config')],stderr=(out/(phase+'-sshd.log')).open('w'),env={k:v for k,v in os.environ.items() if k!='NOTIFY_SOCKET'})
+        ssh_config=temp/'ssh_config'
+        ssh_config.write_text(f'Host bench\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {temp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {temp}/known_hosts\n')
+        remote=temp/'remote-starmux'
+        remote.write_text('#!/bin/sh\nexec env '+shlex.join(['SHELL='+str(shell),'STARMUX_BENCH_ACTIVITY=1','PATH='+os.environ['PATH'],'XDG_RUNTIME_DIR='+os.environ['XDG_RUNTIME_DIR']])+' '+shlex.quote(str(app))+' "$@"\n')
+        remote.chmod(0o700)
+        def listening():
+            try:
+                with socket.create_connection(('127.0.0.1',port),timeout=.2):return True
+            except OSError:return False
+        wait(listening,'SSH test daemon did not start')
     try:
-        for kind in os.environ.get('STARMUX_LATENCY_KINDS','kitty,starmux').split(','):
+        for kind in os.environ.get('STARMUX_LATENCY_KINDS','kitty,cells,graphical').split(','):
+            name=base_name+'-'+kind;names.append(name)
+            frontend='v-'+name
+            state_path=runtime/(frontend+'.state.json')
             address='unix:'+str(temp/(kind+'.sock'));addresses.append(address)
             log=temp/(kind+'.jsonl')
             if kind=='kitty':command=['python3',str(fixture),str(log)]
             else:
                 cfg={'workspace':name,'collection':name,'theme':'kanagawa','host':None,'directory':str(temp),'agent':f'python3 {fixture} {log}','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
                 path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
-                command=[str(app),'--workspace',name]
-            child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-latency-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1',*command],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/(phase+'-'+kind+'.log')).open('w'));children.append(child)
+                command=[str(app),'--'+('cells' if kind.startswith('cells') else 'graphical'),'--workspace',name,'--frontend',frontend]
+                if 'ssh' in kind:command+=['--ssh','bench','--ssh-config',str(ssh_config),'--remote-executable',str(remote)]
+            child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-latency-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1',*command],env=dict(os.environ,STAR_GRAPHICS_RENDERER=os.environ.get('STARMUX_BENCH_RENDERER','cpu'),STAR_TERMINAL_RENDERER='native',STARMUX_BENCH_ACTIVITY='1',SHELL=str(shell)),stdout=subprocess.DEVNULL,stderr=(out/(phase+'-'+kind+'.log')).open('w'));children.append(child)
             wait(lambda:any(e.get('ready') for e in records(log)),'Fixture not ready')
             wait(lambda:rc(address,'ls'),'Remote control not ready')
-            if kind=='starmux':
-                state_path=runtime/(name+'.state.json')
-                wait(lambda:json.loads(state_path.read_text()).get('terminal_presentation',{}).get('frame'),'Terminal frame absent')
+            if kind!='kitty':
+                wait(lambda:json.loads(state_path.read_text()).get('terminal_presentation',{}).get('native_cells'),'Native terminal transport absent')
             def client():return next((c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['pid']==child.pid),None)
             c=wait(client,'Kitty window absent')
             subprocess.run(['hyprctl','eval',f'hl.dispatch(hl.dsp.window.float({{window="address:{c["address"]}"}}))'],stdout=subprocess.DEVNULL,check=True)
@@ -99,7 +128,7 @@ with open(sys.argv[1],'a') as log:
                 subprocess.run(['grim','-s','1','-g',f'{x},{y} {w}x{h}',str(image)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
                 iw,ih=map(int,subprocess.check_output(['magick','identify','-format','%w %h',str(image)]).split())
                 raw=subprocess.check_output(['magick',str(image),'-depth','8','rgb:-'])
-                at=raw.find(bytes([24,40,56])*8)
+                at=next((i for i in range(0,len(raw)-24,3) if all(abs(raw[i+c]-v)<=3 for c,v in enumerate((24,40,56))) and raw[i:i+24]==raw[i:i+3]*8),-1)
                 return (int((at//3%iw+3)*w/iw),int((at//3//iw+2)*h/ih)) if at>=0 else None
             mx,my=wait(marker,'Initial marker not visible')
             geometry=f'{x+mx},{y+my} 1x1'
@@ -109,7 +138,7 @@ with open(sys.argv[1],'a') as log:
                 return tuple(raw[-3:]),time.monotonic_ns(),(time.monotonic_ns()-began)/1e6
             def matches(actual,expected):return all(abs(a-b)<=3 for a,b in zip(actual,expected))
             wait(lambda:matches(pixel()[0],(24,40,56)),'Initial color not visible')
-            if kind=='starmux':
+            if kind!='kitty':
                 # Activate the live terminal canvas through its pixel mouse route.
                 v=json.loads(state_path.read_text())['viewport']
                 inject(address,f'\x1b[<0;{v["width"]//2};{v["height"]//2}M\x1b[<0;{v["width"]//2};{v["height"]//2}m')
@@ -127,20 +156,29 @@ with open(sys.argv[1],'a') as log:
                     assert time.monotonic()<deadline,(kind,n,actual,expected)
                 if n>3:
                     samples.append({'sent_ns':sent,'written_ns':event['written'],'visible_ns':visible,'input_ms':(event['received']-sent)/1e6,'output_ms':(visible-event['written'])/1e6,'total_ms':(visible-sent)/1e6,'capture_ms':capture})
-                time.sleep(.055)
+                time.sleep(float(os.environ.get('STARMUX_LATENCY_PAUSE','.18')))
             results[kind]={'samples':len(samples),'window':[w,h],**{key:stats([s[key] for s in samples]) for key in ['input_ms','output_ms','total_ms','capture_ms']},'raw':samples}
-            if kind=='starmux':results[kind]['presentation']=json.loads(state_path.read_text()).get('terminal_presentation')
+            if kind!='kitty':
+                metadata=json.loads(state_path.read_text())
+                results[kind]['presentation']=metadata.get('terminal_presentation')
+                results[kind]['viewport']=metadata['viewport']
+                results[kind]['graphical_render']=metadata.get('graphical_render')
             rc(address,'close-window');child.wait(timeout=15)
         result={'phase':phase,'measurement':'RPC key injection to fixture receipt and screen-capture-observed update; capture adds sampling delay','results':results}
         (out/(phase+'.json')).write_text(json.dumps(result,indent=2)+'\n')
         print(json.dumps({k:{key:value for key,value in v.items() if key!='raw'} for k,v in results.items()},indent=2))
     finally:
-        if (runtime/(name+'.log')).exists():
-            (out/(phase+'-controller.log')).write_bytes((runtime/(name+'.log')).read_bytes())
-        subprocess.run([str(app),'--workspace',name,'--stop'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+        for name in names:
+            frontend='v-'+name
+            if (runtime/(frontend+'.log')).exists():
+                (out/(phase+'-'+name+'-controller.log')).write_bytes((runtime/(frontend+'.log')).read_bytes())
+        for name in names:
+            subprocess.run([str(app),'--workspace',name,'--stop'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
         for address in addresses:
             try:rc(address,'close-window')
             except subprocess.SubprocessError:pass
         for child in children:
             if child.poll() is None:child.terminate();child.wait(timeout=10)
+        if daemon:
+            daemon.terminate();daemon.wait(timeout=5)
         if original:subprocess.run(['hyprctl','eval',f'hl.dispatch(hl.dsp.focus({{window="address:{original}"}}))'],stdout=subprocess.DEVNULL)

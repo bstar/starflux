@@ -2,17 +2,21 @@ mod activity;
 mod adoption;
 mod app_audio;
 mod app_desktop;
+mod app_view;
 mod appearance;
 mod applications;
 #[cfg(test)]
 mod blueprint;
 mod compositor;
+mod features;
 mod fixture;
 mod frontend;
 mod git;
+mod graphical;
 mod herdr;
 mod kitty_selection;
 mod navigation;
+mod presentation;
 mod project;
 mod project_state;
 mod project_sync;
@@ -41,9 +45,15 @@ use std::{
 #[derive(Parser)]
 #[command(
     version,
-    about = "S T A R / M U X — native terminals and persistent local/SSH project apps"
+    about = "S T A R / M U X — persistent local/SSH terminals in cells or graphics"
 )]
 struct Args {
+    /// Render text cells directly in the launching terminal
+    #[arg(long, conflicts_with = "graphical")]
+    cells: bool,
+    /// Require the graphical presentation
+    #[arg(long, conflicts_with = "cells")]
+    graphical: bool,
     /// Named workspace to create or reopen; unnamed launches are independent
     #[arg(long, default_value = "demo")]
     workspace: String,
@@ -107,7 +117,7 @@ struct Args {
     /// S T A R / M U X executable on the app host (default: starmux)
     #[arg(long)]
     desktop_helper: Option<String>,
-    /// Send a workspace action (e.g. view:apps, terminal:new, run-app)
+    /// Send a workspace action (e.g. terminal:new, terminal:split, git:details)
     #[arg(long)]
     action: Option<String>,
     /// Reload the UI from the latest build while keeping sessions and apps running
@@ -131,14 +141,9 @@ struct Args {
     png: Option<PathBuf>,
 }
 fn terminal_event(event: &starkit::crossterm::event::Event) -> Option<Input> {
-    match event {
-        starkit::crossterm::event::Event::Osc72(text) => Some(Input::Osc72 { text: text.clone() }),
-        starkit::crossterm::event::Event::FocusGained => Some(Input::Notice {
-            message: "focus-canvas:terminals".into(),
-        }),
-        _ => None,
-    }
+    presentation::event(event)
 }
+
 fn saved(name: &str) -> Result<Config> {
     let path = config_path(name)?;
     let path = if path.exists() {
@@ -271,6 +276,13 @@ fn run() -> Result<()> {
         };
     }
     let mut a = Args::parse();
+    let mode = if a.cells {
+        presentation::Mode::Cells
+    } else if a.graphical {
+        presentation::Mode::Graphical
+    } else {
+        presentation::Mode::Auto
+    };
     if a.migrate_herdr || a.plan_herdr_migration {
         return adoption::migrate(a.plan_herdr_migration);
     }
@@ -290,8 +302,9 @@ fn run() -> Result<()> {
             &a.remote_executable,
             a.ssh_config.as_deref(),
             &view.id,
+            mode,
         )?;
-        return client::run_with_events(
+        return presentation::run(
             Launch {
                 executable: a.remote_executable.clone(),
                 host: Some(host.clone()),
@@ -301,7 +314,7 @@ fn run() -> Result<()> {
                 attach_only: true,
                 play: None,
             },
-            terminal_event,
+            mode,
         );
     }
     if let Some(name) = a.app_launch.as_ref().or(a.app_list.as_ref()) {
@@ -581,12 +594,22 @@ fn run() -> Result<()> {
         starkit::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
         return Ok(());
     }
-    if let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()? {
+    if mode != presentation::Mode::Cells
+        && let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()?
+    {
         let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
-        refresh::register_local(&config.workspace, &view.id)?;
-        return bridge.relay(&view.ensure()?);
+        refresh::register_local(&config.workspace, &view.id, mode)?;
+        let socket = view.ensure()?;
+        if mode == presentation::Mode::Graphical {
+            frontend::action(&view, "presentation:require-graphical")?;
+        }
+        return bridge.relay_with_presentation(&socket, None, mode.cells());
     }
-    if unsafe { libc::isatty(0) } == 0 || std::env::var_os("KITTY_WINDOW_ID").is_none() {
+    if unsafe { libc::isatty(0) } == 0 {
+        ensure!(
+            mode != presentation::Mode::Cells,
+            "Cells mode requires an interactive terminal"
+        );
         let mut c = Command::new(std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "kitty".into()));
         c.args([
             "--title",
@@ -606,8 +629,8 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
-    refresh::register_local(&config.workspace, &view.id)?;
-    client::run_with_events(
+    refresh::register_local(&config.workspace, &view.id, mode)?;
+    presentation::run(
         Launch {
             executable: std::env::current_exe()?.to_string_lossy().into_owned(),
             host: None,
@@ -617,7 +640,7 @@ fn run() -> Result<()> {
             attach_only: false,
             play: None,
         },
-        terminal_event,
+        mode,
     )
 }
 

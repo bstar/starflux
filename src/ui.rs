@@ -1,3 +1,5 @@
+#[path = "cells.rs"]
+mod cells;
 use crate::{
     app_desktop::{Client as AppClient, Request as AppRequest},
     compositor::{Desktop, DesktopCommand, DesktopEvent, Input as DesktopInput, WindowInfo},
@@ -53,6 +55,7 @@ struct AudioRoute {
     key: String,
     epoch: u64,
     source: crate::app_audio::Source,
+    playback: crate::app_audio::Playback,
     sent: u64,
     credits: u64,
 }
@@ -65,6 +68,7 @@ struct AppHost {
 }
 #[derive(Clone)]
 enum Prompt {
+    Deliver,
     Launch,
     Project,
     RunCommand,
@@ -109,6 +113,9 @@ struct ProjectDrag {
     scrolled_at: Instant,
 }
 pub struct Workspace {
+    cells: bool,
+    require_graphical: bool,
+    cell_ui: cells::Ui,
     controller_id: String,
     config: Config,
     state: ProjectState,
@@ -127,6 +134,7 @@ pub struct Workspace {
     appearance: crate::appearance::Appearance,
     typography: Option<crate::terminal::FontMetrics>,
     chrome_hits: Vec<HitRegion>,
+    graphical_cache: crate::graphical::Cache,
     desktop: Option<Desktop>,
     terminals: BTreeMap<(String, usize), crate::terminal::Terminal>,
     frames: LiveFrames,
@@ -139,6 +147,7 @@ pub struct Workspace {
     launched: BTreeMap<(String, usize), Instant>,
     windows: Vec<WindowInfo>,
     app_hosts: BTreeMap<String, AppHost>,
+    app_view_available: bool,
     video_capable: bool,
     video_high_quality: bool,
     video: crate::remote_video::Video,
@@ -146,6 +155,7 @@ pub struct Workspace {
     video_source: Option<String>,
     terminal_transport: &'static str,
     audio_capable: bool,
+    audio_pcm_v2: bool,
     audio_route: Option<AudioRoute>,
     audio_epoch: u64,
     audio_failed: Option<String>,
@@ -154,13 +164,9 @@ pub struct Workspace {
     viewport: Viewport,
     settings: Settings,
     terminal_fps: u32,
-    #[cfg(feature = "lossless-canvas")]
     native_terminal_cells: bool,
-    #[cfg(feature = "lossless-canvas")]
     native_layout_key: String,
-    #[cfg(feature = "lossless-canvas")]
     native_font_points: Option<u32>,
-    #[cfg(feature = "lossless-canvas")]
     initial_native_font_points: Option<u32>,
     app_pointer_modifiers: crate::compositor::PointerModifiers,
     pointer_hiding: bool,
@@ -218,8 +224,7 @@ fn app_key(config: &Config) -> String {
 fn app_id(project: &str, pane: usize) -> String {
     format!("starmux-{project}-p{pane}")
 }
-#[cfg(feature = "lossless-canvas")]
-fn native_terminal_rect(
+pub(crate) fn native_terminal_rect(
     pane: PixelRect,
     canvas: PixelRect,
     viewport: Viewport,
@@ -230,16 +235,12 @@ fn native_terminal_rect(
     let rows = u32::from(viewport.rows.max(1));
     let px = u32::from(canvas.x) + u32::from(pane.x);
     let py = u32::from(canvas.y) + u32::from(pane.y);
-    let x = ((px + 12) * cols)
-        .div_ceil(width)
-        .min(cols.saturating_sub(2));
-    let y = ((py + 12) * rows)
-        .div_ceil(height)
-        .min(rows.saturating_sub(1));
-    let right = ((px + u32::from(pane.width).saturating_sub(12)) * cols / width)
+    let x = (px * cols).div_ceil(width).min(cols.saturating_sub(2));
+    let y = (py * rows).div_ceil(height).min(rows.saturating_sub(1));
+    let right = ((px + u32::from(pane.width)) * cols / width)
         .max(x + 2)
         .min(cols);
-    let bottom = ((py + u32::from(pane.height).saturating_sub(12)) * rows / height)
+    let bottom = ((py + u32::from(pane.height)) * rows / height)
         .max(y + 1)
         .min(rows);
     (
@@ -286,6 +287,8 @@ impl Workspace {
         {
             navigation = crate::navigation::Navigation::load(&workspace_id)?;
         }
+        navigation.open_project(&config.workspace);
+        navigation.filter_open(&mut projects);
         navigation.sort(&mut projects);
         let (controller_tx, rx) = bounded(128);
         let terminal_fps = if std::env::var("STARMUX_TERMINAL_PACING").as_deref() == Ok("legacy") {
@@ -298,8 +301,12 @@ impl Workspace {
             height: 650,
             fps: terminal_fps,
         };
-        let desktop = (!crate::terminal::direct()).then(|| Desktop::start(settings.clone()));
+        // Presentation is negotiated before starting any graphical service.
+        let desktop = None;
         let mut s = Self {
+            cells: false,
+            require_graphical: false,
+            cell_ui: cells::Ui::default(),
             controller_id,
             config,
             state,
@@ -318,6 +325,7 @@ impl Workspace {
             appearance,
             typography: None,
             chrome_hits: vec![],
+            graphical_cache: Default::default(),
             desktop,
             terminals: BTreeMap::new(),
             frames: LiveFrames::default(),
@@ -330,6 +338,7 @@ impl Workspace {
             launched: BTreeMap::new(),
             windows: vec![],
             app_hosts: BTreeMap::new(),
+            app_view_available: false,
             video_capable: false,
             video_high_quality: false,
             video: Default::default(),
@@ -337,6 +346,7 @@ impl Workspace {
             video_source: None,
             terminal_transport: "negotiating",
             audio_capable: false,
+            audio_pcm_v2: false,
             audio_route: None,
             audio_epoch: 0,
             audio_failed: None,
@@ -345,13 +355,9 @@ impl Workspace {
             viewport: Viewport::default(),
             settings,
             terminal_fps,
-            #[cfg(feature = "lossless-canvas")]
             native_terminal_cells: false,
-            #[cfg(feature = "lossless-canvas")]
             native_layout_key: String::new(),
-            #[cfg(feature = "lossless-canvas")]
             native_font_points: None,
-            #[cfg(feature = "lossless-canvas")]
             initial_native_font_points: None,
             app_pointer_modifiers: Default::default(),
             pointer_hiding: false,
@@ -395,16 +401,20 @@ impl Workspace {
             git_scroll: 0,
         };
         s.ensure_sessions();
-        s.reconnect_saved_apps();
-        if let Some(view) = crate::refresh::take_view(&s.controller_id)
-            && view.project == s.config.workspace
-            && let Some(key) = view.app
-            && let Some(host) = s.app_hosts.get_mut(&key)
-        {
-            host.selected = view.window;
-            s.active_app = Some(key);
-        }
         Ok(s)
+    }
+    fn require_graphical(&mut self) {
+        self.require_graphical = true;
+        self.check_presentation();
+    }
+    fn check_presentation(&mut self) {
+        if self.require_graphical && self.cells {
+            self.effects.push(ServerMessage::Error {
+                message: "Graphical presentation is unavailable; use --cells in this terminal"
+                    .into(),
+            });
+            self.quit = true;
+        }
     }
     fn note(&mut self, text: String) {
         self.status = text.clone();
@@ -551,6 +561,7 @@ impl Workspace {
             });
         }
         if !self.reduced_motion
+            && self.state.space != Space::Apps
             && self.last_typing.elapsed() >= Duration::from_millis(150)
             && self.wave_at.elapsed() >= Duration::from_millis(110)
             && self.projects.iter().any(|p| {
@@ -673,6 +684,7 @@ impl Workspace {
         true
     }
     fn sort_projects(&mut self, reset_scroll: bool) {
+        self.navigation.filter_open(&mut self.projects);
         if self.project_drag.is_some() {
             return;
         }
@@ -956,6 +968,9 @@ impl Workspace {
         }
     }
     fn reconnect_saved_apps(&mut self) {
+        if !self.app_view_available || self.state.space != Space::Apps {
+            return;
+        }
         for target in self.state.app_targets.clone() {
             let mut config = self.config.clone();
             config.host = target.host;
@@ -965,15 +980,17 @@ impl Workspace {
         }
     }
     fn close_audio(&mut self) {
-        if self.audio_route.take().is_some() {
+        if let Some(route) = self.audio_route.take() {
             self.effects.push(ServerMessage::Media {
-                message: starkit::terminal_graphics::media::ToClient::AudioClose {
-                    session: AUDIO_SESSION,
-                },
+                message: route.playback.close(AUDIO_SESSION, route.epoch),
             });
         }
     }
     fn sync_audio(&mut self) {
+        if !self.app_view_available {
+            self.close_audio();
+            return;
+        }
         let desired = self
             .active_app
             .as_ref()
@@ -1011,16 +1028,19 @@ impl Workspace {
             match crate::app_audio::Source::start(&config, pid) {
                 Ok(source) => {
                     self.audio_epoch = self.audio_epoch.wrapping_add(1);
+                    let playback = if self.audio_pcm_v2 {
+                        crate::app_audio::Playback::Pcm
+                    } else {
+                        crate::app_audio::Playback::Legacy
+                    };
                     self.effects.push(ServerMessage::Media {
-                        message: starkit::terminal_graphics::media::ToClient::AudioOpen {
-                            session: AUDIO_SESSION,
-                            epoch: self.audio_epoch,
-                        },
+                        message: playback.open(AUDIO_SESSION, self.audio_epoch),
                     });
                     self.audio_route = Some(AudioRoute {
                         key,
                         epoch: self.audio_epoch,
                         source,
+                        playback,
                         sent: 0,
                         credits: 0,
                     });
@@ -1042,14 +1062,18 @@ impl Workspace {
         }
     }
     fn connect_app(&mut self, mut config: Config) -> Result<String> {
+        ensure!(
+            self.app_view_available,
+            "App view is unavailable in this presentation"
+        );
         config.herdr = None;
         let key = app_key(&config);
         if !self.app_hosts.contains_key(&key) {
             let client = AppClient::connect(&config)?;
             client.send(AppRequest::Resize {
                 settings: Settings {
-                    width: self.settings.width.clamp(128, 3840),
-                    height: self.settings.height.clamp(64, 2160),
+                    width: self.settings.width.clamp(2, crate::app_view::MAX_WIDTH),
+                    height: self.settings.height.clamp(2, crate::app_view::MAX_HEIGHT),
                     fps: 60,
                 },
             })?;
@@ -1071,6 +1095,13 @@ impl Workspace {
         self.launch_inner(config, pane, false);
     }
     fn launch_inner(&mut self, config: Config, pane: usize, ensure_shell: bool) {
+        if self.desktop.is_none()
+            && self.native_terminal_cells
+            && (config.workspace != self.config.workspace
+                || !self.visible_panes().iter().any(|(id, _)| *id == pane))
+        {
+            return;
+        }
         let attach = if ensure_shell {
             config.attach_argv_with_shell(pane, true)
         } else {
@@ -1156,6 +1187,9 @@ impl Workspace {
         self.layout();
     }
     fn visible_panes(&self) -> Vec<(usize, PixelRect)> {
+        if self.cells {
+            return self.cell_visible_panes();
+        }
         let ids = self
             .state
             .visible()
@@ -1226,6 +1260,9 @@ impl Workspace {
         }
     }
     fn set_space(&mut self, space: Space) {
+        if space == Space::Apps && !self.app_view_available {
+            return;
+        }
         self.release();
         self.state.space = if space == Space::Agent {
             Space::Terminals
@@ -1235,9 +1272,69 @@ impl Workspace {
         if self.config.herdr.is_some() {
             self.ensure_sessions();
         }
+        if self.state.space == Space::Apps {
+            self.reconnect_saved_apps();
+        }
         self.hover = None;
         self.layout();
         self.save();
+    }
+    fn reopen_project(&mut self, config: Config) -> Result<()> {
+        ensure!(
+            config.collection == self.config.collection,
+            "Project belongs to a different collection"
+        );
+        let id = config.workspace.clone();
+        self.navigation.open_project(&id);
+        if !self.projects.iter().any(|p| p.workspace == id) {
+            self.projects.push(config);
+        }
+        self.switch_project(&id)?;
+        self.sort_projects(false);
+        self.navigation.save(&self.controller_id)?;
+        self.note("Project opened / existing sessions retained".into());
+        Ok(())
+    }
+    fn close_project(&mut self, id: &str) -> Result<()> {
+        ensure!(
+            self.projects.iter().any(|p| p.workspace == id),
+            "Project is not open in this window"
+        );
+        if self.config.workspace == id {
+            if let Some(next) = self
+                .projects
+                .iter()
+                .find(|p| p.workspace != id)
+                .map(|p| p.workspace.clone())
+            {
+                self.switch_project(&next)?;
+            } else {
+                self.navigation.close_project(id);
+                self.navigation.save(&self.controller_id)?;
+                self.quit = true;
+                return Ok(());
+            }
+        }
+        self.navigation.close_project(id);
+        self.projects.retain(|p| p.workspace != id);
+        self.terminals.retain(|(project, _), _| project != id);
+        self.session_monitors.retain(|(project, _), stopped| {
+            if project == id {
+                stopped.store(true, Ordering::Release);
+                false
+            } else {
+                true
+            }
+        });
+        self.registered.retain(|(project, _)| project != id);
+        self.launched.retain(|(project, _), _| project != id);
+        self.session_epochs.retain(|(project, _), _| project != id);
+        self.health.retain(|(project, _), _| project != id);
+        self.sort_projects(false);
+        self.navigation.save(&self.controller_id)?;
+        self.save();
+        self.note("Project closed in this window / terminals and agents keep running".into());
+        Ok(())
     }
     fn switch_project(&mut self, id: &str) -> Result<()> {
         if id == self.config.workspace {
@@ -1265,6 +1362,9 @@ impl Workspace {
         self.active_app = None;
         self.config = config;
         self.state = state;
+        if !self.app_view_available && self.state.space == Space::Apps {
+            self.state.space = Space::Terminals;
+        }
         if let Some(index) = self
             .projects
             .iter()
@@ -1345,6 +1445,9 @@ impl Workspace {
     fn drop_pane(&self, x: i32, y: i32) -> Option<usize> {
         if x < 0 || y < 0 || self.modal.is_some() || self.context_menu.is_some() || self.git_open {
             return None;
+        }
+        if self.cells {
+            return self.cell_pane_at(x as u16, y as u16);
         }
         let v = self.viewport;
         let point = [
@@ -1946,7 +2049,24 @@ impl Workspace {
                 self.state.select_terminal(*pane);
             }
         }
-        let pane = self.config.canonical_pane(self.state.selected());
+        let pane = if let EmbeddedKind::Pointer {
+            action, position, ..
+        } = &kind
+            && action.starts_with("scroll_")
+        {
+            self.visible_panes()
+                .into_iter()
+                .find(|(_, rect)| {
+                    position[0] >= f64::from(rect.x)
+                        && position[0] < f64::from(rect.x + rect.width)
+                        && position[1] >= f64::from(rect.y)
+                        && position[1] < f64::from(rect.y + rect.height)
+                })
+                .map(|(pane, _)| pane)
+                .unwrap_or_else(|| self.config.canonical_pane(self.state.selected()))
+        } else {
+            self.config.canonical_pane(self.state.selected())
+        };
         let rect = self
             .visible_panes()
             .into_iter()
@@ -2009,6 +2129,7 @@ impl Workspace {
                 .to_string()
         });
         let fields = match &kind {
+            Prompt::Deliver => vec![field("File path on this workspace host", String::new())],
             Prompt::RenameProject(id) => vec![field(
                 "Project display name",
                 self.projects
@@ -2037,14 +2158,9 @@ impl Workspace {
                 field("Project directory", directory),
             ],
             Prompt::Project => vec![
-                field(
-                    "Project name / letters, numbers, dash or underscore",
-                    String::new(),
-                ),
+                field("Project name (new or saved)", String::new()),
                 field("Project host / local or an SSH alias", "local".into()),
                 field("Project directory on that host", directory),
-                field("Run app command", String::new()),
-                field("S T A R / M U X helper on SSH host", "starmux".into()),
             ],
         };
         let catalog = matches!(kind, Prompt::Launch).then(|| Catalog {
@@ -2142,6 +2258,10 @@ impl Workspace {
         }
     }
     fn launch_app(&mut self, config: Config, command: String, directory: String) -> Result<()> {
+        ensure!(
+            self.app_view_available,
+            "App view is unavailable in this presentation"
+        );
         ensure!(!command.trim().is_empty(), "Enter an application command");
         let args = shell_words::split(&command)?;
         ensure!(!args.is_empty(), "Enter an application command");
@@ -2177,6 +2297,14 @@ impl Workspace {
             .collect();
         let result = (|| -> Result<()> {
             match &modal.kind {
+                Prompt::Deliver => {
+                    let path = PathBuf::from(&values[0]);
+                    ensure!(
+                        path.is_file(),
+                        "Enter an existing regular file on the workspace host"
+                    );
+                    self.deliver(self.state.selected(), vec![path]);
+                }
                 Prompt::RenameProject(id) => {
                     project_state::validate_label(&values[0])?;
                     let mut config = self
@@ -2261,6 +2389,14 @@ impl Workspace {
                     self.launch_app(config, values[0].clone(), values[1].clone())?
                 }
                 Prompt::Project => {
+                    let config_path = crate::runtime::config_path(&values[0])?;
+                    if config_path.exists()
+                        || project_state::data_root()?
+                            .join(format!("{}.json", values[0]))
+                            .exists()
+                    {
+                        return self.reopen_project(crate::saved(&values[0])?);
+                    }
                     let config = Config {
                         ssh_config: self.config.ssh_config.clone(),
                         workspace: values[0].clone(),
@@ -2278,7 +2414,7 @@ impl Workspace {
                         agent: None,
                         executable: std::env::current_exe()?.display().to_string(),
                         project_host: true,
-                        desktop_helper: values[4].clone(),
+                        desktop_helper: "starmux".into(),
                     };
                     config.validate()?;
                     ensure!(!values[2].is_empty(), "Project directory is required");
@@ -2290,7 +2426,7 @@ impl Workspace {
                         "A project with that name already exists"
                     );
                     let state = ProjectState {
-                        app_command: values[3].clone(),
+                        app_command: String::new(),
                         ..ProjectState::default()
                     };
                     state.save(&config)?;
@@ -2299,6 +2435,7 @@ impl Workspace {
                         &serde_json::to_vec_pretty(&config)?,
                     )?;
                     let id = config.workspace.clone();
+                    self.navigation.open_project(&id);
                     self.navigation.touch(&id, crate::navigation::now());
                     self.projects.push(config);
                     self.switch_project(&id)?;
@@ -2518,8 +2655,8 @@ impl Workspace {
                         "",
                         format!("project-space:terminals:{id}"),
                     ),
-                    item("Open app space", "", format!("project-space:apps:{id}")),
-                    item("New project…", "+", "project:new".into()),
+                    item("Add project…", "+", "project:new".into()),
+                    item("Close project", "", format!("close-project:{id}")),
                 ],
             )
         } else if let Some(id) = target
@@ -2577,6 +2714,15 @@ impl Workspace {
             return;
         };
         self.release();
+        let mut items = items;
+        if self.app_view_available
+            && let Some(id) = target.and_then(|t| t.strip_prefix("project:"))
+        {
+            items.insert(
+                2,
+                item("Open App Space", "", format!("project-space:apps:{id}")),
+            );
+        }
         self.context_menu = Some(ContextMenu {
             position: point,
             title,
@@ -2678,6 +2824,14 @@ impl Workspace {
         Ok(())
     }
     fn action_inner(&mut self, action: &str) -> Result<()> {
+        if action == "presentation:require-graphical" {
+            self.require_graphical();
+            return Ok(());
+        }
+        ensure!(
+            self.app_view_available || !crate::features::app_action(action),
+            "App view is unavailable in this presentation"
+        );
         if action == "ui:refresh" {
             return self.refresh_ui();
         }
@@ -2761,6 +2915,9 @@ impl Workspace {
         }
         if self.modal.is_some() {
             return Ok(());
+        }
+        if let Some(id) = action.strip_prefix("close-project:") {
+            return self.close_project(id);
         }
         if let Some(id) = action.strip_prefix("rename-project:") {
             self.open_prompt(Prompt::RenameProject(id.into()));
@@ -2885,8 +3042,13 @@ impl Workspace {
                 );
             }
             "project:new" => self.open_prompt(Prompt::Project),
+            "project:close" => self.close_project(&self.config.workspace.clone())?,
+            "file:deliver" => self.open_prompt(Prompt::Deliver),
             "terminal:font:increase" | "terminal:font:decrease" | "terminal:font:reset" => {
-                #[cfg(feature = "lossless-canvas")]
+                ensure!(
+                    !self.cells,
+                    "Cells mode inherits the parent terminal font; change it in your terminal"
+                );
                 if self.desktop.is_none() {
                     let current = self.native_font_points.context("Use Kitty's font-size shortcuts, or connect through the updated Kitty bridge for header controls")?;
                     let requested = match action {
@@ -3115,6 +3277,9 @@ impl Workspace {
         Ok(())
     }
     fn draw(&mut self, v: Viewport) -> Scene {
+        if self.cells {
+            return self.draw_cells(v);
+        }
         self.viewport = v;
         let layout = crate::shelf::Layout::new(v.width as u16, v.height as u16, self.state.space);
         let content = layout.canvas;
@@ -3122,12 +3287,12 @@ impl Workspace {
         let width = if self.state.space != Space::Apps {
             u32::from(content.width)
         } else {
-            u32::from(content.width).clamp(128, 3840) / 2 * 2
+            u32::from(content.width).max(2)
         };
         let height = if self.state.space != Space::Apps {
             u32::from(content.height)
         } else {
-            u32::from(content.height).clamp(64, 2160) / 2 * 2
+            u32::from(content.height).max(2)
         };
         let fps = if self.state.space == Space::Apps {
             60
@@ -3266,10 +3431,11 @@ impl Workspace {
                 }
             }),
             title: match &m.kind {
+                Prompt::Deliver => "Deliver a file",
                 Prompt::RenameProject(_) => "Rename project",
                 Prompt::RenameTab(_) => "Rename terminal tab",
                 Prompt::RenameAgent(_) => "Rename agent",
-                Prompt::Project => "New project container",
+                Prompt::Project => "Add / reopen project",
                 Prompt::Launch => "Launch app in this project",
                 Prompt::RunCommand => "Set the project app command",
             },
@@ -3290,126 +3456,139 @@ impl Workspace {
             .as_ref()
             .and_then(|key| self.app_hosts.get(key))
             .is_some_and(|h| h.client.connected.load(Ordering::Acquire));
-        let (chrome, foreground) = crate::shelf::surfaces(
-            layout,
-            &self.appearance,
-            &crate::shelf::Model {
-                project: &self.config.workspace,
-                project_label: self
-                    .config
-                    .label
-                    .as_deref()
-                    .unwrap_or(&self.config.workspace),
-                project_offset: self.project_offset,
-                project_total: self.projects.len(),
-                sort_hover: self.sort_hover,
-                sort_mode_hover: self.sort_mode_hover,
-                project_manual: !self.navigation.recent,
-                project_drag: self
-                    .project_drag
-                    .as_ref()
-                    .filter(|d| d.moved)
-                    .map(|d| (d.id.as_str(), d.gap)),
-                project_sort_high: self.navigation.high_first,
-                wave_phase: self.wave_phase,
-                reduced_motion: self.reduced_motion,
-                directory: &directory,
-                host,
-                theme: &self.appearance.name,
-                audio_label: if !self.audio_capable {
-                    "Local audio missing"
-                } else if self.navigation.audio_muted {
-                    "Muted"
-                } else if self.audio_failed.is_some() {
-                    "Audio unavailable"
-                } else {
-                    "Audio on"
-                },
-                space: self.state.space,
-                projects,
-                terminals: self
-                    .state
-                    .terminal_ids()
-                    .iter()
-                    .map(|id| {
-                        let label = self.terminal_label(*id);
-                        let profile = self
-                            .health
-                            .get(&(
-                                self.config.workspace.clone(),
-                                self.config.canonical_pane(*id),
-                            ))
-                            .and_then(|v| v["agent"].as_str());
-                        (
-                            *id,
-                            profile.map_or(label.clone(), |p| format!("{label} · {p}")),
-                        )
-                    })
-                    .collect(),
-                terminal_status: self
-                    .state
-                    .terminal_ids()
-                    .into_iter()
-                    .filter_map(|id| {
-                        self.health
-                            .get(&(
-                                self.config.workspace.clone(),
-                                self.config.canonical_pane(id),
-                            ))
-                            .filter(|v| v["agent"].as_str().is_some() || v["alive"] == false)
-                            .map(|v| {
-                                (
-                                    id,
-                                    if v["alive"] == false {
-                                        "stopped"
-                                    } else {
-                                        v["state"].as_str().unwrap_or("idle")
-                                    }
-                                    .to_owned(),
-                                )
-                            })
-                    })
-                    .collect(),
-                terminal: self.state.terminal,
-                terminal_font_size: self.font_label(),
-                split: self.state.split,
-                agent_name,
-                agent_state,
-                status: &self.status,
-                apps,
-                app_desktop: self
-                    .active_app
-                    .as_ref()
-                    .and_then(|key| self.app_hosts.get(key))
-                    .map(|h| crate::shelf::DesktopMap {
-                        size: h
-                            .client
-                            .latest
-                            .lock()
-                            .unwrap()
-                            .as_ref()
-                            .map_or([self.settings.width, self.settings.height], |f| {
-                                [f.width, f.height]
-                            }),
-                        windows: &h.layout,
-                        selected: h.windows.iter().position(|w| Some(w.id) == h.selected),
-                    }),
-                connected,
-                desktop_host: self
-                    .active_app
-                    .as_ref()
-                    .and_then(|key| self.app_hosts.get(key))
-                    .and_then(|h| h.config.host.as_deref())
-                    .unwrap_or("local"),
-                modal,
-                context_menu: self.context_menu.as_ref(),
-                git: self.git_status(),
-                git_open: self.git_open,
-                git_scroll: self.git_scroll,
-                transferring: self.transfer.is_some(),
-                hover: self.hover.is_some(),
+        let model = crate::shelf::Model {
+            app_view: self.app_view_available,
+            project: &self.config.workspace,
+            project_label: self
+                .config
+                .label
+                .as_deref()
+                .unwrap_or(&self.config.workspace),
+            project_offset: self.project_offset,
+            project_total: self.projects.len(),
+            sort_hover: self.sort_hover,
+            sort_mode_hover: self.sort_mode_hover,
+            project_manual: !self.navigation.recent,
+            project_drag: self
+                .project_drag
+                .as_ref()
+                .filter(|d| d.moved)
+                .map(|d| (d.id.as_str(), d.gap)),
+            project_sort_high: self.navigation.high_first,
+            wave_phase: self.wave_phase,
+            // Streaming apps should not compete with decorative sidebar frames
+            // for frontend rasterization/presentation on the same connection.
+            reduced_motion: self.reduced_motion || self.state.space == Space::Apps,
+            directory: &directory,
+            host,
+            theme: &self.appearance.name,
+            audio_label: if !self.audio_capable {
+                "Local audio missing"
+            } else if self.navigation.audio_muted {
+                "Muted"
+            } else if self.audio_failed.is_some() {
+                "Audio unavailable"
+            } else {
+                "Audio on"
             },
-        );
+            space: self.state.space,
+            projects,
+            terminals: self
+                .state
+                .terminal_ids()
+                .iter()
+                .map(|id| {
+                    let label = self.terminal_label(*id);
+                    let profile = self
+                        .health
+                        .get(&(
+                            self.config.workspace.clone(),
+                            self.config.canonical_pane(*id),
+                        ))
+                        .and_then(|v| v["agent"].as_str());
+                    (
+                        *id,
+                        profile.map_or(label.clone(), |p| format!("{label} · {p}")),
+                    )
+                })
+                .collect(),
+            terminal_status: self
+                .state
+                .terminal_ids()
+                .into_iter()
+                .filter_map(|id| {
+                    self.health
+                        .get(&(
+                            self.config.workspace.clone(),
+                            self.config.canonical_pane(id),
+                        ))
+                        .filter(|v| v["agent"].as_str().is_some() || v["alive"] == false)
+                        .map(|v| {
+                            (
+                                id,
+                                if v["alive"] == false {
+                                    "stopped"
+                                } else {
+                                    v["state"].as_str().unwrap_or("idle")
+                                }
+                                .to_owned(),
+                            )
+                        })
+                })
+                .collect(),
+            terminal: self.state.terminal,
+            terminal_font_size: self.font_label(),
+            split: self.state.split,
+            agent_name,
+            agent_state,
+            status: &self.status,
+            apps,
+            app_desktop: self
+                .active_app
+                .as_ref()
+                .and_then(|key| self.app_hosts.get(key))
+                .map(|h| crate::shelf::DesktopMap {
+                    size: h
+                        .client
+                        .latest
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map_or([self.settings.width, self.settings.height], |f| {
+                            [f.width, f.height]
+                        }),
+                    windows: &h.layout,
+                    selected: h.windows.iter().position(|w| Some(w.id) == h.selected),
+                }),
+            connected,
+            desktop_host: self
+                .active_app
+                .as_ref()
+                .and_then(|key| self.app_hosts.get(key))
+                .and_then(|h| h.config.host.as_deref())
+                .unwrap_or("local"),
+            modal,
+            context_menu: self.context_menu.as_ref(),
+            git: self.git_status(),
+            git_open: self.git_open,
+            git_scroll: self.git_scroll,
+            transferring: self.transfer.is_some(),
+            hover: self.hover.is_some(),
+        };
+        let cache_key = ((direct && self.native_terminal_cells) || self.state.space == Space::Apps)
+            .then(|| {
+                serde_json::to_vec(&(v, &self.appearance, &model, self.visible_panes()))
+                    .expect("Serialize graphical presentation")
+            });
+        if let Some(scene) = cache_key
+            .as_ref()
+            .and_then(|key| self.graphical_cache.get(key))
+        {
+            return scene;
+        }
+        let (chrome, foreground) = crate::shelf::surfaces(layout, &self.appearance, &model);
+        drop(model);
+
         self.chrome_hits = chrome
             .hits
             .iter()
@@ -3424,16 +3603,32 @@ impl Workspace {
             0,
         );
         scene.background = self.appearance.bg.clone();
-        let full = Rect {
-            x: 0,
-            y: 0,
-            width: v.columns,
-            height: v.rows,
+        // All graphical text lives in surfaces. Empty-buffer spans otherwise
+        // repaint the default grid background beneath a cropped live canvas.
+        scene.spans.clear();
+        let terminal_rects = if direct && self.native_terminal_cells {
+            self.visible_panes()
+                .iter()
+                .map(|(_, pane)| native_terminal_rect(*pane, content, v).0)
+                .collect::<Vec<_>>()
+        } else if self.state.space == Space::Apps && connected {
+            vec![
+                native_terminal_rect(
+                    PixelRect::new(0, 0, content.width, content.height),
+                    content,
+                    v,
+                )
+                .0,
+            ]
+        } else {
+            vec![]
         };
-        scene.components.push(Component::Surface {
-            rect: full,
-            surface: chrome,
-        });
+        scene.components.extend(crate::graphical::chrome(
+            chrome,
+            v,
+            &terminal_rects,
+            layout.sidebar.width,
+        ));
         let source_size = if self.state.space == Space::Apps {
             self.active_app
                 .as_ref()
@@ -3450,7 +3645,11 @@ impl Workspace {
         } else {
             [self.settings.width, self.settings.height]
         };
-        let view = ContentView::new(source_size, content).unwrap();
+        let view = if self.state.space == Space::Apps {
+            crate::app_view::view(source_size, content)
+        } else {
+            ContentView::new(source_size, content).unwrap()
+        };
         self.view = Some(view);
         let kitty_frame_matches = self.desktop.as_ref().is_some_and(|d| {
             d.latest
@@ -3483,22 +3682,21 @@ impl Workspace {
                 interactive: self.modal.is_none() && self.context_menu.is_none() && !self.git_open,
             });
         }
-        if direct {
-            #[cfg(feature = "lossless-canvas")]
-            if self.native_terminal_cells {
-                for (_, pane) in self.visible_panes() {
-                    let (rect, _) = native_terminal_rect(pane, content, v);
-                    scene.components.push(Component::Terminal { rect });
-                }
+        if direct && self.native_terminal_cells {
+            for (_, pane) in self.visible_panes() {
+                let (rect, _) = native_terminal_rect(pane, content, v);
+                scene.components.push(Component::Terminal { rect });
             }
         }
         // Empty transparent overlays still cost a full-window alpha composite
         // in the native frontend. Add the layer only while an overlay exists.
         if !foreground.nodes.is_empty() {
-            scene.components.push(Component::Surface {
-                rect: full,
-                surface: foreground,
-            });
+            scene
+                .components
+                .push(crate::graphical::foreground(foreground, v));
+        }
+        if let Some(key) = cache_key {
+            self.graphical_cache.store(key, &scene);
         }
         scene
     }
@@ -3509,7 +3707,25 @@ impl Controller for Workspace {
         capabilities: starkit::terminal_graphics::capabilities::Capabilities,
     ) {
         self.close_audio();
-        #[cfg(feature = "lossless-canvas")]
+        self.cells = capabilities.cell_presentation.unwrap_or(false);
+        self.app_view_available = crate::features::app_view(&capabilities);
+        if !self.app_view_available && self.state.space == Space::Apps {
+            self.state.space = Space::Terminals;
+        }
+        self.check_presentation();
+        let legacy = !self.cells && !crate::terminal::direct();
+        if legacy != self.desktop.is_some() {
+            self.release();
+            self.desktop = legacy.then(|| Desktop::start(self.settings.clone()));
+            self.terminals.clear();
+            for stopped in self.session_monitors.values() {
+                stopped.store(true, Ordering::Release);
+            }
+            self.session_monitors.clear();
+            self.registered.clear();
+            self.launched.clear();
+            self.ensure_sessions();
+        }
         {
             self.native_terminal_cells = capabilities.native_terminal_cells;
             self.native_font_points = capabilities.native_font_millipoints;
@@ -3527,11 +3743,15 @@ impl Controller for Workspace {
         }
         self.pointer_hiding = capabilities.pointer_hiding;
         self.cursor_policy_sent = None;
-        self.audio_capable = capabilities.audio_relay;
+        self.audio_capable = capabilities.audio_relay || capabilities.audio_pcm_v2;
+        self.audio_pcm_v2 = capabilities.audio_pcm_v2;
         self.video.stop();
         self.video_failed = false;
-        self.video_capable =
-            capabilities.canvas_video && !capabilities.local_frames && capabilities.streamed_frames;
+        self.video_capable = !self.cells
+            && self.app_view_available
+            && capabilities.canvas_video
+            && !capabilities.local_frames
+            && capabilities.streamed_frames;
         self.video_high_quality = serde_json::to_value(capabilities)
             .ok()
             .is_some_and(|v| v["canvas_video_high_quality"] == true);
@@ -3542,7 +3762,9 @@ impl Controller for Workspace {
                     .ok()
                     .is_some_and(|v| v["canvas_video_pipelined"] == true),
         );
-        self.terminal_transport = if self.desktop.is_none() {
+        self.terminal_transport = if self.cells {
+            "parent-terminal-cells"
+        } else if self.desktop.is_none() {
             "native-kitty-cells"
         } else if capabilities.local_frames {
             "mapped-rgba"
@@ -3560,6 +3782,15 @@ impl Controller for Workspace {
                 "Controller font report: {}",
                 serde_json::to_value(capabilities).unwrap()
             );
+        }
+        self.reconnect_saved_apps();
+        if let Some(view) = crate::refresh::take_view(&self.controller_id)
+            && view.project == self.config.workspace
+            && let Some(key) = view.app
+            && let Some(host) = self.app_hosts.get_mut(&key)
+        {
+            host.selected = view.window;
+            self.active_app = Some(key);
         }
         self.typography = serde_json::to_value(capabilities)
             .ok()
@@ -3619,6 +3850,9 @@ impl Controller for Workspace {
                     }
                 }
                 Event::Ready(config, pane) => {
+                    if self.navigation.closed_projects.contains(&config.workspace) {
+                        continue;
+                    }
                     self.launch(*config, pane);
                     self.note("Project session connected / process retained".into())
                 }
@@ -3676,6 +3910,24 @@ impl Controller for Workspace {
                 Event::Error(message) => self.note(message),
             }
         }
+        // A hidden tmux client retains its initial/default size and can become
+        // the latest client when another window creates a tab. Keep attachments
+        // only for visible panes; monitors and backend processes stay alive.
+        if self.desktop.is_none() && self.native_terminal_cells {
+            let visible = self.visible_panes();
+            self.terminals.retain(|(project, pane), _| {
+                project == &self.config.workspace && visible.iter().any(|(id, _)| id == pane)
+            });
+            for (pane, _) in visible {
+                if self
+                    .health
+                    .get(&(self.config.workspace.clone(), pane))
+                    .is_some_and(|health| health["alive"] == true)
+                {
+                    self.launch(self.config.clone(), pane);
+                }
+            }
+        }
         for terminal in self.terminals.values_mut() {
             if let Some(text) = terminal.take_clipboard() {
                 self.effects.push(ServerMessage::Clipboard { text });
@@ -3703,15 +3955,9 @@ impl Controller for Workspace {
                 self.note(format!("Close exited terminal: {error:#}"));
             }
         }
-        #[cfg(feature = "lossless-canvas")]
         if self.desktop.is_none() && self.native_terminal_cells && self.state.space != Space::Apps {
             let panes = self.visible_panes();
-            let content = crate::shelf::Layout::new(
-                self.viewport.width as u16,
-                self.viewport.height as u16,
-                self.state.space,
-            )
-            .canvas;
+            let content = self.presentation_canvas();
             let key = format!(
                 "{}:{}:{}:{panes:?}",
                 self.config.workspace,
@@ -3725,7 +3971,18 @@ impl Controller for Workspace {
                 self.native_layout_key = key;
             }
             for (pane, area) in panes {
-                let (rect, padding) = native_terminal_rect(area, content, self.viewport);
+                let (rect, padding) = if self.cells {
+                    (
+                        self.cell_panes()
+                            .into_iter()
+                            .find(|(id, _)| *id == pane)
+                            .unwrap()
+                            .1,
+                        [0, 0],
+                    )
+                } else {
+                    native_terminal_rect(area, content, self.viewport)
+                };
                 if let Some(terminal) = self
                     .terminals
                     .get_mut(&(self.config.workspace.clone(), pane))
@@ -3750,7 +4007,8 @@ impl Controller for Workspace {
                                 pane == self.config.canonical_pane(self.state.selected())
                                     && self.modal.is_none()
                                     && self.context_menu.is_none()
-                                    && !self.git_open,
+                                    && !self.git_open
+                                    && (!self.cells || self.cell_ui.terminal_focus),
                             ) {
                                 self.effects.push(ServerMessage::TerminalCells { frame });
                             }
@@ -3853,6 +4111,11 @@ impl Controller for Workspace {
                 );
             }
             self.last_frame = Some((source, frame.pixels.clone()));
+            let frame = if self.state.space == Space::Apps {
+                crate::app_view::crop(frame, self.presentation_canvas())
+            } else {
+                frame
+            };
             let stream = if self.state.space == Space::Apps {
                 "apps"
             } else {
@@ -3914,6 +4177,26 @@ impl Controller for Workspace {
                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
                 let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starmux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                snapshot["graphical_render"] = self.graphical_cache.statistics();
+                snapshot["app_video_render"] = self.video.statistics();
+                snapshot["audio"]["playback_protocol"] = json!(if self.audio_pcm_v2 {
+                    "pcm-v2"
+                } else {
+                    "legacy-stereo"
+                });
+                snapshot["presentation"] = json!(if self.cells { "cells" } else { "graphical" });
+                snapshot["app_view_available"] = json!(self.app_view_available);
+                snapshot["cell_terminal_focus"] = json!(self.cell_ui.terminal_focus);
+                if self.cells {
+                    let canvas = self.presentation_canvas();
+                    snapshot["terminal_renderer"] = json!("parent-terminal");
+                    snapshot["terminal_presentation"]["canvas"] =
+                        json!([canvas.width, canvas.height]);
+                    snapshot["project_navigation"]["sidebar_width"] = json!(canvas.x);
+                    if let Some(bounds) = self.cell_menu_bounds() {
+                        snapshot["context_menu"]["bounds"] = json!(bounds);
+                    }
+                }
                 snapshot["ui_refresh"] = json!(true);
                 snapshot["frontend"] = json!(self.controller_id);
                 if self.desktop.is_none() {
@@ -3953,9 +4236,26 @@ impl Controller for Workspace {
         self.draw(v)
     }
     fn input(&mut self, input: Input) {
+        if let Input::Notice { message } = &input {
+            if message == "require-graphical" {
+                self.require_graphical();
+                return;
+            }
+            if message == "terminal-repaint-key" {
+                if self.cells && self.cell_ui.terminal_focus && !self.cells_overlay() {
+                    self.direct_input(EmbeddedKind::Key {
+                        code: "char:l".into(),
+                        modifiers: 2,
+                        phase: KeyPhase::Press,
+                    });
+                }
+                return;
+            }
+        }
         let refresh = match &input {
             Input::Key { code, modifiers } => {
-                code == "f5" || (matches!(code.as_str(), "char:r" | "char:R") && modifiers & 3 == 3)
+                matches!(code.as_str(), "f5" | "f:5")
+                    || (matches!(code.as_str(), "char:r" | "char:R") && modifiers & 3 == 3)
             }
             Input::Embedded { event, .. } => {
                 matches!(&event.kind,EmbeddedKind::Key{code,modifiers,phase} if *phase!=KeyPhase::Release && matches!(code.as_str(),"char:r"|"char:R") && modifiers&3==3)
@@ -4001,6 +4301,12 @@ impl Controller for Workspace {
                 self.sort_mode_hover = false;
             }
             _ => {}
+        }
+        if self.cells {
+            if let Err(error) = self.cells_input(input) {
+                self.note(format!("{error:#}"));
+            }
+            return;
         }
         if self.project_order_input(&input) {
             return;
@@ -4194,11 +4500,7 @@ impl Controller for Workspace {
                     "char:t" => self.cycle_theme()?,
                     "char:1" => self.set_space(Space::Agent),
                     "char:2" => self.set_space(Space::Terminals),
-                    "char:3" => self.set_space(Space::Apps),
                     "char:n" => self.action("terminal:new")?,
-                    "char:m" => self.action("audio:toggle")?,
-                    "char:a" => self.action("launch-app")?,
-                    "char:r" => self.action("run-app")?,
                     "char:p" => self.open_prompt(Prompt::Project),
                     "char:[" | "char:]" => {
                         if let Some(index) = self
@@ -4288,7 +4590,6 @@ impl Controller for Workspace {
             self.note(format!("{e:#}"));
         }
     }
-    #[cfg(feature = "lossless-canvas")]
     fn tick_interval(&self) -> Duration {
         if self.desktop.is_none() && self.state.space != Space::Apps {
             Duration::from_millis(8)
@@ -4385,11 +4686,7 @@ impl Controller for Workspace {
         {
             route.sent += 1;
             return vec![ServerMessage::Media {
-                message: starkit::terminal_graphics::media::ToClient::AudioChunk {
-                    session: AUDIO_SESSION,
-                    epoch: route.epoch,
-                    samples,
-                },
+                message: route.playback.chunk(AUDIO_SESSION, route.epoch, samples),
             }];
         }
         if let Some(error) = self.video.warning() {

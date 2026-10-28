@@ -29,6 +29,7 @@ pub struct Navigation {
     pub high_first: bool,
     pub audio_muted: bool,
     pub manual_order: Vec<String>,
+    pub closed_projects: Vec<String>,
     history: BTreeMap<String, Recent>,
     #[serde(skip)]
     pub dirty: bool,
@@ -44,6 +45,7 @@ impl Default for Navigation {
             high_first: true,
             audio_muted: false,
             manual_order: vec![],
+            closed_projects: vec![],
             history: BTreeMap::new(),
             dirty: false,
             priorities: BTreeMap::new(),
@@ -82,6 +84,20 @@ impl Navigation {
     /// Baseline through settling and the first complete observation afterward.
     pub fn presentation_changed(&mut self, project: &str, at: u64) {
         self.presentation_until.insert(project.into(), at + 1000);
+    }
+    pub fn filter_open(&self, projects: &mut Vec<Config>) {
+        projects.retain(|project| !self.closed_projects.contains(&project.workspace));
+    }
+    pub fn open_project(&mut self, id: &str) {
+        let before = self.closed_projects.len();
+        self.closed_projects.retain(|closed| closed != id);
+        self.dirty |= before != self.closed_projects.len();
+    }
+    pub fn close_project(&mut self, id: &str) {
+        if !self.closed_projects.iter().any(|closed| closed == id) {
+            self.closed_projects.push(id.into());
+            self.dirty = true;
+        }
     }
     pub fn reconcile(&mut self, projects: &[Config]) {
         let present: BTreeSet<_> = projects.iter().map(|p| p.workspace.as_str()).collect();
@@ -253,6 +269,27 @@ mod tests {
     use super::*;
     fn projects(ids: &[&str]) -> Vec<Config> {
         ids.iter().map(|id| serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starmux"})).unwrap()).collect()
+    }
+    #[test]
+    fn closed_projects_stay_closed_across_catalog_reload_and_can_reopen() {
+        let mut nav = Navigation::default();
+        nav.close_project("b");
+        let mut restored: Navigation =
+            serde_json::from_value(serde_json::to_value(&nav).unwrap()).unwrap();
+        let mut items = projects(&["a", "b", "c"]);
+        restored.filter_open(&mut items);
+        restored.sort(&mut items);
+        assert_eq!(
+            items
+                .iter()
+                .map(|p| p.workspace.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+        restored.open_project("b");
+        let mut items = projects(&["a", "b", "c"]);
+        restored.filter_open(&mut items);
+        assert_eq!(items.len(), 3);
     }
     #[test]
     fn manual_order_survives_activity_reload_and_catalog_changes() {
