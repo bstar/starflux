@@ -5,19 +5,19 @@
 > **App Space** in the terminal header or **Open App Space** in a project's
 > right-click menu. Terminal space keeps the full terminal area.
 
-STAR/MUX now uses the App Shelf direction from the design studies. A project owns its agent, terminal tabs, launch command and virtual app desktops. Agents and shells now use Kitty’s own renderer, presented at native pixel resolution. Graphical apps retain their private compositor. The chrome uses single pixel borders, a drafting grid and the selected STAR/KIT palette.
+STAR/FLUX now uses the App Shelf direction from the design studies. A project owns its agent, terminal tabs, launch command and virtual app desktops. Agents and shells now use Kitty’s own renderer, presented at native pixel resolution. Graphical apps retain their private compositor. The chrome uses single pixel borders, a drafting grid and the selected STAR/KIT palette.
 
 ## Start a project
 
 ```sh
-starmux --workspace my-app --directory /path/to/project --app 'cargo run --release'
-starmux --workspace remote-app --host buildbox --directory /work/project \
-  --app 'starfold .' --desktop-helper /home/you/.local/bin/starmux
+starflux --workspace my-app --directory /path/to/project --app 'cargo run --release'
+starflux --workspace remote-app --host buildbox --directory /work/project \
+  --app 'starfold .' --desktop-helper /home/you/.local/bin/starflux
 ```
 
 New projects open a login shell. Run Codex, Claude, Gemini, OpenCode or Aider in any terminal; foreground process detection tracks the agent and clears its role when it returns to the shell. `--agent COMMAND` remains available for explicit startup commands and older workspaces. New projects put their shells and agent on the project host. Existing workspaces keep their original session IDs and host assignments, including legacy local shells beside SSH agents. Migration does not respawn running agents.
 
-Project metadata is saved privately under `$XDG_DATA_HOME/starmux/projects` (normally `~/.local/share/starmux/projects`). Runtime sockets and inspection snapshots remain under `$XDG_RUNTIME_DIR/starmux`.
+Project metadata is saved privately under `$XDG_DATA_HOME/starflux/projects` (normally `~/.local/share/starflux/projects`). Runtime sockets and inspection snapshots remain under `$XDG_RUNTIME_DIR/starflux`.
 
 ## Work inside the project
 
@@ -47,7 +47,7 @@ A small orbiting star appears beside each working project: a steady central spar
 
 Imported Herdr metadata is queried in read-only batches per session, including projects that have not been selected. Known Codex/Claude panes also use a bounded 32-line current detection footer to override stale lifecycle flags. Native agents use explicit terminal state when available; Codex/Claude activity can also be read from their status footer on the project host. Native helpers return state metadata and a fingerprint; imported footer text is discarded after classification and hashing. Footer recognition depends on the harness keeping its current status wording; unrecognized agents stay static rather than being marked busy just because their process is alive. Summaries refresh in the background, roughly every two seconds.
 
-The wave completes a back-and-forth cycle in about 5.3 seconds only while a project is working. Decorative updates pause for 150 ms after typing, and stop entirely when no projects are busy. `STARMUX_REDUCED_MOTION=1` keeps the working count and a static text tint without animation. Unicode names retain their full text shaping and use a whole-name color pulse.
+The wave completes a back-and-forth cycle in about 5.3 seconds only while a project is working. Decorative updates pause for 150 ms after typing, and stop entirely when no projects are busy. `STARFLUX_REDUCED_MOTION=1` keeps the working count and a static text tint without animation. Unicode names retain their full text shaping and use a whole-name color pulse.
 
 `python3 scripts/test-activity-wave.py` verifies changing working-name pixels, static idle/waiting rows, activity transitions, idle timer suspension, and reduced motion using a disposable Herdr API fixture. It does not attach to original Herdr sessions. `python3 scripts/test-agent-activity.py` checks native working/idle/approval detection against a disposable terminal fixture and verifies that only metadata leaves the helper. Evidence is in `target/activity-wave-proof`.
 
@@ -73,7 +73,7 @@ Returning to the workspace from another desktop window automatically restores ke
 
 ## Project menus and repository state
 
-The wordmark is **S T A R / M U X**. Right-click a project in the sidebar or its header to rename it, open its agent, terminals or app space, or create another project. Right-click a terminal tab to rename it, focus it, split/unsplit, or add a tab. Menus use the active theme, single borders and inset selection. Use arrows and Enter, or the mouse; Escape and outside clicks dismiss without passing input through to a session.
+The wordmark is **S T A R / F L U X**. Right-click a project in the sidebar or its header to rename it, open its agent, terminals or app space, or create another project. Right-click a terminal tab to rename it, focus it, split/unsplit, or add a tab. Menus use the active theme, single borders and inset selection. Use arrows and Enter, or the mouse; Escape and outside clicks dismiss without passing input through to a session.
 
 Project and terminal names are durable display labels. Renaming retains workspace/session IDs and running processes; imported Herdr names remain unchanged. Names accept up to 64 characters, including Unicode.
 
@@ -89,7 +89,7 @@ Kitty on the presenting machine draws native terminal characters, including over
 
 ## Selecting and copying Codex text
 
-Use a normal **left-button drag** in an agent or terminal pane. STAR/MUX distinguishes a drag from a click and projects selection into PTY cells, even when Codex captures mouse input. Releasing copies the selected text to the presenting desktop clipboard, including over SSH. Single clicks still reach terminal menus; Ctrl+drag preserves application mouse handling. Selection remains attached to the pane where it began, including splits. Kitty renders the characters and their selection colors directly.
+Use a normal **left-button drag** in an agent or terminal pane. STAR/FLUX distinguishes a drag from a click and projects selection into PTY cells, even when Codex captures mouse input. Releasing copies the selected text to the presenting desktop clipboard, including over SSH. Single clicks still reach terminal menus; Ctrl+drag preserves application mouse handling. Selection remains attached to the pane where it began, including splits. Kitty renders the characters and their selection colors directly.
 
 ## Local and SSH apps
 
@@ -99,7 +99,7 @@ The terminal shelf shows one **Open app space** card for the virtual desktop, wi
 
 Graphical applications run in a persistent private compositor on their own host. A workspace on the app host receives shared raw frames; a remote frontend receives a bounded H.264 stream with local decoding. Input travels over the framed transport locally or through OpenSSH. The app helper negotiates a protocol version, preserves stable window identities and retains only the newest frame. Hover motion is coalesced separately from ordered controls.
 
-For SSH graphical apps, install a compatible STAR/MUX executable on that host, plus its runtime libraries, `dbus-run-session`, Xwayland and a usable EGL graphics device. `--desktop-helper` selects the executable or runtime wrapper on that host. No forwarding into the host's normal desktop is used. A private D-Bus session prevents applications from handing their launch to an existing desktop instance. Ordinary SSH agent terminals continue to need only Python 3, tmux and the agent command.
+For SSH graphical apps, install a compatible STAR/FLUX executable on that host, plus its runtime libraries, `dbus-run-session`, Xwayland and a usable EGL graphics device. `--desktop-helper` selects the executable or runtime wrapper on that host. No forwarding into the host's normal desktop is used. A private D-Bus session prevents applications from handing their launch to an existing desktop instance. Ordinary SSH agent terminals continue to need only Python 3, tmux and the agent command.
 
 Closing or killing a frontend does not terminate the app compositor. **Reconnect** and reopening the workspace attach to the same app processes. A host reboot or explicit `--stop` ends them. Failed remote startup is reported in the workspace; the agent and shell spaces stay available.
 
@@ -109,19 +109,19 @@ Embedded Kitty terminal frames use a separate native-resolution, lossless PNG pa
 
 ## App audio and mute
 
-The header's **Audio on / Muted** control mutes this STAR/MUX workspace without changing system volume or stopping apps. The preference is saved across restarts and applies across its projects. With terminal input released using Ctrl+Esc, **m** toggles mute. The CLI actions `audio:mute`, `audio:unmute` and `audio:toggle` provide the same control.
+The header's **Audio on / Muted** control mutes this STAR/FLUX workspace without changing system volume or stopping apps. The preference is saved across restarts and applies across its projects. With terminal input released using Ctrl+Esc, **m** toggles mute. The CLI actions `audio:mute`, `audio:unmute` and `audio:toggle` provide the same control.
 
 The selected project's app host is audible even while its terminal view is selected. Apps in that host share a private output sink. Switching projects or app hosts closes the old playback route; other desktops stay isolated and keep running. Mute and disconnect close local playback and discard queued samples. Unmute and reconnect use a fresh epoch, so old sound is not replayed. Device errors report failure and keep the host sink isolated; they never switch sound to the host's speakers.
 
 For a workspace on another machine, run the frontend on the machine whose speakers you want to use:
 
 ```sh
-starmux --ssh HOST --workspace herdr-default-wV
+starflux --ssh HOST --workspace herdr-default-wV
 # A custom server installation:
-starmux --ssh HOST --remote-executable /path/to/starmux --workspace NAME
+starflux --ssh HOST --remote-executable /path/to/starflux --workspace NAME
 ```
 
-`--host` still selects an app/project host for a locally owned workspace; `--ssh` attaches a local frontend to an existing remote workspace. Matching audio-enabled builds are required on both ends. An existing SSH shell can use the STAR/KIT Kitty bridge; its local `star-kit-terminal` must also include audio output. An unbridged SSH TTY cannot reach the client's speakers and shows **Local audio missing**. Clicking that control explains the required local setup instead of toggling mute. The lightweight [local terminal client](../terminal-client/README.md) supports listening machines without a full STAR/MUX installation. The installer uses a content-versioned watcher path to bypass Kitty’s module cache. After installing, reload Kitty configuration, then Refresh UI or reconnect STAR/MUX; active bridge connections are preserved during the configuration reload.
+`--host` still selects an app/project host for a locally owned workspace; `--ssh` attaches a local frontend to an existing remote workspace. Matching audio-enabled builds are required on both ends. An existing SSH shell can use the STAR/KIT Kitty bridge; its local `star-kit-terminal` must also include audio output. An unbridged SSH TTY cannot reach the client's speakers and shows **Local audio missing**. Clicking that control explains the required local setup instead of toggling mute. The lightweight [local terminal client](../terminal-client/README.md) supports listening machines without a full STAR/FLUX installation. The installer uses a content-versioned watcher path to bypass Kitty’s module cache. After installing, reload Kitty configuration, then Refresh UI or reconnect STAR/FLUX; active bridge connections are preserved during the configuration reload.
 
 The app host needs a running PulseAudio-compatible server (including PipeWire-Pulse), `pactl`, `parec`, and `pw-dump` for adopting existing native PipeWire streams. It does not need a physical audio device. New apps inherit their desktop's private sink. Already-running apps can be moved into it without restarting: only verified descendants of that private compositor are eligible, using the PulseAudio process ID or PipeWire client credentials. No microphone or system-wide output is captured.
 
@@ -134,15 +134,15 @@ Audio capture, metadata scanning and video use separate workers. Eight block cre
 An agent running on the app host can open a window without taking over the viewer or configuring DISPLAY:
 
 ```sh
-starmux --app-launch my-app --app-directory /work/project -- ./game
-starmux --app-list my-app
+starflux --app-launch my-app --app-directory /work/project -- ./game
+starflux --app-list my-app
 ```
 
 The identity must match the viewer's project workspace. This uses a separate local control socket, waits for a new window and reports it as JSON. A viewer may remain attached throughout. The worker injects its private display and D-Bus environment. Run this command through SSH on a remote app host; configure the project's app host/helper in **Launch app** so the local viewer connects to that same desktop. The helper must be installed on that host. `--app-list` starts an empty desktop if none exists.
 
-The Zendocon checkout includes `python3 tools/run_in_starmux.py` (default desktop `herdr-default-w8`) and `docs/starmux-app-space.md`. It launches the existing cartridge, without rebuilding or replacing the game.
+The Zendocon checkout includes `python3 tools/run_in_starflux.py` (default desktop `herdr-default-w8`) and `docs/starflux-app-space.md`. It launches the existing cartridge, without rebuilding or replacing the game.
 
-STAR/KIT's GPU frontend is opt-in with `STAR_GRAPHICS_RENDERER=gpu starmux ...`. The installed candidate includes GPU support. Kitty and the private app compositor have independent renderers; enabling the frontend does not enable hardware video encoding or make emulator logic run on the GPU.
+STAR/KIT's GPU frontend is opt-in with `STAR_GRAPHICS_RENDERER=gpu starflux ...`. The installed candidate includes GPU support. Kitty and the private app compositor have independent renderers; enabling the frontend does not enable hardware video encoding or make emulator logic run on the GPU.
 
 ## File delivery
 
@@ -153,12 +153,12 @@ An app-space drop stages the file on the selected app's host and offers `text/ur
 ## Inspect, detach and stop
 
 ```sh
-starmux --workspace my-app --inspect
-starmux --workspace my-app --action view:apps
-starmux --workspace my-app --action terminal:new
-starmux --workspace my-app --close
-starmux --workspace my-app
-starmux --workspace my-app --stop
+starflux --workspace my-app --inspect
+starflux --workspace my-app --action view:apps
+starflux --workspace my-app --action terminal:new
+starflux --workspace my-app --close
+starflux --workspace my-app
+starflux --workspace my-app --stop
 ```
 
 `--close` detaches the controller while retaining tmux sessions and app workers. `--stop` explicitly stops that named project's terminals and app desktops. Other projects are retained. A project lease prevents two updated controllers from simultaneously resizing or typing into the same project.
@@ -173,15 +173,15 @@ The transport has been checked with loopback SSH; this does not establish latenc
 
 ## Import an existing Herdr session for testing
 
-`starmux --import-herdr` imports the default Herdr session into a separate `herdr-default` collection. It preserves workspace labels/order, directories, tab labels and terminal identities. The import prints the workspace to open. Native test/proof projects are excluded from this collection.
+`starflux --import-herdr` imports the default Herdr session into a separate `herdr-default` collection. It preserves workspace labels/order, directories, tab labels and terminal identities. The import prints the workspace to open. Native test/proof projects are excluded from this collection.
 
-Imported panes use `herdr terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. Herdr must remain running. No `--takeover` flag is used. Legacy Agent shortcuts migrate to their matching terminal tab, sharing one attachment. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/MUX project never stops its original Herdr terminals.
+Imported panes use `herdr terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. Herdr must remain running. No `--takeover` flag is used. Legacy Agent shortcuts migrate to their matching terminal tab, sharing one attachment. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/FLUX project never stops its original Herdr terminals.
 
 The project sidebar follows the saved activity direction and keeps the collection visible. Wheel scrolling in a shorter list does not change the active project. The test import contains 20 workspaces, 24 original tabs/panes and 16 detected agents. The initial read-only mirrors were replaced after input testing; those mirrors are no longer the normal imported-terminal path.
 
 `python3 scripts/test-handy-ssh.py` uses the local Zendocon checkout and a disposable authenticated loopback SSH server. It checks sideband launch with an attached viewer, cartridge rendering, keyboard start, changing game frames and stable compositor/window identity across reconnect. Handy replaces its initial SDL window during cartridge initialization; input targets the resulting game window. Evidence is saved in `target/handy-ssh-proof`.
 
-`python3 scripts/test-font-inheritance.py` records real Kitty font/DPI queries and compares them with the negotiated terminal sizes/cells for both the normal user configuration and a Liberation Mono override. Native Kitty and STAR/MUX screenshots are saved in `target/font-inheritance-proof`.
+`python3 scripts/test-font-inheritance.py` records real Kitty font/DPI queries and compares them with the negotiated terminal sizes/cells for both the normal user configuration and a Liberation Mono override. Native Kitty and STAR/FLUX screenshots are saved in `target/font-inheritance-proof`.
 
 `python3 scripts/test-project-sidebar.py` uses 20 disposable projects with imported labels to verify that all project rows remain visible, the final row can be selected directly, and switching preserves order. Screenshots and results are in `target/sidebar-proof`. It does not attach to or type into original Herdr sessions.
 
@@ -207,8 +207,8 @@ Sidebar context menus retain the main terminal view. Native terminal regions sta
 
 ## Multiple windows on one workspace
 
-Open `starmux --workspace NAME` in more than one Kitty window, or attach with
-`starmux --ssh HOST --workspace NAME`. Each connection gets a private frontend
+Open `starflux --workspace NAME` in more than one Kitty window, or attach with
+`starflux --ssh HOST --workspace NAME`. Each connection gets a private frontend
 controller. Project selection, terminal selection, splits, menus, viewport,
 selection gestures, font controls, audio mute, and presentation/media credits
 belong to that frontend. Refresh UI reloads only its own controller and restores
@@ -237,7 +237,7 @@ viewers clip the shared screen to their own viewport until they become active. T
 shared geometry, negotiated from its viewers, while each frontend uses its own
 placement and coordinate transform.
 
-Refresh existing STAR/MUX windows once to load this architecture. Existing app
+Refresh existing STAR/FLUX windows once to load this architecture. Existing app
 workers retain their running applications: a worker created before this update
 keeps its legacy single-viewer lease until it is restarted. New app workers
 advertise multi-viewer support. No running application is restarted automatically.
@@ -262,8 +262,8 @@ compositor, audio device, GUI window or real agent.
 
 `--import-herdr` keeps Herdr as the terminal owner. To remove that dependency on a
 Linux host, build the small helper with `scripts/build-pty-proxy`, then use
-`starmux --plan-herdr-migration` to validate and back up the default session, or
-`starmux --migrate-herdr` to prepare and apply the transfer.
+`starflux --plan-herdr-migration` to validate and back up the default session, or
+`starflux --migrate-herdr` to prepare and apply the transfer.
 
 The migration uses Herdr 0.9.1's Unix handoff version 1, protocol 22. It receives
 the original PTY masters before the source releases them, stages native proxies
@@ -274,7 +274,7 @@ PTY owner waits on descriptor readiness and does not render or poll Herdr. The
 proxy is a libc-only C executable with no periodic wakeup timer. Agent status
 queries go directly to the native owner instead of launching Herdr CLI processes.
 
-STAR/MUX frontends refresh behind a migration gate while terminal ownership
+STAR/FLUX frontends refresh behind a migration gate while terminal ownership
 changes. Legacy frontends receive a private view identity and restore their
 selected project. Herdr UI-only clients for that session are retired; the server
 exits through its handoff protocol. Its saved default layout is archived and
@@ -283,7 +283,7 @@ launch from restarting duplicate agents. Other Herdr sessions are untouched.
 
 Backups, the live handoff manifest (including agent session references), screens,
 original PIDs and ownership status are stored privately under
-`~/.local/share/starmux/migrations/`. A pre-commit failure leaves the source owning
+`~/.local/share/starflux/migrations/`. A pre-commit failure leaves the source owning
 its original PTYs and resumes it. A post-commit failure retains the received
 masters for diagnosis rather than restarting or discarding the user's processes.
 Existing agent memory remains allocated because those agents remain alive.

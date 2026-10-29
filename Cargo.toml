@@ -1,10 +1,10 @@
 [package]
-name = "starmux"
+name = "starflux"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "A STAR/KIT workspace with native terminals and persistent local/SSH apps"
-repository = "https://github.com/bstar/starmux"
+repository = "https://github.com/bstar/starflux"
 readme = "README.md"
 
 [workspace]

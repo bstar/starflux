@@ -28,11 +28,11 @@ app = root / 'scripts/run-local.sh'
 report = root / 'target/cells-proof'
 report.mkdir(parents=True, exist_ok=True)
 (report / ('ssh.log' if args.ssh else 'local.log')).write_bytes(b'')
-with tempfile.TemporaryDirectory(prefix='starmux-cells-') as directory:
+with tempfile.TemporaryDirectory(prefix='starflux-cells-') as directory:
     tmp = Path(directory)
     runtime = tmp / 'runtime'
     runtime.mkdir(mode=0o700)
-    state = runtime / 'starmux'
+    state = runtime / 'starflux'
     state.mkdir(mode=0o700)
     name = 'cells-' + secrets.token_hex(4)
     fixture = tmp / 'fixture.py'
@@ -56,13 +56,13 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
     )}
     env.update(XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(tmp / 'data'),
                SHELL=str(shell), TERM='xterm-256color' if args.ssh else 'xterm', STAR_TERMINAL_RENDERER='native' if args.ssh else 'kitty-pixels',
-               STARMUX_KITTY=str(tmp / 'kitty-must-not-run'))
+               STARFLUX_KITTY=str(tmp / 'kitty-must-not-run'))
     (state / (name + '.json')).write_text(json.dumps(dict(
         workspace=name, host=None, directory=str(tmp), agent=None,
         executable=str(app), project_host=True,
     )))
     # Legacy app metadata must survive presentation, without worker startup.
-    data_root = tmp / 'data/starmux/projects'
+    data_root = tmp / 'data/starflux/projects'
     data_root.mkdir(parents=True, mode=0o700)
     legacy = dict(space='apps', terminal_first=True, terminal=0, terminals=[0],
                   app_command='DO_NOT_START_APP', app_targets=[dict(host=None, directory=str(tmp), helper='DO_NOT_START_HELPER')])
@@ -98,7 +98,7 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
                 time.sleep(.02)
         ssh_config = tmp / 'ssh_config'
         ssh_config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
-        remote = tmp / 'remote-starmux'
+        remote = tmp / 'remote-starflux'
         remote.write_text('#!/bin/sh\nexec env ' + shlex.join([k + '=' + env[k] for k in ('PATH', 'XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'SHELL', 'STAR_TERMINAL_RENDERER')]) + ' ' + shlex.quote(str(app)) + ' "$@"\n')
         remote.chmod(0o700)
         cli += ['--ssh', 'proof', '--ssh-config', str(ssh_config), '--remote-executable', str(remote)]
@@ -359,7 +359,7 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         if master is not None:
             os.close(master)
         for project in [name, *created_projects]:
-            subprocess.run(['tmux', '-L', 'starmux-' + project, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['tmux', '-L', 'starflux-' + project, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if sshd:
             sshd.terminate()
             sshd.wait(timeout=5)

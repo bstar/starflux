@@ -3,7 +3,7 @@
 import json,os,subprocess,tempfile,time,uuid
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux';data=Path.home()/'.local/share/starmux/projects'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux';data=Path.home()/'.local/share/starflux/projects'
 out=repo/'target/activity-wave-proof';out.mkdir(parents=True,exist_ok=True)
 prefix='wave-'+uuid.uuid4().hex[:6];names=[prefix+'-'+str(i) for i in range(3)]
 original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
@@ -16,7 +16,7 @@ def wait(fn,label):
         except (ValueError,OSError,KeyError,subprocess.SubprocessError):pass
         time.sleep(.08)
     raise AssertionError(label)
-with tempfile.TemporaryDirectory(prefix='starmux-wave-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-wave-') as temp:
     temp=Path(temp);address='unix:'+str(temp/'kitty.sock');statuses=temp/'statuses.json';revisions=temp/'revisions.json'
     statuses.write_text(json.dumps({'w0':'working','w1':'idle','w2':'blocked'}))
     revisions.write_text(json.dumps({'w0':0,'w1':0,'w2':0}))
@@ -47,7 +47,7 @@ else:raise SystemExit(2)
 '''.replace('FIXTURE',repr(str(repo/'scripts/direct-terminal-fixture.py'))));source.chmod(0o700)
     for i,name in enumerate(names):
         pane={'terminal_id':'term'+str(i),'pane_id':f'w{i}:p1','tab_id':f'w{i}:t1','label':'Codex','cwd':str(temp),'agent':'codex'}
-        config={'workspace':name,'label':['Building renderer','Idle project','DEC'][i],'collection':prefix,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'codex','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app),'herdr':{'session':'wave-test','workspace_id':'w'+str(i),'order':i,'executable':str(source),'panes':{'0':pane,'31':pane}}}
+        config={'workspace':name,'label':['Building renderer','Idle project','DEC'][i],'collection':prefix,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'codex','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app),'herdr':{'session':'wave-test','workspace_id':'w'+str(i),'order':i,'executable':str(source),'panes':{'0':pane,'31':pane}}}
         path=runtime/(name+'.json');path.write_text(json.dumps(config));path.chmod(0o600)
         data.mkdir(parents=True,exist_ok=True)
         path=data/(name+'.layout.json');path.write_text(json.dumps({'space':'agent','agent':31,'terminal':0,'terminals':[0]}));path.chmod(0o600)
@@ -57,7 +57,7 @@ else:raise SystemExit(2)
         return subprocess.check_output(['kitten','@','--to',address,*args],input=data,stderr=subprocess.PIPE,timeout=12)
     def invoke(*args):return subprocess.check_output([str(app),'--workspace',names[0],*args],stderr=subprocess.PIPE,timeout=20)
     def state():return json.loads((runtime/(names[0]+'.state.json')).read_text())
-    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-wave-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-wave-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
     def capture(label):
         c=next(c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['pid']==kitty.pid)
         subprocess.run(['hyprctl','eval',f'hl.dispatch(hl.dsp.focus({{window="address:{c["address"]}"}}))'],stdout=subprocess.DEVNULL,check=True)
@@ -102,7 +102,7 @@ else:raise SystemExit(2)
         assert state()['wave_phase']==phase,'Animation ran without live agents'
         old=state()['controller_pid'];invoke('--close');time.sleep(.4)
         statuses.write_text(json.dumps({'w0':'working','w1':'idle','w2':'blocked'}))
-        rc('launch','--type=tab','--env','STARMUX_REDUCED_MOTION=1',str(app),'--workspace',names[0])
+        rc('launch','--type=tab','--env','STARFLUX_REDUCED_MOTION=1',str(app),'--workspace',names[0])
         wait(lambda:state()['controller_pid']!=old and state().get('reduced_motion') and state()['project_activity'][names[0]]['working']==1,'Reduced-motion workspace missing')
         phase=state()['wave_phase'];time.sleep(.7);assert state()['wave_phase']==phase
         capture('reduced-motion')
@@ -140,7 +140,7 @@ else:raise SystemExit(2)
         click(sx,98);wait(lambda:not state()['project_navigation']['high_first'] and state()['project_order']==names[::-1],'Full reverse was not repeatable')
         assert state()['active_project']==selected
         old=state()['controller_pid'];invoke('--close');time.sleep(.4)
-        rc('launch','--type=tab','--env','STARMUX_REDUCED_MOTION=1',str(app),'--workspace',names[0])
+        rc('launch','--type=tab','--env','STARFLUX_REDUCED_MOTION=1',str(app),'--workspace',names[0])
         wait(lambda:state()['controller_pid']!=old and not state()['project_navigation']['high_first'] and state()['project_order']==names[::-1],'Low preference and full order were not restored')
         requests=[json.loads(l) for l in (temp/'requests').read_text().splitlines()]
         assert all(r in [['agent','list'],['api','snapshot'],['pane','get'],['pane','read'],['terminal','attach']] for r in requests)

@@ -16,9 +16,9 @@ import uuid
 
 repo = Path(__file__).resolve().parents[1]
 app = repo/'scripts/run-local.sh'
-runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
-data_root = Path.home()/'.local/share/starmux/projects'
-out = repo/'target'/os.environ.get('STARMUX_AGENT_PROOF','multi-agent-proof')
+runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
+data_root = Path.home()/'.local/share/starflux/projects'
+out = repo/'target'/os.environ.get('STARFLUX_AGENT_PROOF','multi-agent-proof')
 out.mkdir(parents=True, exist_ok=True)
 prefix = 'agents-'+uuid.uuid4().hex[:7]
 names = [prefix+'-local', prefix+'-ssh']
@@ -51,7 +51,7 @@ def action(value):
     invoke(names[0], '--action', value)
 
 
-with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-tools-') as temp:
     temp = Path(temp)
     address = 'unix:'+str(temp/'kitty.sock')
     def rc(*args, data=None):
@@ -119,11 +119,11 @@ finally:
 ''')
         for i,name in enumerate(names):
             folder=temp/str(i);folder.mkdir()
-            cfg={'workspace':name,'collection':prefix,'label':'Local agents' if i==0 else 'SSH agents','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(folder),'agent':None,'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+            cfg={'workspace':name,'collection':prefix,'label':'Local agents' if i==0 else 'SSH agents','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(folder),'agent':None,'executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
             path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
-        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-agents-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER=os.environ.get('STAR_TERMINAL_RENDERER','kitty')),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-agents-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER=os.environ.get('STAR_TERMINAL_RENDERER','kitty')),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
         children.append(kitty)
-        sink=subprocess.Popen(['/usr/bin/kitty','--class','starmux-focus-sink','--title','STAR/MUX focus acceptance','sleep','300'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        sink=subprocess.Popen(['/usr/bin/kitty','--class','starflux-focus-sink','--title','STAR/FLUX focus acceptance','sleep','300'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         children.append(sink)
         def focus_cycle(resize=False):
             for process in [sink,kitty]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify input through a running disposable STAR/MUX Kitty frontend."""
+"""Verify input through a running disposable STAR/FLUX Kitty frontend."""
 import argparse,pathlib,subprocess,time
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--to',required=True);p.add_argument('--workspace',required=True);p.add_argument('--output',default='target/input-proof.txt');a=p.parse_args()
 app=pathlib.Path(__file__).resolve().parents[1]/'scripts/run-local.sh'
@@ -17,14 +17,14 @@ def type_keys(text):
         rc('send-key',key)
 rc('send-key','ctrl+escape')
 rc('send-text','--stdin',data=b'\x1b[<0;350;220M\x1b[<0;350;220m');time.sleep(.2)
-rc('send-key','ctrl+c');type_keys('echo STARMUX_KEYS_OK');rc('send-key','enter');until('\nSTARMUX_KEYS_OK\n')
-rc('send-text','--stdin','--bracketed-paste','enable',data="printf 'STARMUX_λ_PASTE_OK\\n'".encode());time.sleep(.2)
-assert '\nSTARMUX_λ_PASTE_OK\n' not in screen(),'Paste submitted automatically'
-rc('send-key','enter');until('\nSTARMUX_λ_PASTE_OK\n')
+rc('send-key','ctrl+c');type_keys('echo STARFLUX_KEYS_OK');rc('send-key','enter');until('\nSTARFLUX_KEYS_OK\n')
+rc('send-text','--stdin','--bracketed-paste','enable',data="printf 'STARFLUX_λ_PASTE_OK\\n'".encode());time.sleep(.2)
+assert '\nSTARFLUX_λ_PASTE_OK\n' not in screen(),'Paste submitted automatically'
+rc('send-key','enter');until('\nSTARFLUX_λ_PASTE_OK\n')
 type_keys('sleep 30');rc('send-key','enter');time.sleep(.2);rc('send-key','ctrl+c');time.sleep(.1)
-type_keys('echo STARMUX_INTERRUPT_OK');rc('send-key','enter');until('\nSTARMUX_INTERRUPT_OK\n')
+type_keys('echo STARFLUX_INTERRUPT_OK');rc('send-key','enter');until('\nSTARFLUX_INTERRUPT_OK\n')
 for size in [14,12]:rc('set-font-size',str(size));time.sleep(.4)
-assert '\nSTARMUX_INTERRUPT_OK\n' in screen()
+assert '\nSTARFLUX_INTERRUPT_OK\n' in screen()
 pathlib.Path(a.output).write_text(screen())
 rc('send-key','ctrl+escape')
 print('PASS: pixel click focus, press/release typing, Unicode bracketed paste without submission, Enter, Ctrl+C and font resize in real embedded Kitty')

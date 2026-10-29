@@ -10,7 +10,7 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-pub const SIGNAL: &str = "STARMUX_RELOAD_UI";
+pub const SIGNAL: &str = "STARFLUX_RELOAD_UI";
 static FRONTEND: OnceLock<Frontend> = OnceLock::new();
 struct Frontend {
     executable: PathBuf,
@@ -150,7 +150,7 @@ pub fn request(workspace: &str, view: &View) -> Result<()> {
     let installed = Path::new(name.strip_suffix(" (deleted)").unwrap_or(&name));
     ensure!(
         installed.is_file(),
-        "The updated STAR/MUX executable is missing; rebuild before refreshing"
+        "The updated STAR/FLUX executable is missing; rebuild before refreshing"
     );
     starkit::fs::write_private(
         &crate::project_state::data_root()?.join(format!("{workspace}.refresh-view.json")),
@@ -283,7 +283,7 @@ pub fn finish(result: Result<()>) -> Result<()> {
     let error = std::process::Command::new(&frontend.executable)
         .args(&frontend.args)
         .exec();
-    Err(error).context("Could not load updated STAR/MUX build")
+    Err(error).context("Could not load updated STAR/FLUX build")
 }
 
 #[cfg(test)]

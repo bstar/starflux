@@ -6,7 +6,7 @@ import getpass,json,math,os,shlex,socket,struct,subprocess,tempfile,threading,ti
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
 name='audio-'+uuid.uuid4().hex[:8];out=repo/'target/audio-proof';out.mkdir(parents=True,exist_ok=True)
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux';data=Path.home()/'.local/share/starmux/projects'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux';data=Path.home()/'.local/share/starflux/projects'
 def wait(fn,label,timeout=25):
  end=time.monotonic()+timeout
  while time.monotonic()<end:
@@ -33,7 +33,7 @@ def receiver(p,items):
  threading.Thread(target=run,daemon=True).start()
 def pulse(*args):return subprocess.check_output(['pactl',*args],stderr=subprocess.PIPE).decode().strip()
 children=[];modules=[];original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
-with tempfile.TemporaryDirectory(prefix='starmux-audio-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-audio-') as tmp:
  tmp=Path(tmp)
  try:
   for key in ['host','client']:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(tmp/key)],check=True)
@@ -91,13 +91,13 @@ threading.Thread(target=sound,daemon=True).start();App().run([])
   # The local frontend connects to the remote controller, whose app desktop is local to it.
   output_sink='mux_audio_output_'+uuid.uuid4().hex[:6]
   modules.append(pulse('load-module','module-null-sink','sink_name='+output_sink,'rate=48000','channels=2'))
-  config={'workspace':name,'label':'SSH audio proof','theme':'kanagawa','host':None,'directory':str(tmp),'agent':None,'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+  config={'workspace':name,'label':'SSH audio proof','theme':'kanagawa','host':None,'directory':str(tmp),'agent':None,'executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
   (runtime/(name+'.json')).write_text(json.dumps(config));(runtime/(name+'.json')).chmod(0o600)
   data.mkdir(parents=True,exist_ok=True)
   (data/(name+'.json')).write_text(json.dumps(config))
   (data/(name+'.layout.json')).write_text(json.dumps({'terminal_first':True,'space':'apps','agents':[],'terminals':[0],'terminal':0,'app_targets':[{'host':None,'directory':str(tmp),'helper':str(app)}]}))
   address='unix:'+str(tmp/'kitty.sock')
-  kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-audio-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--ssh','audio-test','--ssh-config',str(cfg),'--remote-executable',str(app),'--workspace',name],env=dict(os.environ,PULSE_SINK=output_sink,PIPEWIRE_NODE=output_sink,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'));children.append(kitty)
+  kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-audio-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--ssh','audio-test','--ssh-config',str(cfg),'--remote-executable',str(app),'--workspace',name],env=dict(os.environ,PULSE_SINK=output_sink,PIPEWIRE_NODE=output_sink,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'));children.append(kitty)
   def state():return json.loads((runtime/(name+'.state.json')).read_text())
   wait(lambda:state().get('audio',{}).get('capable') and state()['audio'].get('active'),'Local KIT frontend did not open audio')
   def amplitude():

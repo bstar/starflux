@@ -141,11 +141,10 @@ pub(crate) fn write(value: &impl Serialize, output: &mut impl Write) -> Result<(
     Ok(())
 }
 pub(crate) fn directory() -> Result<PathBuf> {
-    let path = PathBuf::from(format!("/tmp/starmux-desktops-{}", unsafe {
+    let path = PathBuf::from(format!("/tmp/starflux-desktops-{}", unsafe {
         libc::geteuid()
     }));
-    starkit::terminal_graphics::session::private_root(&path)?;
-    Ok(path)
+    crate::runtime::private_directory(path)
 }
 pub(crate) fn paths(name: &str) -> Result<(PathBuf, PathBuf)> {
     ensure!(
@@ -192,10 +191,10 @@ fn lock_with_timeout(path: PathBuf, timeout: Duration) -> Result<fs::File> {
 pub fn internal(mode: &str, name: &str) -> Result<()> {
     crate::app_audio::environment();
     if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
-        let runtime = PathBuf::from(format!("/tmp/starmux-runtime-{}", unsafe {
+        let runtime = PathBuf::from(format!("/tmp/starflux-runtime-{}", unsafe {
             libc::geteuid()
         }));
-        starkit::terminal_graphics::session::private_root(&runtime)?;
+        let runtime = crate::runtime::private_directory(runtime)?;
         // Internal helper entry runs before creating any threads.
         unsafe {
             std::env::set_var("XDG_RUNTIME_DIR", runtime);
@@ -928,7 +927,7 @@ impl Client {
             })();
             connection.store(false, Ordering::Release);
             if let Err(e) = result {
-                let _=reader_events.send(DesktopEvent::Error(format!("App desktop disconnected: {e:#}. Reconnect to retain its apps; the app host needs a compatible starmux helper.")));
+                let _=reader_events.send(DesktopEvent::Error(format!("App desktop disconnected: {e:#}. Reconnect to retain its apps; the app host needs a compatible starflux helper.")));
             }
         });
         std::thread::spawn(move || {

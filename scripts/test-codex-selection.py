@@ -3,7 +3,7 @@
 import json,os,subprocess,tempfile,time,uuid
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/codex-selection-proof';out.mkdir(parents=True,exist_ok=True)
 name='codex-select-'+uuid.uuid4().hex[:8]
 original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
@@ -22,12 +22,12 @@ def wait(fn,label):
         except (ValueError,OSError,KeyError,subprocess.SubprocessError):pass
         time.sleep(.1)
     raise AssertionError(label)
-with tempfile.TemporaryDirectory(prefix='starmux-codex-selection-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-codex-selection-') as temp:
     temp=Path(temp);address='unix:'+str(temp/'kitty.sock')
     def rc(target,*args,data=None):return subprocess.check_output(['kitten','@','--to',target,*args],input=data,stderr=subprocess.PIPE,timeout=10)
     def invoke(*args):return subprocess.check_output([str(app),'--workspace',name,*args],stderr=subprocess.PIPE,timeout=20)
     def state():return json.loads((runtime/(name+'.state.json')).read_text())
-    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-codex-selection-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',name,'--directory',str(temp),'--agent','codex'],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-codex-selection-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',name,'--directory',str(temp),'--agent','codex'],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
     try:
         wait(lambda:state().get('desktop',{}).get('project_windows'),'Codex window missing')
         inner='unix:'+str(runtime/f'kitty-{name}-1.sock')

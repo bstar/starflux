@@ -268,7 +268,7 @@ impl Navigation {
 mod tests {
     use super::*;
     fn projects(ids: &[&str]) -> Vec<Config> {
-        ids.iter().map(|id| serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starmux"})).unwrap()).collect()
+        ids.iter().map(|id| serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starflux"})).unwrap()).collect()
     }
     #[test]
     fn closed_projects_stay_closed_across_catalog_reload_and_can_reopen() {
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(nav.compare("busy-old", "dec"), Ordering::Less);
         assert_eq!(nav.compare("dec", "idle"), Ordering::Less);
         let mut projects: Vec<Config> = ["busy-old","busy-new","dec","idle","unknown-a","unknown-b"].into_iter().map(|id|
-            serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starmux"})).unwrap()).collect();
+            serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starflux"})).unwrap()).collect();
         nav.sort(&mut projects);
         let mut high: Vec<_> = projects.iter().map(|p| p.workspace.clone()).collect();
         nav.high_first = false;

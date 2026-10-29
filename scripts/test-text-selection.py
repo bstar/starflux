@@ -15,8 +15,8 @@ import uuid
 
 repo = Path(__file__).resolve().parents[1]
 app = repo/'scripts/run-local.sh'
-runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
-data_root = Path.home()/'.local/share/starmux/projects'
+runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
+data_root = Path.home()/'.local/share/starflux/projects'
 out = repo/'target/selection-proof'
 out.mkdir(parents=True, exist_ok=True)
 prefix = 'select-'+uuid.uuid4().hex[:7]
@@ -57,7 +57,7 @@ try:
     if clipboard_type:clipboard_data=subprocess.check_output(['wl-paste','--type',clipboard_type,'--no-newline'],stderr=subprocess.DEVNULL,timeout=3)
 except subprocess.SubprocessError:pass
 
-with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-tools-') as temp:
     temp = Path(temp)
     address = 'unix:'+str(temp/'kitty.sock')
     def rc(*args, data=None):
@@ -106,9 +106,9 @@ finally:
  os.write(1,b'\\x1b[<u\\x1b[?1002l\\x1b[?1006l\\x1b[?1049l');termios.tcsetattr(0,termios.TCSANOW,old)
 '''.replace('TOKEN',repr(token)))
         for i,name in enumerate(names):
-            cfg={'workspace':name,'collection':prefix,'theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(temp),'agent':f'python3 {fixture} {temp}/{i}-input.jsonl','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+            cfg={'workspace':name,'collection':prefix,'theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(temp),'agent':f'python3 {fixture} {temp}/{i}-input.jsonl','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
             path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
-        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-selection-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-selection-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
         children.append(kitty)
         def inputs(i):
             path=temp/f'{i}-input.jsonl'

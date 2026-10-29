@@ -42,8 +42,8 @@
     "artifact": "target/demo/input-proof.txt"
   },
   "installed_demo": {
-    "command": "starmux",
-    "path": "/home/bstar/.local/bin/starmux",
+    "command": "starflux",
+    "path": "/home/bstar/.local/bin/starflux",
     "state": "target/demo/final-state.json",
     "screenshot": "target/demo/final.png"
   },
@@ -133,7 +133,7 @@
       "sample_interval_seconds": 3
     },
     "strict_all_features_clippy": "passed",
-    "portable_starmux_lock": "unchanged",
+    "portable_starflux_lock": "unchanged",
     "all_features_library_tests": {
       "passed": 634,
       "failed": 0,
@@ -214,7 +214,7 @@
     "source_app": "Nautilus",
     "codex_version": "0.162.1",
     "filename": "AGENTS.md",
-    "answer": "STARMUX_MARKDOWN_DROP_OK_8317",
+    "answer": "STARFLUX_MARKDOWN_DROP_OK_8317",
     "mixed_queue_regression": "10000 hover updates with mouse and presentation acknowledgments",
     "queue_unit_tests_passed": 5,
     "stalled_connection_tests_passed": 2,

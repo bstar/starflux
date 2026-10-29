@@ -9,8 +9,8 @@ import time
 import uuid
 
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
-data=Path.home()/'.local/share/starmux/projects'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
+data=Path.home()/'.local/share/starflux/projects'
 out=repo/'target/sidebar-proof';out.mkdir(parents=True,exist_ok=True)
 prefix='nav-'+uuid.uuid4().hex[:6]
 names=[f'{prefix}-{i:02}' for i in range(20)]
@@ -32,17 +32,17 @@ def wait(fn,label):
         time.sleep(.1)
     raise AssertionError(label)
 
-with tempfile.TemporaryDirectory(prefix='starmux-nav-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-nav-') as temp:
     temp=Path(temp);address='unix:'+str(temp/'kitty.sock')
     for i,name in enumerate(names):
-        config={'workspace':name,'collection':prefix,'label':sources[i]['label'] if len(sources)==20 else f'Project {i+1}','theme':'kanagawa','host':None,'directory':str(temp),'agent':f'python3 {repo}/scripts/direct-terminal-fixture.py {temp}/{i}.jsonl','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+        config={'workspace':name,'collection':prefix,'label':sources[i]['label'] if len(sources)==20 else f'Project {i+1}','theme':'kanagawa','host':None,'directory':str(temp),'agent':f'python3 {repo}/scripts/direct-terminal-fixture.py {temp}/{i}.jsonl','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
         p=runtime/(name+'.json');p.write_text(json.dumps(config));p.chmod(0o600)
     def invoke(name,*args):return subprocess.check_output([str(app),'--workspace',name,*args],stderr=subprocess.PIPE,timeout=20)
     def state():return json.loads((runtime/(names[0]+'.state.json')).read_text())
     def rc(*args,data=None):
         if args[0] in ['send-text','send-key']:args=(args[0],'--match','state:focused',*args[1:])
         return subprocess.check_output(['kitten','@','--to',address,*args],input=data,stderr=subprocess.PIPE,timeout=10)
-    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-sidebar-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+    kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-sidebar-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
     try:
         s=wait(lambda:state() if len(state().get('project_navigation',{}).get('visible',[]))==20 and state().get('desktop',{}).get('project_windows') else None,'20 project rows were not visible')
         assert s['project_navigation']['kind']=='sidebar'
@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-nav-') as temp:
         rc('send-text','--stdin',data=f'\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m'.encode())
         s=wait(lambda:state() if state()['active_project']==names[19] else None,'Last sidebar row was not clickable')
         assert s['project_order']==names and len(s['project_navigation']['visible'])==20
-        wait(lambda:any(w['app_id'].startswith('starmux-'+names[19]+'-') for w in state()['desktop']['project_windows']),'Selected project terminal missing')
+        wait(lambda:any(w['app_id'].startswith('starflux-'+names[19]+'-') for w in state()['desktop']['project_windows']),'Selected project terminal missing')
         # Select another row while retaining all project labels and stable order.
         y=122+state()['project_order'].index(names[18])*34+15
         rc('send-text','--stdin',data=f'\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m'.encode())

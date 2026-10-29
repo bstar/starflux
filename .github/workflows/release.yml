@@ -33,7 +33,7 @@ jobs:
       - run: scripts/dist/macos.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: starmux-macos-client
+          name: starflux-macos-client
           path: dist/*-aarch64-apple-darwin.tar.gz
           if-no-files-found: error
   appimage:
@@ -53,9 +53,9 @@ jobs:
       - name: Collect and checksum verified artifacts
         run: |
           mkdir dist
-          cp staging/starmux-appimage-*/*.AppImage dist/
-          cp staging/starmux-macos-client/*.tar.gz dist/
-          cp staging/starmux-arch/* dist/
+          cp staging/starflux-appimage-*/*.AppImage dist/
+          cp staging/starflux-macos-client/*.tar.gz dist/
+          cp staging/starflux-arch/* dist/
           cd dist
           sha256sum -- * | sort -k2 > SHA256SUMS
           sha256sum -c SHA256SUMS
@@ -63,4 +63,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --title "S T A R / M U X $RELEASE_TAG" --notes-file docs/releases/0.1.0.md --verify-tag
+        run: gh release create "$RELEASE_TAG" dist/* --title "S T A R / F L U X $RELEASE_TAG" --notes-file docs/releases/0.1.0.md --verify-tag

@@ -1,11 +1,11 @@
 [package]
-name = "starmux-terminal-client"
+name = "starflux-terminal-client"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [[bin]]
-name = "starmux-terminal-client"
+name = "starflux-terminal-client"
 path = "src/main.rs"
 
 [dependencies]

@@ -107,7 +107,7 @@ struct Credit {
     blocks: usize,
 }
 pub fn sink_name(name: &str) -> String {
-    format!("star_mux_{}_{}", unsafe { libc::geteuid() }, name)
+    format!("star_flux_{}_{}", unsafe { libc::geteuid() }, name)
 }
 pub fn environment() {
     if std::env::var_os("PULSE_SERVER").is_none() {
@@ -153,7 +153,7 @@ impl Sink {
             &format!("sink_name={}", sink_name(name)),
             "rate=48000",
             "channels=2",
-            "sink_properties=device.description=STAR_MUX_App_Audio",
+            "sink_properties=device.description=STAR_FLUX_App_Audio",
         ])?;
         let module = module.trim().to_string();
         ensure!(

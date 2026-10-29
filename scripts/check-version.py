@@ -5,7 +5,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 manifest=tomllib.loads((root/'Cargo.toml').read_text())
 lock=tomllib.loads((root/'Cargo.lock').read_text())
-for filename,name in [('Cargo.toml','starmux'),('terminal-client/Cargo.toml','starmux-terminal-client')]:
+for filename,name in [('Cargo.toml','starflux'),('terminal-client/Cargo.toml','starflux-terminal-client')]:
     version=tomllib.loads((root/filename).read_text())['package']['version']
     assert next(p['version'] for p in lock['package'] if p['name']==name)==version, f'{name}: manifest/lock version mismatch'
 kit=manifest['workspace']['dependencies']['starkit']

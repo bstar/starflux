@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise independent unnamed Kitty tabs and reject duplicate named controllers."""
 import json,os,pathlib,subprocess,tempfile,time
-repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 def wait(fn,label):
     for _ in range(150):
         try:
@@ -10,9 +10,9 @@ def wait(fn,label):
         except (OSError,ValueError,KeyError,subprocess.SubprocessError):pass
         time.sleep(.1)
     raise AssertionError(label)
-with tempfile.TemporaryDirectory(prefix='starmux-tabs-') as directory:
+with tempfile.TemporaryDirectory(prefix='starflux-tabs-') as directory:
     tmp=pathlib.Path(directory);address='unix:'+str(tmp/'kitty.sock');log=(tmp/'kitty.log').open('w')
-    child=subprocess.Popen(['/usr/bin/kitty','--config','NONE','--class','starmux-tab-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app)],stdout=log,stderr=log)
+    child=subprocess.Popen(['/usr/bin/kitty','--config','NONE','--class','starflux-tab-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app)],stdout=log,stderr=log)
     names=[]
     def rc(*args):return subprocess.check_output(['kitten','@','--to',address,*args],stderr=subprocess.PIPE,timeout=10)
     def tabs():return json.loads(rc('ls'))[0]['tabs']

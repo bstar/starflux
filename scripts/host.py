@@ -54,18 +54,18 @@ def main():
     workspace=req['workspace']; pane=req.get('pane','p0')
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,32}',workspace) or not re.fullmatch(r'p(?:[0-9]|[12][0-9]|3[01])',pane):
         raise ValueError('Invalid workspace or pane')
-    server=req.get('server') or 'starmux-'+workspace
-    if not re.fullmatch(r'starmux-[a-zA-Z0-9_-]{1,88}',server):raise ValueError('Invalid terminal server')
+    server=req.get('server') or 'starflux-'+workspace
+    if not re.fullmatch(r'starflux-[a-zA-Z0-9_-]{1,88}',server):raise ValueError('Invalid terminal server')
     target=pane+':0.0'
     tm=['tmux','-L',server,'-f','/dev/null']
     def shell_command(argv):
         # The AppImage's tools are private to its controller. Project commands
         # must find the host's Python, codecs and audio configuration.
-        if 'STARMUX_SYSTEM_PATH' in os.environ:
+        if 'STARFLUX_SYSTEM_PATH' in os.environ:
             clean=['/usr/bin/env']
-            for key in ['STARMUX_SYSTEM_PATH','GST_PLUGIN_SYSTEM_PATH_1_0','GST_PLUGIN_SCANNER','GST_REGISTRY','ALSA_CONFIG_DIR','ALSA_CONFIG_PATH','ALSA_PLUGIN_DIR']:
+            for key in ['STARFLUX_SYSTEM_PATH','GST_PLUGIN_SYSTEM_PATH_1_0','GST_PLUGIN_SCANNER','GST_REGISTRY','ALSA_CONFIG_DIR','ALSA_CONFIG_PATH','ALSA_PLUGIN_DIR']:
                 clean+=['-u',key]
-            argv=clean+['PATH='+os.environ['STARMUX_SYSTEM_PATH']]+argv
+            argv=clean+['PATH='+os.environ['STARFLUX_SYSTEM_PATH']]+argv
         return shlex.join(argv)
     def run(*args,**kw):
         result=subprocess.run(tm+list(args),stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kw)
@@ -76,7 +76,7 @@ def main():
     action=req['action']
     lifecycle_lock=None
     if action in ['ensure','restart','reap','stop'] or (action=='attach' and req.get('ensure_shell')):
-        lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starmux-host-'+str(os.getuid()))
+        lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))
         lock_root.mkdir(mode=0o700,exist_ok=True)
         lifecycle_lock=(lock_root/(workspace+'-'+pane+'.lock')).open('a')
         fcntl.flock(lifecycle_lock,fcntl.LOCK_EX)
@@ -89,14 +89,14 @@ def main():
             try:
                 old=shlex.split(info[2]) if info[1]=='1' else [s.decode() for s in pathlib.Path('/proc/'+info[0]+'/cmdline').read_bytes().split(b'\0') if s]
                 if info[1]=='1' and len(old)==1:old=shlex.split(old[0])
-                if info[1]=='1' and 'STARMUX_SYSTEM_PATH' in os.environ:
+                if info[1]=='1' and 'STARFLUX_SYSTEM_PATH' in os.environ:
                     prefix=shlex.split(shell_command([]))
                     if old[:len(prefix)]==prefix:old=old[len(prefix):]
             except (OSError,ValueError,UnicodeError):old=[]
             # Never replace a shell or real harness, even in a legacy workspace.
-            if len(old)==3 and pathlib.Path(old[0]).name=='starmux' and old[1:]==['--fixture',workspace]:
+            if len(old)==3 and pathlib.Path(old[0]).name=='starflux' and old[1:]==['--fixture',workspace]:
                 run('respawn-pane','-k','-t',target,'-c',cwd,shell_command(argv))
-                run('set-option','-p','-u','-t',target,'@starmux_state')
+                run('set-option','-p','-u','-t',target,'@starflux_state')
                 replaced=True
         if not exists():
             run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',shell_command(argv))
@@ -126,7 +126,7 @@ def main():
         os.execvp('tmux',tm+['attach-session','-t',pane])
     elif action=='inspect':
         if not exists():print(json.dumps({'alive':False,'state':'missing'}));return
-        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{@starmux_state}\t#{pane_height}\t#{pane_tty}').decode().strip().split('\t')
+        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{@starflux_state}\t#{pane_height}\t#{pane_tty}').decode().strip().split('\t')
         screen=run('capture-pane','-p','-t',target) if fields[1]=='0' else b''
         agent,agent_pid=foreground_agent(fields[0],fields[5],fields[2]) if fields[1]=='0' else (None,None)
         state=fields[3] if fields[3] and agent else 'unknown'
@@ -148,7 +148,7 @@ def main():
         if len(text)>1024*1024:raise ValueError('Paste exceeds 1 MiB')
         if not text:
             print(json.dumps({'delivered':True,'submitted':False}));return
-        name='starmux-'+os.urandom(8).hex()
+        name='starflux-'+os.urandom(8).hex()
         run('load-buffer','-b',name,'-',input=text)
         try:run('paste-buffer','-b',name,'-d','-p','-t',target)
         finally:subprocess.run(tm+['delete-buffer','-b',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -160,7 +160,7 @@ def main():
         name=req['name']; size=req['size']
         if pathlib.Path(name).name!=name or name in ['.','..'] or any(ord(c)<32 for c in name):raise ValueError('Invalid file name')
         if not 0<=size<=64*1024*1024:raise ValueError('File exceeds 64 MiB demo limit')
-        root=pathlib.Path(os.environ.get('XDG_DATA_HOME',os.path.expanduser('~/.local/share')))/'starmux'/'attachments'/workspace/pane
+        root=pathlib.Path(os.environ.get('XDG_DATA_HOME',os.path.expanduser('~/.local/share')))/'starflux'/'attachments'/workspace/pane
         root.mkdir(parents=True,exist_ok=True,mode=0o700)
         stage=pathlib.Path(tempfile.mkdtemp(prefix='drop-',dir=root));os.chmod(stage,0o700)
         partial=stage/'.upload'; dest=stage/name; digest=hashlib.sha256(); count=0

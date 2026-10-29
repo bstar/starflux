@@ -19,7 +19,7 @@ stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
 def put(path,data,mode):
  path.parent.mkdir(parents=True,exist_ok=True)
  if path.exists() and path.read_bytes()==data:return
- if path.exists():shutil.copy2(path,path.with_name(path.name+'.bak-starmux-'+stamp))
+ if path.exists():shutil.copy2(path,path.with_name(path.name+'.bak-starflux-'+stamp))
  with tempfile.NamedTemporaryFile(dir=path.parent,delete=False)as f:f.write(data);temp=Path(f.name)
  temp.chmod(mode);temp.replace(path)
 put(local_watcher,watcher_data,0o600)
@@ -42,4 +42,4 @@ put(config,updated.encode(),config.stat().st_mode&0o777 if config.exists() else 
 print('Installed local audio helper:',helper)
 print('Installed Kitty watcher:',local_watcher)
 print('Config:',config)
-print('Reload Kitty configuration, then Refresh UI or reconnect STAR/MUX. Existing terminal sessions are retained.')
+print('Reload Kitty configuration, then Refresh UI or reconnect STAR/FLUX. Existing terminal sessions are retained.')

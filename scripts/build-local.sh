@@ -5,5 +5,5 @@ cd "$(dirname "$0")/.."
 ./scripts/build-pty-proxy
 ./scripts/prepare-runtime
 ./scripts/run-local.sh --version
-./target/release/starmux-terminal-client --help
-./target/release/starmux-pty-proxy --help
+./target/release/starflux-terminal-client --help
+./target/release/starflux-pty-proxy --help

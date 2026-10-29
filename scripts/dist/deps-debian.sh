@@ -34,7 +34,7 @@ while read -r component digest; do
   curl --retry 5 -fsSL "https://gstreamer.freedesktop.org/src/$component/$archive" -o "$source_work/$archive"
   printf '%s  %s\n' "$digest" "$source_work/$archive" | sha256sum -c -
   tar -xJf "$source_work/$archive" -C "$source_work"
-  install -Dm644 "$source_work/$component-1.24.13/COPYING" "/usr/local/share/licenses/starmux/$component.COPYING"
+  install -Dm644 "$source_work/$component-1.24.13/COPYING" "/usr/local/share/licenses/starflux/$component.COPYING"
   extra=()
   case "$component" in
     gstreamer) extra=(-Dtools=enabled) ;;

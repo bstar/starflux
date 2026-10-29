@@ -8,17 +8,17 @@ pub fn run(workspace: &str) -> Result<()> {
         let _ = Command::new("tmux")
             .args([
                 "-L",
-                &format!("starmux-{workspace}"),
+                &format!("starflux-{workspace}"),
                 "set-option",
                 "-p",
                 "-t",
                 "p1:0.0",
-                "@starmux_state",
+                "@starflux_state",
                 s,
             ])
             .status();
     };
-    println!("\x1b[1;32mS T A R / M U X · demo agent\x1b[0m\r\n");
+    println!("\x1b[1;32mS T A R / F L U X · demo agent\x1b[0m\r\n");
     println!(
         "This is a local fixture for testing the workspace.\r\nDrop a file here, then press Enter to inspect its bytes.\r\nType /work, /done or /ask to exercise agent status.\r\nYour shell is in the pane beside this one.\r\n"
     );

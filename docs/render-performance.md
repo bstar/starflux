@@ -37,11 +37,11 @@ Input delivery runs from Kitty RPC injection to fixture receipt. Captured update
 Run from the graphical desktop:
 
 ```sh
-STARMUX_LATENCY_PHASE=local STARMUX_LATENCY_WIDTH=1800 STARMUX_LATENCY_HEIGHT=1800 STARMUX_LATENCY_SAMPLES=18 python3 scripts/bench-terminal-latency.py
-STARMUX_LATENCY_PHASE=ssh STARMUX_LATENCY_KINDS=cells-ssh,graphical-ssh STARMUX_LATENCY_WIDTH=1800 STARMUX_LATENCY_HEIGHT=1800 STARMUX_LATENCY_SAMPLES=18 python3 scripts/bench-terminal-latency.py
+STARFLUX_LATENCY_PHASE=local STARFLUX_LATENCY_WIDTH=1800 STARFLUX_LATENCY_HEIGHT=1800 STARFLUX_LATENCY_SAMPLES=18 python3 scripts/bench-terminal-latency.py
+STARFLUX_LATENCY_PHASE=ssh STARFLUX_LATENCY_KINDS=cells-ssh,graphical-ssh STARFLUX_LATENCY_WIDTH=1800 STARFLUX_LATENCY_HEIGHT=1800 STARFLUX_LATENCY_SAMPLES=18 python3 scripts/bench-terminal-latency.py
 ```
 
-The default comparison uses the CPU renderer; set `STARMUX_BENCH_RENDERER` to select another backend. JSON samples, screenshots and controller logs are saved under `target/terminal-latency-proof/`. The script uses private fake sessions, closes its test windows and restores the previously focused window.
+The default comparison uses the CPU renderer; set `STARFLUX_BENCH_RENDERER` to select another backend. JSON samples, screenshots and controller logs are saved under `target/terminal-latency-proof/`. The script uses private fake sessions, closes its test windows and restores the previously focused window.
 
 ## App Space
 
@@ -162,7 +162,7 @@ bitmaps are available. Its visible pointer therefore includes the entire
 input, app redraw, capture, encode, network, decode and presentation path.
 A steady 60 fps stream does not establish low pointer latency.
 
-The cursor stays in the game canvas. STARMUX now keeps raw frames replaceable
+The cursor stays in the game canvas. STARFLUX now keeps raw frames replaceable
 while the viewer has no presentation credit, rather than encoding an extra
 frame that becomes stale while waiting. Encoding begins when there is room
 in the negotiated presentation window. Every encoded access unit is still

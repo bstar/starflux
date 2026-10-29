@@ -1,4 +1,4 @@
-# STAR MUX development demo
+# STAR FLUX development demo
 
 The current application uses [App Shelf](app-shelf.md): project containers, agent and terminal spaces, terminal tabs with explicit splitting, and persistent local/SSH application desktops. The two-pane descriptions below document the earlier embedding baseline. Follow the App Shelf guide for the current workflow.
 
@@ -11,13 +11,13 @@ Use the pinned Nix development shell. No sibling checkout or AUR packages are re
 ```sh
 ./scripts/dev build --release
 ./scripts/prepare-runtime
-ln -s "$PWD/scripts/run-local.sh" "$HOME/.local/bin/starmux"
-starmux --version
+ln -s "$PWD/scripts/run-local.sh" "$HOME/.local/bin/starflux"
+starflux --version
 ```
 
-Reuse an existing correct link rather than replacing another command. The runtime wrapper loads the Nix graphics library paths, and the development shell profile keeps their store paths rooted. The executable remains in `target/release/starmux`.
+Reuse an existing correct link rather than replacing another command. The runtime wrapper loads the Nix graphics library paths, and the development shell profile keeps their store paths rooted. The executable remains in `target/release/starflux`.
 
-Runtime requirements are Linux, Wayland, an EGL device usable by Smithay, Kitty with graphics and OSC 72 file-drop support, Python 3, and tmux. Remote hosts need Python 3, tmux and the chosen agent command; no remote graphical desktop or installed STAR/MUX binary is required. The test harness uses a STAR/MUX fixture remotely, but normal remote agent launch sends only the embedded Python host helper.
+Runtime requirements are Linux, Wayland, an EGL device usable by Smithay, Kitty with graphics and OSC 72 file-drop support, Python 3, and tmux. Remote hosts need Python 3, tmux and the chosen agent command; no remote graphical desktop or installed STAR/FLUX binary is required. The test harness uses a STAR/FLUX fixture remotely, but normal remote agent launch sends only the embedded Python host helper.
 
 The installed Kitty 0.48.2 successfully negotiates OSC 72. Graphics support alone does not establish file-drop support in another terminal build.
 
@@ -25,21 +25,21 @@ The installed Kitty 0.48.2 successfully negotiates OSC 72. Graphics support alon
 
 ```sh
 # Local shell plus real Codex, using your existing Codex setup.
-starmux
+starflux
 
 # Shell plus local Codex.
-starmux --workspace codex --agent codex
+starflux --workspace codex --agent codex
 
 # Local shell plus Codex on another Linux host.
-starmux --workspace remote --host user@host --directory /path/to/project --agent codex
+starflux --workspace remote --host user@host --directory /path/to/project --agent codex
 
 # Honor an alternate OpenSSH configuration, including aliases and jump hosts.
-starmux --workspace work --host workbox --ssh-config ~/.ssh/work-config --agent codex
+starflux --workspace work --host workbox --ssh-config ~/.ssh/work-config --agent codex
 ```
 
-When launched from outside Kitty, STAR/MUX opens a Kitty window. Inside Kitty it uses the current terminal. The first pane stays local. The second pane runs on the selected host. The directory option selects the second pane's working directory on its host. Agent commands are parsed as an argument vector; use an explicit shell command only when shell syntax is intended.
+When launched from outside Kitty, STAR/FLUX opens a Kitty window. Inside Kitty it uses the current terminal. The first pane stays local. The second pane runs on the selected host. The directory option selects the second pane's working directory on its host. Agent commands are parsed as an argument vector; use an explicit shell command only when shell syntax is intended.
 
-Each ordinary `starmux` launch generates an independent workspace, so different tabs never compete for a controller. `starmux --sessions` lists saved names; `starmux --workspace NAME` reconnects to one. Only one frontend may control a named workspace at a time; a second attachment is rejected instead of stealing the first tab.
+Each ordinary `starflux` launch generates an independent workspace, so different tabs never compete for a controller. `starflux --sessions` lists saved names; `starflux --workspace NAME` reconnects to one. Only one frontend may control a named workspace at a time; a second attachment is rejected instead of stealing the first tab.
 
 Workspace names identify saved launch configuration and isolated tmux sessions. Reopening a name reuses its sessions. A conflicting explicit host, directory or agent produces an error instead of silently switching an existing session. Stop that workspace or choose another name to change its configuration.
 
@@ -47,37 +47,37 @@ Normal launches open a local shell and real Codex. Use `--agent "bash -l"` for a
 
 ## Drop a file into an agent
 
-Drag a regular file from the desktop file manager onto the desired terminal pane. The destination is frozen at the drop, independently of later keyboard focus. STAR/MUX copies and hashes its bytes, stages the file privately on the destination host, commits the complete file, and pastes its destination into the existing prompt. Originals remain intact. For the tested Codex version, a dropped PNG becomes an image attachment in the composer.
+Drag a regular file from the desktop file manager onto the desired terminal pane. The destination is frozen at the drop, independently of later keyboard focus. STAR/FLUX copies and hashes its bytes, stages the file privately on the destination host, commits the complete file, and pastes its destination into the existing prompt. Originals remain intact. For the tested Codex version, a dropped PNG becomes an image attachment in the composer.
 
 Transfers show byte progress. Use **Cancel transfer**, or release embedded input with **Ctrl+Esc** and press **Esc**, to cancel an active transfer. Partial uploads are cleaned after EOF. A file committed just before cancellation can remain retained, but the canceled batch is not subsequently pasted. There is no automatic prompt submission.
 
 The demo accepts up to 32 regular UTF-8-named files per offer and at most 64 MiB per file. Directory, symlink, clipboard-image, promised-file and cross-machine URI offers need further integration. Multiple ordinary paths are supported by the transport; each harness's interpretation of multiple image paths still needs its own acceptance check. The actual Codex image check covers a single PNG.
 
-The destination must be readable by the agent. A separate container or mount namespace may require a mapped attachment directory. Uploaded files are retained under the destination host's `$XDG_DATA_HOME/starmux/attachments`, or `~/.local/share/starmux/attachments`; this demo does not automatically expire conversation attachments.
+The destination must be readable by the agent. A separate container or mount namespace may require a mapped attachment directory. Uploaded files are retained under the destination host's `$XDG_DATA_HOME/starflux/attachments`, or `~/.local/share/starflux/attachments`; this demo does not automatically expire conversation attachments.
 
 For scripted delivery through the same host upload and paste implementation:
 
 ```sh
-starmux --workspace remote --deliver '/local/path/screenshot.png' --pane 2
+starflux --workspace remote --deliver '/local/path/screenshot.png' --pane 2
 ```
 
 ## Close and reconnect
 
 ```sh
-starmux --workspace remote --inspect
-starmux --workspace remote --capture --pane 2
-starmux --workspace remote --close
-starmux --workspace remote
+starflux --workspace remote --inspect
+starflux --workspace remote --capture --pane 2
+starflux --workspace remote --close
+starflux --workspace remote
 
 # Explicitly end both sessions and clear their launch configuration.
-starmux --workspace remote --stop
+starflux --workspace remote --stop
 ```
 
 Closing the frontend or workspace preserves tmux-owned shells and agents. The controller runs in its own process group, so presentation loss does not kill it. If an inner Kitty or its SSH terminal client exits, the controller attempts to reopen that view after five seconds. Inspect reports live session health rather than treating its cached graphical snapshot as current process state.
 
 The demo uses the authenticated OpenSSH transport for attach, inspection and transfers. It does not pool every control operation into one connection. Use SSH keys or an existing SSH agent for background operations; interactive password entry for each background helper is not implemented. Host identity checking follows OpenSSH configuration.
 
-Host reboot ends the original processes. Layout restore after reboot, native harness resume, terminal image reconstruction, daemon upgrades and transparent compositor recovery are production backlog items. Runtime workspace configuration currently lives under `$XDG_RUNTIME_DIR/starmux`, so it is not a reboot-persistent project store.
+Host reboot ends the original processes. Layout restore after reboot, native harness resume, terminal image reconstruction, daemon upgrades and transparent compositor recovery are production backlog items. Runtime workspace configuration currently lives under `$XDG_RUNTIME_DIR/starflux`, so it is not a reboot-persistent project store.
 
 ## Verify the demo
 
@@ -98,7 +98,7 @@ python3 scripts/test-desktop.py --inject-host-mouse \
 
 The desktop proof requires Nautilus, OpenSSH server tools, Hyprland, grim and writable `/dev/uinput`. It creates private floating fixture windows without changing desktop configuration or the user's SSH configuration. Codex verification uses available authentication, a disposable directory, a read-only sandbox, and one explicit test submission. The test report identifies loopback SSH rather than claiming a separate-machine or WAN check.
 
-On the tested environment, a genuine Nautilus drop crossed Kitty, STAR/MUX and SSH into an already-running Codex 0.162.1 TUI. The composer showed `[Image #1]`; Codex answered “Green” for the fixture image. The proof also verifies process identity across SSH terminal disconnection and workspace closure. The final regression additionally checks presenter death and reattachment and a filename with spaces and Unicode.
+On the tested environment, a genuine Nautilus drop crossed Kitty, STAR/FLUX and SSH into an already-running Codex 0.162.1 TUI. The composer showed `[Image #1]`; Codex answered “Green” for the fixture image. The proof also verifies process identity across SSH terminal disconnection and workspace closure. The final regression additionally checks presenter death and reattachment and a filename with spaces and Unicode.
 
 Artifacts are written below the selected output directory: rendered screenshots, composer and answer captures, sanitized logs, and `result.json`. Remaining production requirements are tracked in [TASKS.md](../TASKS.md); these demo checks do not mark the entire M0 comparison or the release matrix complete.
 
@@ -113,9 +113,9 @@ The initial demo attached every unnamed launch to `demo`. Concurrent tabs repeat
 The installed local build includes the unreleased sibling STAR/KIT GPU candidate. CPU remains the default. To select hardware rendering:
 
 ```sh
-STAR_GRAPHICS_RENDERER=gpu starmux
+STAR_GRAPHICS_RENDERER=gpu starflux
 # Prefer hardware, with a CPU fallback if unavailable:
-STAR_GRAPHICS_RENDERER=auto starmux
+STAR_GRAPHICS_RENDERER=auto starflux
 ```
 
 Each ordinary launch creates a new workspace. Use `--workspace NAME` to reattach an existing session after closing its previous frontend. Existing controller processes keep their original executable until restarted; do not stop a workspace merely to change its frontend renderer.
@@ -139,7 +139,7 @@ The desktop acceptance test now clicks the embedded Codex pane before dragging a
 STAR_GRAPHICS_RENDERER=gpu python3 scripts/test-desktop.py --inject-host-mouse --codex /home/bstar/.local/share/mise/installs/codex/0.162.1/bin/codex --name 'screen shot λ.png' --output target/codex-focused-drop-proof
 ```
 
-This passed with Codex 0.162.1 and authenticated loopback SSH. It verifies image attachment delivery to real Codex in STAR/MUX; a separate remote machine remains an additional acceptance check. The script uses its own file-manager process group and restores desktop focus and the cursor after testing.
+This passed with Codex 0.162.1 and authenticated loopback SSH. It verifies image attachment delivery to real Codex in STAR/FLUX; a separate remote machine remains an additional acceptance check. The script uses its own file-manager process group and restores desktop focus and the cursor after testing.
 
 ## Held drag under backpressure
 
@@ -168,9 +168,9 @@ This passed from a private Nautilus window to focused Codex over authenticated l
 Blueprint is the default live treatment, implemented from `design/treatments.html`: square one-pixel edges, dashed inactive frames, the drafting grid between terminals, monospaced headings, a 42.5/57.5 terminal split, and a separated outer focus rule. Physical-pixel geometry and a shared layout drive terminal placement, hit testing and file-drop targeting. Text is shaped at its destination size rather than scaled from a screenshot. The runtime wrapper selects Liberation Mono to match the design study.
 
 ```sh
-starmux --themes
-STAR_GRAPHICS_RENDERER=gpu starmux --agent codex --theme kanagawa
-starmux --workspace remote --theme catppuccin-latte
+starflux --themes
+STAR_GRAPHICS_RENDERER=gpu starflux --agent codex --theme kanagawa
+starflux --workspace remote --theme catppuccin-latte
 ```
 
 The last command changes a running workspace's palette without opening a duplicate frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored with the workspace configuration. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/KIT built-ins plus `system`; system uses KIT's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
@@ -178,8 +178,8 @@ The last command changes a running workspace's palette without opening a duplica
 Controllers started before the Blueprint build need to be closed once and reopened to load the new presentation; their tmux-backed agents survive:
 
 ```sh
-starmux --workspace NAME --close
-STAR_GRAPHICS_RENDERER=gpu starmux --workspace NAME
+starflux --workspace NAME --close
+STAR_GRAPHICS_RENDERER=gpu starflux --workspace NAME
 ```
 
 `python3 scripts/test-blueprint.py` exercises the live GPU view, dark/light palette changes, the inner Kitty colors, keyboard theme control and actual terminal input. It records screenshots in `target/blueprint-proof`. Ten Rust tests check the measured HTML geometry, square bounded surfaces through 4K and portrait sizes, readable theme roles, legacy workspace compatibility and existing transfer behavior. The pinned portable CPU build also passes `./scripts/dev check --all-targets --locked --offline`.

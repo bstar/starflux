@@ -15,8 +15,8 @@ import uuid
 
 repo = Path(__file__).resolve().parents[1]
 app = repo/'scripts/run-local.sh'
-runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
-data_root = Path.home()/'.local/share/starmux/projects'
+runtime = Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
+data_root = Path.home()/'.local/share/starflux/projects'
 out = repo/'target/project-tools-proof'
 out.mkdir(parents=True, exist_ok=True)
 prefix = 'tools-'+uuid.uuid4().hex[:7]
@@ -50,7 +50,7 @@ def action(value):
     invoke(names[0], '--action', value)
 
 
-with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-tools-') as temp:
     temp = Path(temp)
     address = 'unix:'+str(temp/'kitty.sock')
     def rc(*args, data=None):
@@ -97,9 +97,9 @@ with tempfile.TemporaryDirectory(prefix='starmux-tools-') as temp:
                 (root/'tracked.txt').write_text('base\nstaged\n');git('add','tracked.txt')
                 (root/'tracked.txt').write_text('base\nstaged\nworking\n')
             (root/'new.txt').write_text('new\n')
-            cfg={'workspace':name,'collection':prefix,'label':'Local project' if i==0 else 'SSH project','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(root),'agent':f'python3 {repo}/scripts/direct-terminal-fixture.py {temp}/{i}-input.jsonl','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+            cfg={'workspace':name,'collection':prefix,'label':'Local project' if i==0 else 'SSH project','theme':'kanagawa','host':None if i==0 else 'tools-host','ssh_config':None if i==0 else str(sshconfig),'directory':str(root),'agent':f'python3 {repo}/scripts/direct-terminal-fixture.py {temp}/{i}-input.jsonl','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
             path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
-        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-tools-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
+        kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-tools-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',names[0]],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='kitty'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'))
         children.append(kitty)
         s=wait(lambda: state() if state().get('git',{}).get('branch')=='agent/local' and state().get('desktop',{}).get('project_windows') and all(p.get('pid') for p in state()['panes']) else None,'Local project unavailable')
         assert s['git']['staged']==1 and s['git']['unstaged']==1 and s['git']['untracked']==1

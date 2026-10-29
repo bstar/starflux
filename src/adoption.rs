@@ -36,7 +36,7 @@ impl Terminal {
             "Invalid transferred terminal identity"
         );
         ensure!(
-            self.server.starts_with("starmux-")
+            self.server.starts_with("starflux-")
                 && self.server.len() <= 96
                 && self
                     .server
@@ -85,7 +85,7 @@ pub fn migrate(prepare_only: bool) -> Result<()> {
         "Live Herdr PTY migration currently supports Linux hosts"
     );
     let executable = std::env::current_exe()?;
-    let proxy = executable.with_file_name("starmux-pty-proxy");
+    let proxy = executable.with_file_name("starflux-pty-proxy");
     ensure!(
         proxy.is_file(),
         "Build the lightweight PTY helper first: ./scripts/build-pty-proxy"

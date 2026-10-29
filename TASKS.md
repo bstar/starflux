@@ -1,4 +1,4 @@
-# STAR MUX implementation tasks
+# STAR FLUX implementation tasks
 
 Task checkboxes reflect completed acceptance criteria; the demo progress below also records partial work. Complete each task's acceptance condition before marking it done. The [plan](docs/plan.md) defines architecture, scope and release gates. Task dependencies describe execution order, not a request for parallel agents.
 
@@ -55,7 +55,7 @@ Task checkboxes reflect completed acceptance criteria; the demo progress below a
 - [x] Define the architecture, open decisions, runtime boundaries and failure guarantees.
 - [x] Make real remote harness attachment delivery an M0 acceptance requirement.
 - [x] Create ordered implementation tasks with dependencies and exit criteria.
-- [x] Move the project to `/home/bstar/projects/star/starmux`.
+- [x] Move the project to `/home/bstar/projects/star/starflux`.
 
 ## Demo progress
 

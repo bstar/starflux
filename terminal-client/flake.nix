@@ -1,5 +1,5 @@
 {
-  description = "STAR/MUX local Kitty audio frontend";
+  description = "STAR/FLUX local Kitty audio frontend";
   inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
   outputs = { self, nixpkgs, flake-utils }:

@@ -5,7 +5,7 @@ HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 # Controllers and PTY brokers survive the frontend. Run from a durable private
 # cache, never from the temporary AppImage FUSE mount/extraction directory.
 BUILD=@BUILD@
-CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/starmux/appimage
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/starflux/appimage
 DEST=$CACHE/$BUILD
 if [ "$HERE" != "$DEST" ]; then
     mkdir -p "$CACHE"
@@ -23,25 +23,25 @@ if [ "$HERE" != "$DEST" ]; then
     fi
     exec "$DEST/AppRun" "$@"
 fi
-export STARMUX_SYSTEM_PATH="${STARMUX_SYSTEM_PATH:-$PATH}"
-export PATH="$HERE/usr/bin:$STARMUX_SYSTEM_PATH"
+export STARFLUX_SYSTEM_PATH="${STARFLUX_SYSTEM_PATH:-$PATH}"
+export PATH="$HERE/usr/bin:$STARFLUX_SYSTEM_PATH"
 export TERMINFO_DIRS="$HERE/usr/share/terminfo${TERMINFO_DIRS:+:$TERMINFO_DIRS}:/usr/share/terminfo:/lib/terminfo"
 export GST_PLUGIN_SYSTEM_PATH_1_0="$HERE/usr/lib/gstreamer-1.0"
 export GST_PLUGIN_SCANNER="$HERE/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
-export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/starmux/gst-$BUILD.bin"
+export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/starflux/gst-$BUILD.bin"
 export ALSA_CONFIG_DIR="$HERE/usr/share/alsa"
 export ALSA_CONFIG_PATH="$HERE/usr/share/alsa/alsa.conf"
 export ALSA_PLUGIN_DIR="$HERE/usr/lib/alsa-lib"
 unset APPDIR
 # A safe headless diagnostic of the actual bundled tools and codec plugins.
 if [ "${1-}" = --check-bundle ]; then
-    starmux --version
-    starmux-terminal-client --help
-    starmux-pty-proxy --help
+    starflux --version
+    starflux-terminal-client --help
+    starflux-pty-proxy --help
     python3 -c 'import ctypes, fcntl, hashlib, json, socket, ssl, termios; print("Bundled Python ready")'
     tmux -V
     # Private fake terminal only: no GUI and no existing workspace/server.
-    PROOF=starmux-bundle-proof-$$
+    PROOF=starflux-bundle-proof-$$
     trap 'tmux -L "$PROOF" kill-server 2>/dev/null || true' EXIT HUP INT TERM
     tmux -L "$PROOF" -f /dev/null new-session -d -s proof 'sleep 10'
     tmux -L "$PROOF" set-option -g allow-passthrough on
@@ -55,6 +55,6 @@ if [ "${1-}" = --check-bundle ]; then
     gst-inspect-1.0 appsrc >/dev/null
     gst-inspect-1.0 appsink >/dev/null
     gst-launch-1.0 -q videotestsrc num-buffers=2 ! video/x-raw,width=64,height=64,framerate=60/1 ! videoconvert ! x264enc tune=zerolatency ! fakesink
-    exec starmux --themes
+    exec starflux --themes
 fi
-exec "$HERE/usr/bin/starmux" "$@"
+exec "$HERE/usr/bin/starflux" "$@"

@@ -20,7 +20,7 @@ pub fn monotonic_ns() -> u64 {
     time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
 }
 pub fn default_desktop_helper() -> String {
-    "starmux".into()
+    "starflux".into()
 }
 const HELPER: &str = include_str!("../scripts/host.py");
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -280,7 +280,7 @@ impl Config {
                 "Open the imported terminal before pasting into it"
             );
             let mut child =
-                Command::new(std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()))
+                Command::new(std::env::var("STARFLUX_KITTEN").unwrap_or_else(|_| "kitten".into()))
                     .args([
                         "@",
                         "--to",
@@ -472,7 +472,7 @@ pub fn initialize_environment() -> Result<()> {
         {
             native
         } else {
-            PathBuf::from(format!("/tmp/starmux-{uid}"))
+            PathBuf::from(format!("/tmp/starflux-{uid}"))
         };
         starkit::terminal_graphics::session::private_root(&runtime)?;
         // CLI entry calls this before starting any threads or frontend probes.
@@ -485,10 +485,31 @@ pub fn initialize_environment() -> Result<()> {
 pub fn root() -> Result<PathBuf> {
     let r = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("/tmp/starmux-{}", unsafe { libc::geteuid() })))
-        .join("starmux");
-    starkit::terminal_graphics::session::private_root(&r)?;
-    Ok(r)
+        .unwrap_or_else(|| PathBuf::from(format!("/tmp/starflux-{}", unsafe { libc::geteuid() })))
+        .join("starflux");
+    private_directory(r)
+}
+/// Resolve an owned migration alias while retaining private-root checks.
+/// Live workers keep using their original directory until they exit.
+pub fn private_directory(path: PathBuf) -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let uid = unsafe { libc::geteuid() };
+    let path = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            ensure!(
+                metadata.uid() == uid,
+                "Runtime alias belongs to another user"
+            );
+            fs::canonicalize(&path)?
+        }
+        _ => path,
+    };
+    starkit::terminal_graphics::session::private_root(&path)?;
+    ensure!(
+        fs::metadata(&path)?.uid() == uid,
+        "Runtime directory belongs to another user"
+    );
+    Ok(path)
 }
 pub fn config_path(name: &str) -> Result<PathBuf> {
     ensure!(
@@ -506,10 +527,22 @@ pub fn config_path(name: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     #[test]
+    fn migration_aliases_retain_private_runtime_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("retained-worker");
+        let resolved = private_directory(directory.clone()).unwrap();
+        let alias = temp.path().join("renamed-worker");
+        symlink(&directory, &alias).unwrap();
+        assert_eq!(private_directory(alias.clone()).unwrap(), resolved);
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(private_directory(alias).is_err());
+    }
+    #[test]
     fn fresh_shell_attach_combines_setup_and_attach_in_project_directory() {
         let config: Config = serde_json::from_value(json!({
             "workspace":"shell-attach", "host":null,
-            "directory":"/tmp/project with spaces", "agent":null, "executable":"starmux"
+            "directory":"/tmp/project with spaces", "agent":null, "executable":"starflux"
         }))
         .unwrap();
         let args = config.attach_argv_with_shell(2, true);
@@ -558,7 +591,7 @@ mod tests {
             cwd: "/tmp".into(),
             agent: Some("codex".into()),
         };
-        let mut c:Config=serde_json::from_value(json!({"workspace":"import-test","host":null,"directory":"/tmp","agent":"codex","executable":"starmux"})).unwrap();
+        let mut c:Config=serde_json::from_value(json!({"workspace":"import-test","host":null,"directory":"/tmp","agent":"codex","executable":"starflux"})).unwrap();
         c.herdr = Some(crate::herdr::Source {
             session: "default".into(),
             workspace_id: "w1".into(),
@@ -592,7 +625,7 @@ mod tests {
     }
     #[test]
     fn saved_workspaces_before_blueprint_use_the_default_palette() {
-        let c: Config=serde_json::from_value(json!({"workspace":"legacy","host":null,"directory":null,"agent":null,"executable":"starmux"})).unwrap();
+        let c: Config=serde_json::from_value(json!({"workspace":"legacy","host":null,"directory":null,"agent":null,"executable":"starflux"})).unwrap();
         assert_eq!(c.theme, "kanagawa");
         c.validate().unwrap();
     }
@@ -623,7 +656,7 @@ mod tests {
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/share")
             })
-            .join("starmux/attachments")
+            .join("starflux/attachments")
             .join(&workspace);
         let result = config.upload(0, &file, |count, _| count < 65536);
         assert!(format!("{:#}", result.unwrap_err()).contains("canceled"));

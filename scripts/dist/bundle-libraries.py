@@ -68,7 +68,7 @@ for elf in root.rglob('*'):
         for offset, address, align in load_segments(elf):
             if align > 1 and (address - offset) % align:
                 sys.exit('Invalid rewritten ELF load alignment: ' + str(elf))
-notice = root / 'usr/share/doc/starmux/third-party'
+notice = root / 'usr/share/doc/starflux/third-party'
 notice.mkdir(parents=True, exist_ok=True)
 for package in sorted(packages | {'python3.9', 'tmux', 'pulseaudio-utils', 'dbus', 'alsa-plugins'}):
     copyright_file = Path('/usr/share/doc') / package / 'copyright'

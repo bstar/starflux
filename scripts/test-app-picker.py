@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Registered application catalog and launch checks using disposable local/SSH desktops."""
 import getpass,json,os,pathlib,shlex,socket,subprocess,tempfile,time,uuid
-repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/app-picker-proof';out.mkdir(parents=True,exist_ok=True)
 local='shelf-'+uuid.uuid4().hex[:8];remote='shelf-ssh-'+uuid.uuid4().hex[:8];names=[local,remote];children=[]
 original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
@@ -19,10 +19,10 @@ def inspect():return json.loads((runtime/(local+'.state.json')).read_text())
 def action(value):invoke(local,'--action',value)
 def clients():return json.loads(subprocess.check_output(['hyprctl','clients','-j']))
 def screenshot(name):
-    c=wait(lambda:next((c for c in clients() if c['class']=='starmux-shelf-proof' or c['pid']==kitty.pid),None),'Outer Kitty missing')
+    c=wait(lambda:next((c for c in clients() if c['class']=='starflux-shelf-proof' or c['pid']==kitty.pid),None),'Outer Kitty missing')
     time.sleep(.6)
     x,y=c['at'];w,h=c['size'];subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/name)],check=True)
-with tempfile.TemporaryDirectory(prefix='starmux-shelf-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-shelf-') as tmp:
     tmp=pathlib.Path(tmp)
     try:
         for key in ['host','client']:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(tmp/key)],check=True)
@@ -52,18 +52,18 @@ class App(Gtk.Application):
   w.set_child(box);w.present();entry.grab_focus()
 App().run([sys.argv[0]])
 ''')
-        remote_config={'workspace':remote,'theme':'kanagawa','host':'shelf-host','ssh_config':str(sshconfig),'directory':str(tmp),'agent':'bash --noprofile --norc','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+        remote_config={'workspace':remote,'theme':'kanagawa','host':'shelf-host','ssh_config':str(sshconfig),'directory':str(tmp),'agent':'bash --noprofile --norc','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
         (runtime/(remote+'.json')).write_text(json.dumps(remote_config));os.chmod(runtime/(remote+'.json'),0o600)
         address='unix:'+str(tmp/'kitty.sock')
         def rc(*args,data=None):return subprocess.check_output(['kitten','@','--to',address,*args],input=data,stderr=subprocess.PIPE,timeout=15)
         xdg=tmp/'data';entries=xdg/'applications';entries.mkdir(parents=True)
-        fixture=entries/'starmux-picker-proof.desktop'
+        fixture=entries/'starflux-picker-proof.desktop'
         fixture.write_text('[Desktop Entry]\nType=Application\nName=Registered Picker Proof\nComment=Disposable registered GTK test\nExec=/usr/bin/python3 "'+str(gui)+'" "Registered Picker Proof" "'+str(tmp/'registered-keys')+'" %U\nTerminal=false\nDBusActivatable=true\n')
-        hidden=entries/'starmux-picker-hidden.desktop';hidden.write_text('[Desktop Entry]\nType=Application\nName=Hidden Picker Proof\nExec=/usr/bin/true\nNoDisplay=true\n')
+        hidden=entries/'starflux-picker-hidden.desktop';hidden.write_text('[Desktop Entry]\nType=Application\nName=Hidden Picker Proof\nExec=/usr/bin/true\nNoDisplay=true\n')
         os.environ['XDG_DATA_HOME']=str(xdg)
         helper=tmp/'remote-helper';helper.write_text('#!/bin/bash\nexport XDG_DATA_HOME='+shlex.quote(str(xdg))+'\nexec '+shlex.quote(str(app))+' "$@"\n');helper.chmod(0o700)
         remote_config['desktop_helper']=str(helper);(runtime/(remote+'.json')).write_text(json.dumps(remote_config))
-        cmd=['/usr/bin/kitty','--hold','--class','starmux-shelf-proof','--config','NONE','--listen-on',address,'--title','STAR-MUX-SHELF-PROOF','-o','linux_display_server=wayland','-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',local,'--agent','bash --noprofile --norc','--directory',str(tmp),'--app',shlex.join(['/usr/bin/python3',str(gui),'Project app',str(tmp/'local-keys')])]
+        cmd=['/usr/bin/kitty','--hold','--class','starflux-shelf-proof','--config','NONE','--listen-on',address,'--title','STAR-FLUX-SHELF-PROOF','-o','linux_display_server=wayland','-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',local,'--agent','bash --noprofile --norc','--directory',str(tmp),'--app',shlex.join(['/usr/bin/python3',str(gui),'Project app',str(tmp/'local-keys')])]
         kitty=subprocess.Popen(cmd,stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'));children.append(kitty)
         wait(lambda:inspect() if inspect().get('sessions') else None,'Workspace not ready')
         action('launch-app')
@@ -94,7 +94,7 @@ App().run([sys.argv[0]])
     except BaseException:
         try:(out/'failure-state.json').write_text(json.dumps(inspect(),indent=2))
         except Exception:pass
-        if os.environ.get('STARMUX_PROOF_DEBUG'):time.sleep(50)
+        if os.environ.get('STARFLUX_PROOF_DEBUG'):time.sleep(50)
         raise
     finally:
         for name in names:

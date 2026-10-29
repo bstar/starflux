@@ -224,7 +224,7 @@ impl Workspace {
             0,
             v.columns,
             &format!(
-                "STAR/MUX  {}  {}  {}",
+                "STAR/FLUX  {}  {}  {}",
                 self.config
                     .label
                     .as_deref()

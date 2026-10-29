@@ -21,11 +21,11 @@ parser.add_argument('--render-cache',action='store_true')
 parser.add_argument('--app-capabilities',action='store_true')
 args=parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
     temp = Path(temp)
     runtime = temp / 'runtime'
     runtime.mkdir(mode=0o700)
-    state = runtime / 'starmux'
+    state = runtime / 'starflux'
     state.mkdir(mode=0o700)
     name = 'npty-' + secrets.token_hex(5)
     shell = temp / 'fake-shell'
@@ -179,5 +179,5 @@ with tempfile.TemporaryDirectory(prefix='starmux-native-proof-') as temp:
         except subprocess.TimeoutExpired:
             process.terminate()
             process.wait(timeout=3)
-        subprocess.run(['tmux', '-L', 'starmux-' + name, 'kill-server'],
+        subprocess.run(['tmux', '-L', 'starflux-' + name, 'kill-server'],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)

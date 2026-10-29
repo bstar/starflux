@@ -317,6 +317,7 @@ mod tests {
             project_total: 24,
             sort_hover: false,
             sort_mode_hover: false,
+            project_hover: None,
             project_manual: true,
             project_drag: None,
             project_sort_high: true,

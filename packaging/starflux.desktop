@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=S T A R / M U X
+Name=S T A R / F L U X
 Comment=Native terminal and app workspace
-Exec=starmux
-Icon=starmux
+Exec=starflux
+Icon=starflux
 Terminal=true
 Categories=Development;TerminalEmulator;

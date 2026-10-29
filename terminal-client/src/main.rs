@@ -12,7 +12,7 @@ fn event(event: &starkit::crossterm::event::Event) -> Option<Input> {
 }
 fn main() -> Result<()> {
     match run() {
-        Err(error) if error.to_string() == "Graphical session: STARMUX_RELOAD_UI" => Ok(()),
+        Err(error) if error.to_string() == "Graphical session: STARFLUX_RELOAD_UI" => Ok(()),
         result => {
             if let Err(error) = &result {
                 record_error(error);
@@ -27,7 +27,7 @@ fn record_error(error: &anyhow::Error) {
     let Some(home) = std::env::home_dir() else {
         return;
     };
-    let root = home.join(".local/state/starmux");
+    let root = home.join(".local/state/starflux");
     let _ = std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -97,7 +97,7 @@ fn run() -> Result<()> {
     }
     if args.len() == 1 || args[1] == "--help" || args[1] == "-h" {
         println!(
-            "STAR/MUX audio-enabled local terminal frontend\nUsage: starmux-terminal-client SOCKET\nStarted by the STAR/KIT Kitty watcher on the listening machine."
+            "STAR/FLUX audio-enabled local terminal frontend\nUsage: starflux-terminal-client SOCKET\nStarted by the STAR/KIT Kitty watcher on the listening machine."
         );
         return Ok(());
     }

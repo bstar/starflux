@@ -112,7 +112,7 @@ pub fn data_root() -> Result<PathBuf> {
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join(".local/share"),
         )
-        .join("starmux/projects");
+        .join("starflux/projects");
     starkit::terminal_graphics::session::private_root(&path)?;
     Ok(path)
 }
@@ -590,7 +590,7 @@ mod tests {
             app_targets: vec![AppTarget {
                 host: Some("remote".into()),
                 directory: "/project".into(),
-                helper: "starmux".into(),
+                helper: "starflux".into(),
             }],
             ..ProjectState::default()
         };
@@ -736,7 +736,7 @@ mod tests {
         assert_eq!(state.visible(), vec![0, 1]);
         state.terminal = 0;
         assert_eq!(state.visible(), vec![0, 1]);
-        let config: Config = serde_json::from_value(serde_json::json!({"workspace":"migration","host":null,"directory":null,"agent":"codex","executable":"starmux"})).unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({"workspace":"migration","host":null,"directory":null,"agent":"codex","executable":"starflux"})).unwrap();
         let mut legacy: ProjectState = serde_json::from_value(serde_json::json!({"space":"agent","agent":1,"agents":[1,3],"terminal":0,"terminals":[0,2],"agent_labels":{"3":"Review"}})).unwrap();
         legacy.migrate_terminals(&config);
         assert_eq!(legacy.terminal_ids(), vec![0, 2, 1, 3]);

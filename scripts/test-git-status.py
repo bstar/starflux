@@ -11,7 +11,7 @@ spec = importlib.util.spec_from_file_location('git_status', repo/'scripts/git-st
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 
-with tempfile.TemporaryDirectory(prefix='starmux-git-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-git-') as temp:
     root = Path(temp)
     def git(*args, check=True):
         return subprocess.run(['git', '-C', str(root), *args], check=check, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

@@ -15,7 +15,7 @@ def wait(state):
         if current.get('state')==state:return current
         time.sleep(.05)
     raise AssertionError((state,current))
-with tempfile.TemporaryDirectory(prefix='starmux-activity-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-activity-') as temp:
     temp=Path(temp)
     program=temp/'fixture.py'
     program.write_text('''import ctypes,os,tty,sys
@@ -34,7 +34,7 @@ while True:
         call('ensure',directory=str(temp),argv=['bash','-c','exec -a codex python3 '+shlex.quote(str(program))])
         working=wait('working');pid=working['pid']
         for key,state in [('i','idle'),('h','idle'),('a','waiting_for_approval'),('q','needs_input'),('w','working'),('i','idle')]:
-            subprocess.run(['tmux','-L','starmux-'+name,'send-keys','-t','p1:0.0',key],check=True)
+            subprocess.run(['tmux','-L','starflux-'+name,'send-keys','-t','p1:0.0',key],check=True)
             assert wait(state)['pid']==pid
         allowed={'alive','exited','pid','command','agent','agent_pid','state','output_fingerprint'}
         assert set(working)==allowed, 'Inspector exported unexpected fields: '+repr(set(working)-allowed)

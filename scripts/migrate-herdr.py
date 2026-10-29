@@ -33,8 +33,8 @@ def query(*args,raw=False):
     if result.returncode:raise RuntimeError('Herdr read failed: '+result.stderr.decode(errors='replace')[:300])
     return result.stdout if raw else json.loads(result.stdout)
 
-def runtime():return Path(os.environ.get('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}'))/'starmux'
-def project_root():return Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'starmux/projects'
+def runtime():return Path(os.environ.get('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}'))/'starflux'
+def project_root():return Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'starflux/projects'
 def active_views(root,projects):
     result=[];seen=set()
     for path in root.glob('*.state.json'):
@@ -115,7 +115,7 @@ def prepare(executable,proxy):
         state.setdefault('terminal_epochs',{});state.setdefault('terminal_labels',{})
         for slot,label in state.get('agent_labels',{}).items():state['terminal_labels'].setdefault(str(aliases.get(int(slot),int(slot))),label)
         state['agent_labels']={}
-        server='starmux-adopt-'+wid+'-'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'-'+stamp.rsplit('-',1)[-1]
+        server='starflux-adopt-'+wid+'-'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'-'+stamp.rsplit('-',1)[-1]
         adopted=config.setdefault('adopted',{})
         for pane in members:
             pane_id=pane['pane_id'];slot=canonical.get(pane_id)

@@ -387,7 +387,7 @@ impl Video {
             if self.credit > 0
                 && let Ok(packet) = encoder.packets.try_recv()
             {
-                if std::env::var_os("STARMUX_RENDER_TIMING").is_some() {
+                if std::env::var_os("STARFLUX_RENDER_TIMING").is_some() {
                     eprintln!("Video encode: us={}", self.sent_at.elapsed().as_micros());
                 }
                 let now = Instant::now();

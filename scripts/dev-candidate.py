@@ -3,7 +3,7 @@
 import json,os,pathlib,re,shutil,subprocess,sys,tempfile,tomllib
 root=pathlib.Path(__file__).resolve().parents[1];kit=pathlib.Path(os.environ['STAR_KIT_CHECKOUT']).resolve();args=sys.argv[1:] or ['build']
 version=tomllib.loads((kit/'Cargo.toml').read_text())['package']['version']
-with tempfile.TemporaryDirectory(prefix='starmux-kit-candidate-') as directory:
+with tempfile.TemporaryDirectory(prefix='starflux-kit-candidate-') as directory:
     tree=pathlib.Path(directory);manifest=(root/'Cargo.toml').read_text()
     def candidate(match):
         value=re.sub(r'version = "[^"]+"','version = '+json.dumps(version),match[0])

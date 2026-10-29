@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare real Kitty text pixels with the same text presented inside STAR/MUX."""
+"""Compare real Kitty text pixels with the same text presented inside STAR/FLUX."""
 import json
 import os
 from pathlib import Path
@@ -9,7 +9,7 @@ import time
 import uuid
 
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/kitty-pixel-proof';out.mkdir(parents=True,exist_ok=True)
 name='kitty-pixels-'+uuid.uuid4().hex[:8]
 def wait(fn,label,timeout=35):
@@ -45,17 +45,17 @@ def mask(path, expected_height=None):
     crop=b''.join(pixels[(y*width+x0)*3:(y*width+x1)*3] for y in range(y0,y1))
     return crop,[x1-x0,y1-y0],bottom-top+1
 
-with tempfile.TemporaryDirectory(prefix='starmux-kitty-pixels-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-kitty-pixels-') as temp:
     temp=Path(temp);children=[];addresses=[]
     specimen=temp/'sample.py';specimen.write_text("import sys,time\nsys.stdout.write('\\x1b[?1049h\\x1b[?25l\\x1b[48;2;0;0;0m\\x1b[38;2;255;255;255m\\x1b[2J\\x1b[HKITTY_RENDER_0123456789  != == -> => fi café')\nsys.stdout.flush()\ntime.sleep(300)\n")
-    config={'workspace':name,'collection':name,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'python3 '+str(specimen),'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+    config={'workspace':name,'collection':name,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'python3 '+str(specimen),'executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
     p=runtime/(name+'.json');p.write_text(json.dumps(config));p.chmod(0o600)
     env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu');env.pop('STAR_TERMINAL_RENDERER',None)
     def state():return json.loads((runtime/(name+'.state.json')).read_text())
     def rc(address,*args):return subprocess.check_output(['kitten','@','--to',address,*args],stderr=subprocess.PIPE,timeout=10)
     def launch(label,command):
         address='unix:'+str(temp/(label+'.sock'));addresses.append(address)
-        child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-kitty-pixel-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1','-o','hide_window_decorations=yes',*command],env=env,stdout=subprocess.DEVNULL,stderr=(out/(label+'.log')).open('w'));children.append(child)
+        child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-kitty-pixel-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1','-o','hide_window_decorations=yes',*command],env=env,stdout=subprocess.DEVNULL,stderr=(out/(label+'.log')).open('w'));children.append(child)
         wait(lambda:rc(address,'get-text'),'Kitty remote control unavailable')
         return child,address
     def capture(child,address,path):
@@ -68,12 +68,12 @@ with tempfile.TemporaryDirectory(prefix='starmux-kitty-pixels-') as temp:
         capture(normal,normal_address,out/'normal.png')
         capture(normal,normal_address,out/'normal-again.png')
         rc(normal_address,'close-window');normal.wait(timeout=10)
-        mux,mux_address=launch('starmux',[str(app),'--workspace',name])
+        mux,mux_address=launch('starflux',[str(app),'--workspace',name])
         s=wait(lambda:state() if state().get('terminal_renderer')=='kitty' and len(state()['desktop']['project_windows'])==2 and state()['terminal_presentation']['frame']==state()['terminal_presentation']['canvas'] else None,'Unscaled Kitty panes did not map')
         inner='unix:'+str(runtime/f'kitty-{name}-1.sock')
         wait(lambda:b'KITTY_RENDER_' in rc(inner,'get-text'),'Embedded sample absent')
-        time.sleep(.5);capture(mux,mux_address,out/'starmux.png')
-        native,native_size,ink_height=mask(out/'normal.png');embedded,embedded_size,_=mask(out/'starmux.png',ink_height)
+        time.sleep(.5);capture(mux,mux_address,out/'starflux.png')
+        native,native_size,ink_height=mask(out/'normal.png');embedded,embedded_size,_=mask(out/'starflux.png',ink_height)
         mismatch=sum(a!=b for a,b in zip(native,embedded))+abs(len(native)-len(embedded))
         result={'renderer':'kitty','frame':s['terminal_presentation']['frame'],'canvas':s['terminal_presentation']['canvas'],'native_glyph_bounds':native_size,'embedded_glyph_bounds':embedded_size,'native_rgb_bytes':len(native),'embedded_rgb_bytes':len(embedded),'differing_rgb_bytes':mismatch,'pixel_identical':native==embedded}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))

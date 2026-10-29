@@ -14,7 +14,7 @@ import uuid
 
 repo=Path(__file__).resolve().parents[1]
 app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/direct-terminal-proof'
 out.mkdir(parents=True,exist_ok=True)
 local='direct-'+uuid.uuid4().hex[:8]
@@ -43,7 +43,7 @@ def screenshot(name):
     x,y=c['at'];w,h=c['size']
     subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/name)],check=True)
 
-with tempfile.TemporaryDirectory(prefix='starmux-direct-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-direct-') as tmp:
     tmp=Path(tmp);kitty=None;daemon=None
     try:
         for name in ['host','client']:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(tmp/name)],check=True)
@@ -56,10 +56,10 @@ with tempfile.TemporaryDirectory(prefix='starmux-direct-') as tmp:
         wait(lambda:subprocess.run(['ssh','-F',str(sshconfig),'direct-host','true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'SSH unavailable')
         paths={local:tmp/'local.jsonl',remote:tmp/'remote.jsonl'}
         for name in [local,remote]:
-            config={'workspace':name,'collection':local,'theme':'kanagawa','host':'direct-host' if name==remote else None,'ssh_config':str(sshconfig) if name==remote else None,'directory':str(tmp),'agent':shlex.join(['python3',str(repo/'scripts/direct-terminal-fixture.py'),str(paths[name])]),'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+            config={'workspace':name,'collection':local,'theme':'kanagawa','host':'direct-host' if name==remote else None,'ssh_config':str(sshconfig) if name==remote else None,'directory':str(tmp),'agent':shlex.join(['python3',str(repo/'scripts/direct-terminal-fixture.py'),str(paths[name])]),'executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
             (runtime/(name+'.json')).write_text(json.dumps(config));os.chmod(runtime/(name+'.json'),0o600)
         address='unix:'+str(tmp/'kitty.sock')
-        def launch():return subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-direct-acceptance','--config','NONE','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',local],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='direct'),stderr=(out/'kitty.log').open('a'),stdout=subprocess.DEVNULL)
+        def launch():return subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-direct-acceptance','--config','NONE','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--workspace',local],env=dict(os.environ,STAR_GRAPHICS_RENDERER='gpu',STAR_TERMINAL_RENDERER='direct'),stderr=(out/'kitty.log').open('a'),stdout=subprocess.DEVNULL)
         kitty=launch()
         checks={};backend_pids={}
         for name in [local,remote]:

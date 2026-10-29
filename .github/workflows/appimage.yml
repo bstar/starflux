@@ -47,11 +47,11 @@ jobs:
       - name: Build, test and package
         shell: bash
         env:
-          STARMUX_DIST_DEPS_READY: '1'
+          STARFLUX_DIST_DEPS_READY: '1'
         run: scripts/dist/appimage.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: starmux-appimage-${{ matrix.arch }}
+          name: starflux-appimage-${{ matrix.arch }}
           path: dist/*.AppImage
           if-no-files-found: error
   verify-appimage:
@@ -69,13 +69,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: starmux-appimage-${{ matrix.arch }}
+          name: starflux-appimage-${{ matrix.arch }}
       - name: Exercise bundled tools and live video encoder in a clean distro
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
-          chmod +x starmux-*.AppImage
-          for app in starmux-*.AppImage; do ./"$app" --check-bundle; done
+          chmod +x starflux-*.AppImage
+          for app in starflux-*.AppImage; do ./"$app" --check-bundle; done
   verify-fuse:
     needs: appimage
     strategy:
@@ -85,8 +85,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: starmux-appimage-${{ matrix.runner == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}
+          name: starflux-appimage-${{ matrix.runner == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}
       - run: sudo apt-get update && sudo apt-get install -y libfuse2t64
       - run: |
-          chmod +x starmux-*.AppImage
-          for app in starmux-*.AppImage; do ./"$app" --check-bundle; done
+          chmod +x starflux-*.AppImage
+          for app in starflux-*.AppImage; do ./"$app" --check-bundle; done

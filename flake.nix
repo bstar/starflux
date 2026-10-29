@@ -1,5 +1,5 @@
 {
-  description = "STAR/MUX native terminal and app workspace";
+  description = "STAR/FLUX native terminal and app workspace";
   inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
   outputs = { self, nixpkgs, flake-utils }:
@@ -9,14 +9,14 @@
         gst = pkgs.gst_all_1;
         plugins = [ gst.gst-plugins-base gst.gst-plugins-good gst.gst-plugins-bad gst.gst-plugins-ugly gst.gst-libav ];
         native = plugins ++ (with pkgs; [ wayland libxkbcommon libdrm libgbm libGL pixman udev vulkan-loader alsa-lib ffmpeg gst.gstreamer ]);
-        alsaPluginDir = pkgs.runCommand "starmux-alsa-plugins" {} ''
+        alsaPluginDir = pkgs.runCommand "starflux-alsa-plugins" {} ''
           mkdir -p $out
           ln -s ${pkgs.pipewire}/lib/alsa-lib/*.so $out/
           ln -s ${pkgs.alsa-plugins}/lib/alsa-lib/*.so $out/
         '';
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
         package = pkgs.rustPlatform.buildRustPackage {
-          pname = "starmux";
+          pname = "starflux";
           version = cargoToml.package.version;
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
@@ -39,20 +39,20 @@
           cargoBuildFlags = [ "--workspace" ];
           cargoTestFlags = [ "--workspace" "--all-features" ];
           preCheck = ''
-            export XDG_DATA_HOME="$TMPDIR/starmux-check-data"
+            export XDG_DATA_HOME="$TMPDIR/starflux-check-data"
             mkdir -p "$XDG_DATA_HOME"
           '';
           postBuild = ''
-            $CC -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o starmux-pty-proxy
+            $CC -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o starflux-pty-proxy
           '';
           postInstall = ''
-            install -m755 starmux-pty-proxy $out/bin/starmux-pty-proxy
-            install -Dm644 LICENSE $out/share/licenses/starmux/LICENSE
-            cp -R LICENSES/. $out/share/licenses/starmux/
-            install -Dm644 README.md $out/share/doc/starmux/README.md
-            install -Dm644 ${./packaging/starmux.desktop} $out/share/applications/starmux.desktop
-            install -Dm644 ${./packaging/starmux.svg} $out/share/icons/hicolor/scalable/apps/starmux.svg
-            for program in starmux starmux-terminal-client; do
+            install -m755 starflux-pty-proxy $out/bin/starflux-pty-proxy
+            install -Dm644 LICENSE $out/share/licenses/starflux/LICENSE
+            cp -R LICENSES/. $out/share/licenses/starflux/
+            install -Dm644 README.md $out/share/doc/starflux/README.md
+            install -Dm644 ${./packaging/starflux.desktop} $out/share/applications/starflux.desktop
+            install -Dm644 ${./packaging/starflux.svg} $out/share/icons/hicolor/scalable/apps/starflux.svg
+            for program in starflux starflux-terminal-client; do
               wrapProgram $out/bin/$program \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.tmux pkgs.openssh pkgs.xwayland pkgs.pulseaudio pkgs.pipewire pkgs.kitty ]} \
                 --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath native} \
@@ -65,18 +65,18 @@
             homepage = cargoToml.package.repository;
             license = licenses.mit;
             platforms = platforms.linux;
-            mainProgram = "starmux";
+            mainProgram = "starflux";
           };
         };
       in {
         packages.default = package;
-        packages.starmux = package;
+        packages.starflux = package;
         checks.default = package;
-        checks.smoke = pkgs.runCommand "starmux-smoke" {} ''
-          ${package}/bin/starmux --version
-          ${package}/bin/starmux --themes > $out
-          ${package}/bin/starmux-terminal-client --help
-          ${package}/bin/starmux-pty-proxy --help
+        checks.smoke = pkgs.runCommand "starflux-smoke" {} ''
+          ${package}/bin/starflux --version
+          ${package}/bin/starflux --themes > $out
+          ${package}/bin/starflux-terminal-client --help
+          ${package}/bin/starflux-pty-proxy --help
         '';
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [ rustc cargo rustfmt clippy cargo-deny pkg-config python3 tmux openssh xwayland pulseaudio pipewire ];

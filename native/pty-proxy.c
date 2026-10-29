@@ -1,4 +1,4 @@
-/* STAR/MUX PTY proxy: libc only, no polling timer or terminal emulator.
+/* STAR/FLUX PTY proxy: libc only, no polling timer or terminal emulator.
  * The persistent owner keeps the original master; tmux owns presentation/history.
  */
 #define _POSIX_C_SOURCE 200809L
@@ -52,14 +52,14 @@ static size_t base64(const unsigned char *in,size_t size,char *out) {
     return pos;
 }
 int main(int argc,char **argv) {
-    if(argc==2&&(!strcmp(argv[1],"--help")||!strcmp(argv[1],"-h"))) {puts("Usage: starmux-pty-proxy SOCKET TERMINAL");return 0;}
-    if(argc!=3||strlen(argv[2])>64) {fputs("Usage: starmux-pty-proxy SOCKET TERMINAL\n",stderr);return 2;}
+    if(argc==2&&(!strcmp(argv[1],"--help")||!strcmp(argv[1],"-h"))) {puts("Usage: starflux-pty-proxy SOCKET TERMINAL");return 0;}
+    if(argc!=3||strlen(argv[2])>64) {fputs("Usage: starflux-pty-proxy SOCKET TERMINAL\n",stderr);return 2;}
     for(const char *p=argv[2];*p;p++)if(!((*p>='a'&&*p<='z')||(*p>='0'&&*p<='9')||*p=='-'))return 2;
     struct sockaddr_un address={.sun_family=AF_UNIX};
     if(strlen(argv[1])>=sizeof(address.sun_path))return 2;
     strcpy(address.sun_path,argv[1]);
     int sock=socket(AF_UNIX,SOCK_STREAM,0);
-    if(sock<0||connect(sock,(struct sockaddr*)&address,sizeof(address))<0) {perror("STAR/MUX PTY owner");return 1;}
+    if(sock<0||connect(sock,(struct sockaddr*)&address,sizeof(address))<0) {perror("STAR/FLUX PTY owner");return 1;}
     if(tcgetattr(STDIN_FILENO,&saved)<0) {perror("PTY proxy requires a terminal");return 1;}
     have_saved=1;atexit(restore);
     struct termios raw=saved;

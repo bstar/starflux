@@ -59,7 +59,7 @@ impl Appearance {
         } else if let Some(b) = starkit::theme::BUILTINS.iter().find(|b| b.id == id) {
             ThemeFile::parse(b.toml)?
         } else {
-            bail!("Unknown theme '{id}'. Run starmux --themes for available palettes")
+            bail!("Unknown theme '{id}'. Run starflux --themes for available palettes")
         };
         Self::from_file(id, &file)
     }

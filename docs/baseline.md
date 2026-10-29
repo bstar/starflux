@@ -1,4 +1,4 @@
-# STAR MUX development baseline
+# STAR FLUX development baseline
 
 The Linux demo uses the following source and runtime baseline, inspected on 2026-10-23.
 
@@ -23,4 +23,4 @@ The vendored Crossterm parser comes from STAR/FOLD's existing MIT-licensed copy.
 
 The SSH acceptance host is a private, authenticated loopback server created by `scripts/test-desktop.py`. Its keypair, host key, known-hosts file, port and configuration are disposable. It requires no changes to `~/.ssh` and proves real OpenSSH framing and process behavior. A separate physical host, network latency and container filesystem mappings remain additional checks.
 
-The demo's terminal ownership uses isolated tmux servers named `starmux-WORKSPACE`. Native session workers and the standalone presentation alternative remain design tasks. Existing STAR/KIT and STAR/SCREEN working edits were left untouched.
+The demo's terminal ownership uses isolated tmux servers named `starflux-WORKSPACE`. Native session workers and the standalone presentation alternative remain design tasks. Existing STAR/KIT and STAR/SCREEN working edits were left untouched.

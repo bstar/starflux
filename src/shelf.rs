@@ -156,6 +156,7 @@ pub struct Model<'a> {
     pub project_total: usize,
     pub sort_hover: bool,
     pub sort_mode_hover: bool,
+    pub project_hover: Option<&'a str>,
     pub project_manual: bool,
     pub project_drag: Option<(&'a str, Option<usize>)>,
     pub project_sort_high: bool,
@@ -470,7 +471,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     p.fill(R::new(0, 0, w.saturating_sub(1), 48), &t.panel);
     p.text(
         R::new(16, 14, w.saturating_sub(24), 25),
-        "S T A R / M U X",
+        "S T A R / F L U X",
         &t.fg,
         if w >= 188 { 12 } else { 9 },
         true,
@@ -539,6 +540,9 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         let y = 122 + (n - start) as u16 * 34;
         let r = R::new(8, y, w.saturating_sub(20), 32);
         let selected = project.id == m.project;
+        if m.project_hover == Some(project.id) {
+            p.fill(R::new(0, y, w.saturating_sub(1), 34), &t.panel);
+        }
         if m.project_drag.is_some_and(|(id, _)| id == project.id) {
             p.border(r, &t.border);
         }
@@ -1079,7 +1083,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             15,
             false,
         );
-        p.text(R::new(l.canvas.x+24,l.canvas.y+88,l.canvas.width.saturating_sub(48),60),"The app host needs S T A R / M U X and a usable graphics device.\nAgent and terminal sessions stay available.",&t.muted,12,false);
+        p.text(R::new(l.canvas.x+24,l.canvas.y+88,l.canvas.width.saturating_sub(48),60),"The app host needs S T A R / F L U X and a usable graphics device.\nAgent and terminal sessions stay available.",&t.muted,12,false);
     }
     if m.app_view && space != Space::Apps && l.shelf.height > 0 {
         let card = R::new(l.shelf.x, l.shelf.y, 190.min(l.shelf.width), l.shelf.height);
@@ -1855,6 +1859,7 @@ mod tests {
                     project_total: 1,
                     sort_hover: false,
                     sort_mode_hover: false,
+                    project_hover: None,
                     project_manual: true,
                     project_drag: None,
                     project_sort_high: true,
@@ -1970,6 +1975,7 @@ mod tests {
                 project_total: 20,
                 sort_hover: false,
                 sort_mode_hover: false,
+                project_hover: None,
                 project_manual: true,
                 project_drag: None,
                 project_sort_high: true,

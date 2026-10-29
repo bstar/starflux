@@ -124,6 +124,7 @@ pub struct Workspace {
     project_page_size: usize,
     sort_hover: bool,
     sort_mode_hover: bool,
+    project_hover: Option<String>,
     project_drag: Option<ProjectDrag>,
     navigation: crate::navigation::Navigation,
     navigation_saved_at: Instant,
@@ -222,7 +223,7 @@ fn app_key(config: &Config) -> String {
     )
 }
 fn app_id(project: &str, pane: usize) -> String {
-    format!("starmux-{project}-p{pane}")
+    format!("starflux-{project}-p{pane}")
 }
 pub(crate) fn native_terminal_rect(
     pane: PixelRect,
@@ -291,7 +292,7 @@ impl Workspace {
         navigation.filter_open(&mut projects);
         navigation.sort(&mut projects);
         let (controller_tx, rx) = bounded(128);
-        let terminal_fps = if std::env::var("STARMUX_TERMINAL_PACING").as_deref() == Ok("legacy") {
+        let terminal_fps = if std::env::var("STARFLUX_TERMINAL_PACING").as_deref() == Ok("legacy") {
             30
         } else {
             60
@@ -315,6 +316,7 @@ impl Workspace {
             project_page_size: 0,
             sort_hover: false,
             sort_mode_hover: false,
+            project_hover: None,
             project_drag: None,
             navigation,
             navigation_saved_at: Instant::now(),
@@ -394,7 +396,7 @@ impl Workspace {
             wave_at: Instant::now(),
             wave_phase: 0,
             last_typing: Instant::now(),
-            reduced_motion: std::env::var("STARMUX_REDUCED_MOTION").as_deref() == Ok("1"),
+            reduced_motion: std::env::var("STARFLUX_REDUCED_MOTION").as_deref() == Ok("1"),
             git: BTreeMap::new(),
             git_pending: BTreeSet::new(),
             git_open: false,
@@ -483,7 +485,7 @@ impl Workspace {
                         return Ok(());
                     }
                     let result = std::process::Command::new(
-                        std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
+                        std::env::var("STARFLUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
                     )
                     .args([
                         "@",
@@ -1127,7 +1129,7 @@ impl Workspace {
         }
 
         let mut argv = vec![
-            std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "kitty".into()),
+            std::env::var("STARFLUX_KITTY").unwrap_or_else(|_| "kitty".into()),
             "--class".into(),
             app_id(&config.workspace, pane),
             "--title".into(),
@@ -1407,7 +1409,7 @@ impl Workspace {
                         continue;
                     }
                     let _ = std::process::Command::new(
-                        std::env::var("STARMUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
+                        std::env::var("STARFLUX_KITTEN").unwrap_or_else(|_| "kitten".into()),
                     )
                     .args([
                         "@",
@@ -1612,7 +1614,7 @@ impl Workspace {
                         let (pane, data) = self.receiving.take().unwrap();
                         if let Some(extension) = self.receiving_image.take() {
                             let stage = tempfile::Builder::new()
-                                .prefix("starmux-image-")
+                                .prefix("starflux-image-")
                                 .tempdir()?;
                             let path = stage.path().join(format!("dropped-image.{extension}"));
                             fs::write(&path, data)?;
@@ -2149,7 +2151,7 @@ impl Workspace {
                     self.config.host.clone().unwrap_or("local".into()),
                 ),
                 field(
-                    "S T A R / M U X helper on SSH host",
+                    "S T A R / F L U X helper on SSH host",
                     self.config.desktop_helper.clone(),
                 ),
             ],
@@ -2414,7 +2416,7 @@ impl Workspace {
                         agent: None,
                         executable: std::env::current_exe()?.display().to_string(),
                         project_host: true,
-                        desktop_helper: "starmux".into(),
+                        desktop_helper: "starflux".into(),
                     };
                     config.validate()?;
                     ensure!(!values[2].is_empty(), "Project directory is required");
@@ -2963,7 +2965,7 @@ impl Workspace {
         match action {
             "audio:toggle" | "audio:mute" | "audio:unmute" => {
                 if !self.audio_capable && action != "audio:mute" {
-                    self.note("Audio needs a local player. Install the STAR/KIT Kitty bridge on the listening machine, or launch starmux --ssh HOST --workspace NAME locally. Restarting only the server frontend cannot enable local audio.".into());
+                    self.note("Audio needs a local player. Install the STAR/KIT Kitty bridge on the listening machine, or launch starflux --ssh HOST --workspace NAME locally. Restarting only the server frontend cannot enable local audio.".into());
                     return Ok(());
                 }
                 self.navigation.audio_muted = if action == "audio:toggle" {
@@ -2975,7 +2977,7 @@ impl Workspace {
                 self.sync_audio();
                 self.navigation.save(&self.controller_id)?;
                 if !self.audio_capable && !self.navigation.audio_muted {
-                    self.note("Local audio requires an audio-enabled STAR/KIT frontend. From your listening machine run starmux --ssh HOST --workspace NAME, or use the Kitty STAR/KIT bridge".into());
+                    self.note("Local audio requires an audio-enabled STAR/KIT frontend. From your listening machine run starflux --ssh HOST --workspace NAME, or use the Kitty STAR/KIT bridge".into());
                 }
             }
             "projects:sort:mode"
@@ -3468,6 +3470,10 @@ impl Workspace {
             project_total: self.projects.len(),
             sort_hover: self.sort_hover,
             sort_mode_hover: self.sort_mode_hover,
+            project_hover: self
+                .project_hover
+                .as_deref()
+                .filter(|_| self.modal.is_none() && self.context_menu.is_none() && !self.git_open),
             project_manual: !self.navigation.recent,
             project_drag: self
                 .project_drag
@@ -4102,7 +4108,7 @@ impl Controller for Workspace {
                 .is_some_and(|(key, pixels)| key == &source && Arc::ptr_eq(pixels, &frame.pixels))
         {
             if self.state.space != Space::Apps
-                && std::env::var_os("STARMUX_RENDER_TIMING").is_some()
+                && std::env::var_os("STARFLUX_RENDER_TIMING").is_some()
             {
                 eprintln!(
                     "Terminal submit: at_ns={} age_us={}",
@@ -4176,7 +4182,7 @@ impl Controller for Workspace {
                     .collect::<Vec<_>>();
                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
-                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starmux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
                 snapshot["graphical_render"] = self.graphical_cache.statistics();
                 snapshot["app_video_render"] = self.video.statistics();
                 snapshot["audio"]["playback_protocol"] = json!(if self.audio_pcm_v2 {
@@ -4295,10 +4301,21 @@ impl Controller for Workspace {
                         h.action == "projects:sort:direction"
                             && h.rect.contains(point[0] as u16, point[1] as u16)
                     });
+                self.project_hover = self
+                    .chrome_hits
+                    .iter()
+                    .find(|h| {
+                        h.rect.x == 0
+                            && h.action.starts_with("project:")
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    })
+                    .and_then(|h| h.action.strip_prefix("project:"))
+                    .map(str::to_owned);
             }
             Input::CancelPointer | Input::Embedded { .. } => {
                 self.sort_hover = false;
                 self.sort_mode_hover = false;
+                self.project_hover = None;
             }
             _ => {}
         }

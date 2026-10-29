@@ -18,8 +18,8 @@ import uuid
 
 repo=Path(__file__).resolve().parents[1]
 app=repo/'scripts/run-local.sh'
-runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
-phase=os.environ.get('STARMUX_LATENCY_PHASE','before')
+runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
+phase=os.environ.get('STARFLUX_LATENCY_PHASE','before')
 out=repo/'target/terminal-latency-proof';out.mkdir(parents=True,exist_ok=True)
 base_name='latency-'+uuid.uuid4().hex[:8]
 names=[]
@@ -39,14 +39,14 @@ def stats(values):
     values=sorted(values)
     return {'median':round(statistics.median(values),2),'p95':round(values[min(len(values)-1,int(len(values)*.95))],2),'min':round(values[0],2),'max':round(values[-1],2)}
 
-with tempfile.TemporaryDirectory(prefix='starmux-latency-') as temp:
+with tempfile.TemporaryDirectory(prefix='starflux-latency-') as temp:
     temp=Path(temp);children=[];addresses=[];results={}
     fixture=temp/'codex'
     fixture.write_text('''import json,os,sys,time,tty,termios,subprocess
 old=termios.tcgetattr(0);tty.setraw(0)
 n=0
-if os.environ.get('STARMUX_BENCH_ACTIVITY')=='1' and os.environ.get('TMUX'):
- subprocess.run(['tmux','set-option','-p','@starmux_state','working'],check=True)
+if os.environ.get('STARFLUX_BENCH_ACTIVITY')=='1' and os.environ.get('TMUX'):
+ subprocess.run(['tmux','set-option','-p','@starflux_state','working'],check=True)
 with open(sys.argv[1],'a') as log:
  def draw(color):
   patch='\\x1b[?25l\\x1b[48;2;%d;%d;%dm'%color
@@ -75,12 +75,12 @@ with open(sys.argv[1],'a') as log:
             sent=time.monotonic_ns()
             sock.sendall(b'\x1bP@kitty-cmd'+json.dumps(packet).encode()+b'\x1b\\')
         return sent
-    width=int(os.environ.get('STARMUX_LATENCY_WIDTH','1400'));height=int(os.environ.get('STARMUX_LATENCY_HEIGHT','1000'))
+    width=int(os.environ.get('STARFLUX_LATENCY_WIDTH','1400'));height=int(os.environ.get('STARFLUX_LATENCY_HEIGHT','1000'))
     daemon=None
     ssh_config=None
     remote=None
     shell=temp/'quiet-shell';shell.write_text('#!/bin/sh\nif [ "$1" = "-c" ]; then exec /bin/sh "$@"; fi\nexec cat\n');shell.chmod(0o700)
-    if any('ssh' in kind for kind in os.environ.get('STARMUX_LATENCY_KINDS','').split(',')):
+    if any('ssh' in kind for kind in os.environ.get('STARFLUX_LATENCY_KINDS','').split(',')):
         for key in ['host','client']:
             subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(temp/key)],check=True)
         (temp/'authorized_keys').write_text((temp/'client.pub').read_text())
@@ -90,8 +90,8 @@ with open(sys.argv[1],'a') as log:
         daemon=subprocess.Popen(['/usr/bin/sshd','-D','-e','-f',str(temp/'sshd_config')],stderr=(out/(phase+'-sshd.log')).open('w'),env={k:v for k,v in os.environ.items() if k!='NOTIFY_SOCKET'})
         ssh_config=temp/'ssh_config'
         ssh_config.write_text(f'Host bench\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {temp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {temp}/known_hosts\n')
-        remote=temp/'remote-starmux'
-        remote.write_text('#!/bin/sh\nexec env '+shlex.join(['SHELL='+str(shell),'STARMUX_BENCH_ACTIVITY=1','PATH='+os.environ['PATH'],'XDG_RUNTIME_DIR='+os.environ['XDG_RUNTIME_DIR']])+' '+shlex.quote(str(app))+' "$@"\n')
+        remote=temp/'remote-starflux'
+        remote.write_text('#!/bin/sh\nexec env '+shlex.join(['SHELL='+str(shell),'STARFLUX_BENCH_ACTIVITY=1','PATH='+os.environ['PATH'],'XDG_RUNTIME_DIR='+os.environ['XDG_RUNTIME_DIR']])+' '+shlex.quote(str(app))+' "$@"\n')
         remote.chmod(0o700)
         def listening():
             try:
@@ -99,7 +99,7 @@ with open(sys.argv[1],'a') as log:
             except OSError:return False
         wait(listening,'SSH test daemon did not start')
     try:
-        for kind in os.environ.get('STARMUX_LATENCY_KINDS','kitty,cells,graphical').split(','):
+        for kind in os.environ.get('STARFLUX_LATENCY_KINDS','kitty,cells,graphical').split(','):
             name=base_name+'-'+kind;names.append(name)
             frontend='v-'+name
             state_path=runtime/(frontend+'.state.json')
@@ -107,11 +107,11 @@ with open(sys.argv[1],'a') as log:
             log=temp/(kind+'.jsonl')
             if kind=='kitty':command=['python3',str(fixture),str(log)]
             else:
-                cfg={'workspace':name,'collection':name,'theme':'kanagawa','host':None,'directory':str(temp),'agent':f'python3 {fixture} {log}','executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+                cfg={'workspace':name,'collection':name,'theme':'kanagawa','host':None,'directory':str(temp),'agent':f'python3 {fixture} {log}','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
                 path=runtime/(name+'.json');path.write_text(json.dumps(cfg));path.chmod(0o600)
                 command=[str(app),'--'+('cells' if kind.startswith('cells') else 'graphical'),'--workspace',name,'--frontend',frontend]
                 if 'ssh' in kind:command+=['--ssh','bench','--ssh-config',str(ssh_config),'--remote-executable',str(remote)]
-            child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starmux-latency-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1',*command],env=dict(os.environ,STAR_GRAPHICS_RENDERER=os.environ.get('STARMUX_BENCH_RENDERER','cpu'),STAR_TERMINAL_RENDERER='native',STARMUX_BENCH_ACTIVITY='1',SHELL=str(shell)),stdout=subprocess.DEVNULL,stderr=(out/(phase+'-'+kind+'.log')).open('w'));children.append(child)
+            child=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-latency-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','background_opacity=1',*command],env=dict(os.environ,STAR_GRAPHICS_RENDERER=os.environ.get('STARFLUX_BENCH_RENDERER','cpu'),STAR_TERMINAL_RENDERER='native',STARFLUX_BENCH_ACTIVITY='1',SHELL=str(shell)),stdout=subprocess.DEVNULL,stderr=(out/(phase+'-'+kind+'.log')).open('w'));children.append(child)
             wait(lambda:any(e.get('ready') for e in records(log)),'Fixture not ready')
             wait(lambda:rc(address,'ls'),'Remote control not ready')
             if kind!='kitty':
@@ -144,7 +144,7 @@ with open(sys.argv[1],'a') as log:
                 inject(address,f'\x1b[<0;{v["width"]//2};{v["height"]//2}M\x1b[<0;{v["width"]//2};{v["height"]//2}m')
                 time.sleep(.1)
             samples=[]
-            for n in range(1,int(os.environ.get('STARMUX_LATENCY_SAMPLES','27'))+1):
+            for n in range(1,int(os.environ.get('STARFLUX_LATENCY_SAMPLES','27'))+1):
                 c=client();x,y=c['at'];geometry=f'{x+mx},{y+my} 1x1'
                 sent=inject(address,'x')
                 event=wait(lambda:next((e for e in records(log) if e.get('n')==n),None),'Key not received',5,pause=.001)
@@ -156,7 +156,7 @@ with open(sys.argv[1],'a') as log:
                     assert time.monotonic()<deadline,(kind,n,actual,expected)
                 if n>3:
                     samples.append({'sent_ns':sent,'written_ns':event['written'],'visible_ns':visible,'input_ms':(event['received']-sent)/1e6,'output_ms':(visible-event['written'])/1e6,'total_ms':(visible-sent)/1e6,'capture_ms':capture})
-                time.sleep(float(os.environ.get('STARMUX_LATENCY_PAUSE','.18')))
+                time.sleep(float(os.environ.get('STARFLUX_LATENCY_PAUSE','.18')))
             results[kind]={'samples':len(samples),'window':[w,h],**{key:stats([s[key] for s in samples]) for key in ['input_ms','output_ms','total_ms','capture_ms']},'raw':samples}
             if kind!='kitty':
                 metadata=json.loads(state_path.read_text())

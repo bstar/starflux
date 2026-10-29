@@ -3,7 +3,7 @@
 import base64, hashlib, json, os, pathlib, subprocess, tempfile, time, uuid
 root=pathlib.Path(__file__).resolve().parents[1]
 helper=root/'scripts/host.py'; workspace='test-'+uuid.uuid4().hex[:10]
-with tempfile.TemporaryDirectory(prefix='starmux-host-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
     env={**os.environ,'XDG_DATA_HOME':tmp}
     def call(action,pane='p0',data=None,check=True,**kw):
         req={'action':action,'workspace':workspace,'pane':pane,**kw}
@@ -35,8 +35,8 @@ with tempfile.TemporaryDirectory(prefix='starmux-host-') as tmp:
         # Migration may replace only our verified test fixture, never a real process.
         call('ensure',pane='p1',directory=tmp,argv=[str(root/'scripts/run-local.sh'),'--fixture',workspace])
         deadline=time.monotonic()+3
-        while call('inspect',pane='p1')['command']!='starmux' and time.monotonic()<deadline:time.sleep(.05)
-        old=call('inspect',pane='p1');assert old['alive'] and old['command']=='starmux',old
+        while call('inspect',pane='p1')['command']!='starflux' and time.monotonic()<deadline:time.sleep(.05)
+        old=call('inspect',pane='p1');assert old['alive'] and old['command']=='starflux',old
         upgraded=call('ensure',pane='p1',directory=tmp,argv=['bash','--noprofile','--norc'],replace_fixture=True)
         assert upgraded['replaced_fixture'],upgraded
         shell=call('inspect',pane='p1');assert shell['alive'] and shell['pid']!=old['pid']
@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-host-') as tmp:
         kept=call('ensure',pane='p1',directory=tmp,argv=['false'],replace_fixture=True)
         assert not kept['replaced_fixture'] and call('inspect',pane='p1')['pid']==shell['pid'],'A real process was replaced'
         call('stop',pane='p1')
-        call('ensure',pane='p1',directory=tmp,argv=[str(root/'target/release/starmux'),'--fixture',workspace])
+        call('ensure',pane='p1',directory=tmp,argv=[str(root/'target/release/starflux'),'--fixture',workspace])
         time.sleep(.15);call('paste',pane='p1',text='/quit');call('key',pane='p1',key='Enter')
         deadline=time.monotonic()+3
         while call('inspect',pane='p1')['alive'] and time.monotonic()<deadline:time.sleep(.05)

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Validate the imported Herdr test collection; leave its window open for review.
 
-Does not type into Herdr terminals. Navigation targets the STAR/MUX linked controller.
+Does not type into Herdr terminals. Navigation targets the STAR/FLUX linked controller.
 """
 import json,os,pathlib,subprocess,time
-repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starmux';data=pathlib.Path(os.environ.get('XDG_DATA_HOME',str(pathlib.Path.home()/'.local/share')))/'starmux/projects';out=repo/'target/herdr-import-proof';out.mkdir(parents=True,exist_ok=True)
+repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux';data=pathlib.Path(os.environ.get('XDG_DATA_HOME',str(pathlib.Path.home()/'.local/share')))/'starflux/projects';out=repo/'target/herdr-import-proof';out.mkdir(parents=True,exist_ok=True)
 report=json.loads((data/'herdr-default.import.json').read_text());workspace=report['selected']
 for snapshot in runtime.glob('herdr-default-*.state.json'):
  try:
@@ -24,7 +24,7 @@ def state():return json.loads((runtime/(workspace+'.state.json')).read_text())
 def action(text):subprocess.check_call([str(app),'--workspace',workspace,'--action',text],stdout=subprocess.DEVNULL)
 # A new import has a distinct workspace identity; never close a pre-existing window.
 if not (runtime/(workspace+'.sock')).exists():
- with (out/'kitty.log').open('w') as log:subprocess.Popen(['/usr/bin/kitty','--class','starmux-herdr-test','--title','STAR/MUX - Herdr session test','--config','NONE','--listen-on',address,'-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',workspace],stdout=log,stderr=log,start_new_session=True)
+ with (out/'kitty.log').open('w') as log:subprocess.Popen(['/usr/bin/kitty','--class','starflux-herdr-test','--title','STAR/FLUX - Herdr session test','--config','NONE','--listen-on',address,'-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',workspace],stdout=log,stderr=log,start_new_session=True)
 s=wait(lambda:state() if state().get('herdr_live_attachment') and state()['desktop']['project_windows'] else None,'Imported window did not start')
 expected=[p['workspace']for p in report['projects']];assert s['project_order']==expected,'Import order differs from Herdr'
 assert len(expected)==report['workspaces']
@@ -44,7 +44,7 @@ for pane_id,old in before['panes'].items():
  identities[pane_id]={'shell_pid':info['shell_pid'],'foreground_pids':[p['pid']for p in info['foreground_processes']]}
 result={'passed':True,'workspaces':len(expected),'tabs':report['tabs'],'source_panes':len(identities),'detected_agents':report['agents'],'stable_project_order':True,'paging_does_not_switch_project':True,'original_Herdr_topology_and_shells_preserved':True,'interactive_live_attachments':True,'selected':workspace,'window_left_open':True,'identities':identities};(out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:v for k,v in result.items()if k!='identities'},indent=2))
 try:
- clients=json.loads(subprocess.check_output(['hyprctl','clients','-j']));c=next(c for c in clients if c['class']=='starmux-herdr-test');addr=c['address']
+ clients=json.loads(subprocess.check_output(['hyprctl','clients','-j']));c=next(c for c in clients if c['class']=='starflux-herdr-test');addr=c['address']
  for expr in [f'hl.dsp.window.float({{action="set",window="address:{addr}"}})',f'hl.dsp.window.resize({{x=1450,y=1000,relative=false,window="address:{addr}"}})']:
   subprocess.run(['hyprctl','eval','hl.dispatch('+expr+')'],check=True,stdout=subprocess.DEVNULL)
  time.sleep(1);c=next(c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j']))if c['address']==addr);x,y=c['at'];w,h=c['size'];subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/'imported-session.png')],check=True)

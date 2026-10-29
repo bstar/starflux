@@ -10,8 +10,8 @@ cargo test --release --locked --workspace --all-features
 cargo test --release --locked --workspace --no-default-features
 cargo deny --all-features check advisories bans licenses sources
 cargo build --locked --workspace --release
-cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o target/release/starmux-pty-proxy.new
-mv -f target/release/starmux-pty-proxy.new target/release/starmux-pty-proxy
+cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o target/release/starflux-pty-proxy.new
+mv -f target/release/starflux-pty-proxy.new target/release/starflux-pty-proxy
 python3 scripts/write-runtime.py
 python3 scripts/test-host.py
 python3 scripts/test-native-terminal.py --context-menu

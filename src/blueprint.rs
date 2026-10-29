@@ -204,7 +204,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     p.border(PixelRect::new(0, 0, l.width, l.top), &t.border, true);
     p.text(
         PixelRect::new(18, 13, 135, 24),
-        "S T A R / M U X",
+        "S T A R / F L U X",
         &t.fg,
         12,
         true,

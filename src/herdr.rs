@@ -98,7 +98,7 @@ pub fn import(session: &str) -> Result<Config> {
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
         "Invalid Herdr session name"
     );
-    let executable = std::env::var("STARMUX_HERDR").unwrap_or_else(|_| "herdr".into());
+    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
     let snapshot =
         checked(Command::new(&executable).args(["--session", session, "api", "snapshot"]))?;
     let home = std::env::home_dir().context("No home directory")?;
@@ -274,7 +274,7 @@ pub fn import(session: &str) -> Result<Config> {
         &serde_json::to_vec_pretty(&snapshot)?,
     )?;
     println!(
-        "Imported {count} Herdr workspaces, {} tabs and {pane_count} panes as interactive live terminal references.\nOpen with: starmux --workspace {}",
+        "Imported {count} Herdr workspaces, {} tabs and {pane_count} panes as interactive live terminal references.\nOpen with: starflux --workspace {}",
         tabs.len(),
         config.workspace
     );
@@ -288,7 +288,7 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
                 .all(|b| b.is_ascii_alphanumeric() || b":_-".contains(&b)),
         "Invalid Herdr pane identity"
     );
-    let executable = std::env::var("STARMUX_HERDR").unwrap_or("herdr".into());
+    let executable = std::env::var("STARFLUX_HERDR").unwrap_or("herdr".into());
     starkit::crossterm::terminal::enable_raw_mode()?;
     let _guard = Restore;
     let mut last = Vec::new();

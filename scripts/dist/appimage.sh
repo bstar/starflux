@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) exit 1 ;; esac
-if [ "${STARMUX_DIST_DEPS_READY:-0}" = 1 ]; then
+if [ "${STARFLUX_DIST_DEPS_READY:-0}" = 1 ]; then
     # shellcheck source=/dev/null
     . "$HOME/.cargo/env"
 else
@@ -17,10 +17,10 @@ trap 'rm -rf "$work"' EXIT
 cargo build --workspace --release --locked
 cargo test --workspace --release --locked --all-features
 bin="${CARGO_TARGET_DIR:-target}/release"
-cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o "$bin/starmux-pty-proxy"
+cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o "$bin/starflux-pty-proxy"
 appdir="$work/AppDir"
-mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/libexec" "$appdir/usr/share/doc/starmux/third-party"
-for executable in starmux starmux-terminal-client starmux-pty-proxy; do
+mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/libexec" "$appdir/usr/share/doc/starflux/third-party"
+for executable in starflux starflux-terminal-client starflux-pty-proxy; do
     scripts/dist/glibc-floor.sh "$bin/$executable"
     install -m755 "$bin/$executable" "$appdir/usr/bin/"
 done
@@ -58,22 +58,22 @@ done
 cp /usr/lib/"$(gcc -dumpmachine)"/alsa-lib/*.so "$appdir/usr/lib/alsa-lib/"
 cp /usr/local/libexec/gstreamer-1.0/gst-plugin-scanner "$appdir/usr/libexec/gstreamer-1.0/"
 cp /usr/local/bin/gst-inspect-1.0 /usr/local/bin/gst-launch-1.0 "$appdir/usr/bin/"
-install -Dm644 packaging/starmux.desktop "$appdir/starmux.desktop"
-install -Dm644 packaging/starmux.svg "$appdir/starmux.svg"
-cp "$appdir/starmux.svg" "$appdir/.DirIcon"
-install -Dm644 packaging/starmux.desktop "$appdir/usr/share/applications/starmux.desktop"
-install -Dm644 packaging/starmux.svg "$appdir/usr/share/icons/hicolor/scalable/apps/starmux.svg"
+install -Dm644 packaging/starflux.desktop "$appdir/starflux.desktop"
+install -Dm644 packaging/starflux.svg "$appdir/starflux.svg"
+cp "$appdir/starflux.svg" "$appdir/.DirIcon"
+install -Dm644 packaging/starflux.desktop "$appdir/usr/share/applications/starflux.desktop"
+install -Dm644 packaging/starflux.svg "$appdir/usr/share/icons/hicolor/scalable/apps/starflux.svg"
 cp -a /usr/share/alsa "$appdir/usr/share/"
-cp -R /usr/local/share/licenses/starmux/. "$appdir/usr/share/doc/starmux/third-party/"
-curl --retry 5 -fsSL https://raw.githubusercontent.com/bstar/starkit/f60a8fb3ffb41a5625c0c3d43e97394f2249ce61/LICENSE -o "$appdir/usr/share/doc/starmux/third-party/STAR-KIT-LICENSE"
-cp README.md LICENSE "$appdir/usr/share/doc/starmux/"
-cp -R LICENSES "$appdir/usr/share/doc/starmux/"
-cp -R docs "$appdir/usr/share/doc/starmux/"
+cp -R /usr/local/share/licenses/starflux/. "$appdir/usr/share/doc/starflux/third-party/"
+curl --retry 5 -fsSL https://raw.githubusercontent.com/bstar/starkit/f60a8fb3ffb41a5625c0c3d43e97394f2249ce61/LICENSE -o "$appdir/usr/share/doc/starflux/third-party/STAR-KIT-LICENSE"
+cp README.md LICENSE "$appdir/usr/share/doc/starflux/"
+cp -R LICENSES "$appdir/usr/share/doc/starflux/"
+cp -R docs "$appdir/usr/share/doc/starflux/"
 python3 scripts/dist/bundle-libraries.py "$appdir"
 # The source archive URLs/hashes are immutable in deps-debian.sh.
-cp scripts/dist/deps-debian.sh "$appdir/usr/share/doc/starmux/third-party/build-sources.sh"
-cat > "$appdir/usr/share/doc/starmux/third-party/README.txt" <<'NOTICE'
-STAR/MUX and STAR/KIT: MIT. Python, tmux and D-Bus retain their upstream licenses.
+cp scripts/dist/deps-debian.sh "$appdir/usr/share/doc/starflux/third-party/build-sources.sh"
+cat > "$appdir/usr/share/doc/starflux/third-party/README.txt" <<'NOTICE'
+STAR/FLUX and STAR/KIT: MIT. Python, tmux and D-Bus retain their upstream licenses.
 GStreamer core/base: LGPL-2.1-or-later. x264 plugin and x264: GPL-2.0-or-later.
 FFmpeg and audio/system libraries retain the licenses in the bundled Debian copyright files.
 Exact Debian binary/source versions are in debian-packages.txt. Corresponding source packages:
@@ -93,7 +93,7 @@ esac
 curl --retry 5 -fsSL "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch" -o "$work/runtime"
 printf '%s  %s\n' "$digest" "$work/runtime" | sha256sum -c -
 mksquashfs "$appdir" "$work/fs.squashfs" -root-owned -noappend -comp gzip -no-progress
-output="dist/starmux-$ver-$arch.AppImage"
+output="dist/starflux-$ver-$arch.AppImage"
 cat "$work/runtime" "$work/fs.squashfs" > "$output"
 chmod +x "$output"
 env -u LD_LIBRARY_PATH APPIMAGE_EXTRACT_AND_RUN=1 "$output" --check-bundle

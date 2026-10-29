@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check Blueprint in real Kitty, live theme propagation, and retained processes."""
 import json,os,pathlib,subprocess,tempfile,time
-root=pathlib.Path(__file__).resolve().parents[1];app=str(root/'scripts/run-local.sh');state=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starmux';out=root/'target/blueprint-proof';out.mkdir(exist_ok=True)
+root=pathlib.Path(__file__).resolve().parents[1];app=str(root/'scripts/run-local.sh');state=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux';out=root/'target/blueprint-proof';out.mkdir(exist_ok=True)
 name='blueprint-proof-'+str(os.getpid())
 def wait(fn,label):
     for _ in range(150):
@@ -13,16 +13,16 @@ def wait(fn,label):
     raise AssertionError(label)
 def inspect():return json.loads((state/(name+'.state.json')).read_text())
 original=json.loads(subprocess.check_output(['hyprctl','activewindow','-j'])).get('address')
-with tempfile.TemporaryDirectory(prefix='starmux-blueprint-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-blueprint-') as tmp:
     address='unix:'+tmp+'/kitty.sock';log=(out/'kitty.log').open('w')
-    child=subprocess.Popen(['/usr/bin/kitty','--config','NONE','--class','starmux-blueprint-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','window_padding_width=0','-o','background_opacity=1','-o','font_size=12',app,'--workspace',name,'--theme','kanagawa'],stdout=log,stderr=log,env={**os.environ,'STAR_GRAPHICS_RENDERER':'gpu'})
+    child=subprocess.Popen(['/usr/bin/kitty','--config','NONE','--class','starflux-blueprint-proof','--listen-on',address,'-o','allow_remote_control=yes','-o','window_padding_width=0','-o','background_opacity=1','-o','font_size=12',app,'--workspace',name,'--theme','kanagawa'],stdout=log,stderr=log,env={**os.environ,'STAR_GRAPHICS_RENDERER':'gpu'})
     def rc(*args,data=None):return subprocess.check_output(['kitten','@','--to',address,*args],input=data,stderr=subprocess.PIPE,timeout=10)
     def snapshot(file):
-        c=next(c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['class']=='starmux-blueprint-proof')
+        c=next(c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['class']=='starflux-blueprint-proof')
         subprocess.run(['hyprctl','eval','hl.dispatch(hl.dsp.focus({window="address:'+c['address']+'"}))'],stdout=subprocess.DEVNULL,check=True);time.sleep(.25)
         x,y=c['at'];w,h=c['size'];subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/file)],check=True)
     try:
-        c=wait(lambda:next((c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['class']=='starmux-blueprint-proof'),None),'Kitty window missing')
+        c=wait(lambda:next((c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j'])) if c['class']=='starflux-blueprint-proof'),None),'Kitty window missing')
         addr=c['address']
         for expr in [f'hl.dsp.window.float({{action="set",window="address:{addr}"}})',f'hl.dsp.window.resize({{x=1200,y=700,relative=false,window="address:{addr}"}})',f'hl.dsp.window.move({{x=2700,y=180,relative=false,window="address:{addr}"}})']:
             subprocess.run(['hyprctl','eval','hl.dispatch('+expr+')'],check=True,stdout=subprocess.DEVNULL)

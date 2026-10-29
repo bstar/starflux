@@ -35,9 +35,9 @@ assert not args.video or args.apps,'--video requires --apps'
 assert not args.pointer_latency or args.video,'--pointer-latency requires --video'
 root=Path(__file__).resolve().parents[1]
 app=root/'scripts/run-local.sh'
-with tempfile.TemporaryDirectory(prefix='starmux-multiwindow-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
     tmp=Path(tmp); runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
-    state=runtime/'starmux';state.mkdir(mode=0o700)
+    state=runtime/'starflux';state.mkdir(mode=0o700)
     workspace='multi-'+secrets.token_hex(4)
     shell=tmp/'shell';shell.write_text("#!/bin/sh\nprintf 'SHARED_TERMINAL_READY\\r\\n'\nexec cat\n");shell.chmod(0o700)
     if args.scrollback:
@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-multiwindow-') as tmp:
                             else:self.send(credit)
                 if m['type']=='terminal_font':self.fonts.append(m['size_millipoints'])
                 if m['type']=='error':
-                    if self.allow_refresh and m['message']=='STARMUX_RELOAD_UI':self.refresh_requested=True
+                    if self.allow_refresh and m['message']=='STARFLUX_RELOAD_UI':self.refresh_requested=True
                     else:raise AssertionError(m)
         def snapshot(self):
             p=state/(self.identity+'.state.json')
@@ -162,18 +162,18 @@ with tempfile.TemporaryDirectory(prefix='starmux-multiwindow-') as tmp:
             if result:return result
             time.sleep(.02)
         for project in (workspace,other):
-            debug=subprocess.run(['tmux','-L','starmux-'+project,'list-panes','-a','-F','#{pane_pid} #{pane_current_command} #{pane_start_command}'],env=env,capture_output=True,text=True)
+            debug=subprocess.run(['tmux','-L','starflux-'+project,'list-panes','-a','-F','#{pane_pid} #{pane_current_command} #{pane_start_command}'],env=env,capture_output=True,text=True)
             print('Private fixture:',project,debug.stdout,debug.stderr,flush=True)
         for c in clients:print('Private client:',c.identity,'project',c.snapshot().get('active_project'),'terminals',c.snapshot().get('direct_terminals'),'history',c.snapshot().get('history'),flush=True)
         if args.pointer_latency:print('Decoded cursor frames:',b.cursor_frames[-8:],flush=True)
         raise AssertionError(label+': '+repr([dict(frontend=c.identity,exit=c.process.poll(),active=c.snapshot().get('active'),tabs=tabs(c),status=c.snapshot().get('status'),stderr=(tmp/(c.identity+'.log')).read_text()) for c in clients])+(' sshd: '+(tmp/'sshd.log').read_text() if daemon else ''))
     def terminal_text(c,pane=0):return next((t['text'] for t in c.snapshot().get('direct_terminals',[]) if t['pane']==pane),'')
     def terminal_size(pane=0):
-        return tuple(map(int, subprocess.check_output(['tmux','-L','starmux-'+workspace,'display-message','-p','-t',f'p{pane}:0.0','#{pane_width} #{pane_height}'],env=env,text=True).split()))
+        return tuple(map(int, subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{pane}:0.0','#{pane_width} #{pane_height}'],env=env,text=True).split()))
     def expected_size(c):
         return next((component['rect']['width'],component['rect']['height']) for component in c.scene['components'] if component['kind']=='terminal')
     def tabs(c):return c.snapshot().get('project_state',{}).get('terminals',[])
-    def pid():return subprocess.check_output(['tmux','-L','starmux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_pid}'],env=env,text=True).strip()
+    def pid():return subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_pid}'],env=env,text=True).strip()
     try:
         b_columns,b_rows=(230,72) if args.video else (130,44)
         a=Client('v-a'+secrets.token_hex(5),100,35);b=Client('v-b'+secrets.token_hex(5),b_columns,b_rows);clients=[a,b]
@@ -293,7 +293,7 @@ App().run([sys.argv[0]])
             for reader in clients:
                 wheel(reader)
                 def in_copy_mode():
-                    return subprocess.check_output(['tmux','-L','starmux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1'
+                    return subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1'
                 wait(in_copy_mode,'wheel must enter backend history after attaching to an existing plan')
                 for _ in range(75):
                     wheel(reader)
@@ -358,10 +358,10 @@ App().run([sys.argv[0]])
             left=a.snapshot()['project_state']['split_panes'][0]
             assert left!=active
             wheel(a)
-            wait(lambda:subprocess.check_output(['tmux','-L','starmux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1','wheel targets the hovered split, not the keyboard-focused pane')
+            wait(lambda:subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1','wheel targets the hovered split, not the keyboard-focused pane')
             assert a.snapshot()['active']==active,'scrolling moved keyboard focus'
             for _ in range(80):wheel(a,'scroll_down')
-            wait(lambda:subprocess.check_output(['tmux','-L','starmux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='0','split wheel returns to live output')
+            wait(lambda:subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='0','split wheel returns to live output')
         stable_until=time.monotonic()+1.5
         while time.monotonic()<stable_until:
             for c in clients:c.pump()
@@ -399,7 +399,7 @@ App().run([sys.argv[0]])
         assert a.snapshot()['project_state']['split'] and not b.snapshot()['project_state']['split']
         assert pid()==first_pid,'second window restarted the terminal'
         # Exit only our private fake cat process. Both views must remove that shared tab.
-        subprocess.run(['tmux','-L','starmux-'+workspace,'send-keys','-t','p0:0.0','C-d','C-d'],env=env,check=True)
+        subprocess.run(['tmux','-L','starflux-'+workspace,'send-keys','-t','p0:0.0','C-d','C-d'],env=env,check=True)
         wait(lambda:all(0 not in tabs(c) for c in clients),'shared exit removal')
         a.action('terminal:new')
         wait(lambda:all(0 in tabs(c) for c in clients),'safe slot reuse')
@@ -446,7 +446,7 @@ App().run([sys.argv[0]])
         for descriptor in state.glob('*.frontend.json'):
             identity=json.loads(descriptor.read_text())['id'];(state/(identity+'.close')).touch()
         for name in (workspace,other):
-            subprocess.run(['tmux','-L','starmux-'+name,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            subprocess.run(['tmux','-L','starflux-'+name,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         # GTK portals can mount FUSE inside this disposable runtime. Detach only
         # this test's mount before TemporaryDirectory attempts to traverse it.
         for portal in ('doc','gvfs'):

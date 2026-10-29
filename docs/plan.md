@@ -1,4 +1,4 @@
-# STAR MUX architecture and implementation plan
+# STAR FLUX architecture and implementation plan
 
 Build an agent workspace using STAR/KIT for presentation and actual Kitty instances for terminals. Agent sessions must persist independently of the visible workspace. Dragging a desktop file onto a remote agent must transfer the file and deliver a reference or attachment that the agent can use.
 
@@ -28,10 +28,10 @@ Defer macOS embedding, Windows, a plugin marketplace, multi-user collaboration, 
 
 ## Existing foundations
 
-| Foundation | Verified source behavior | Consequence for STAR/MUX |
+| Foundation | Verified source behavior | Consequence for STAR/FLUX |
 | --- | --- | --- |
 | Herdr | Background terminal ownership, session restore, agent state, CLI and socket automation | Study runtime boundaries and event semantics; avoid reproducing its UI before the new embedding path works |
-| STAR/KIT | Scene and cell presentation, themes, responsive panes, tiny-skia and cosmic-text rendering, persistent controllers, live canvas frames | Reuse the public presentation APIs and keep domain state in STAR/MUX |
+| STAR/KIT | Scene and cell presentation, themes, responsive panes, tiny-skia and cosmic-text rendering, persistent controllers, live canvas frames | Reuse the public presentation APIs and keep domain state in STAR/FLUX |
 | STAR/SCREEN | Smithay Linux compositor, GLES rendering, borderless Kitty launch, live canvas presentation and embedded input | Prototype with this implementation, then extract a small reusable compositor boundary if appropriate |
 | STAR/KIT SSH file bridge | Bounded transfer over existing SSH TTY, local file capabilities, desktop drop integration | Reuse the transfer concepts and public APIs where applicable; implement agent-specific file staging and delivery |
 | Kitty | Real terminal rendering and socket remote control | Keep Kitty as a process and surface; investigate a narrow control channel rather than assuming a terminal widget API |
@@ -43,7 +43,7 @@ Local source baselines inspected on 2026-10-23:
 
 STAR/KIT's current live-frame implementation limits a transport to eight stream identities and 256 MiB, with up to 128 MiB per frame. Start with one compositor atlas for visible panes, rather than assuming one stream per agent scales without limit. Hidden agents remain live without continuous frame delivery.
 
-These are source capabilities, not proof that STAR/MUX's combined path already works. In particular, STAR/SCREEN's window move and resize gestures do not establish that external desktop file drops reach embedded Kitty or a remote harness.
+These are source capabilities, not proof that STAR/FLUX's combined path already works. In particular, STAR/SCREEN's window move and resize gestures do not establish that external desktop file drops reach embedded Kitty or a remote harness.
 
 ## Presentation decision
 
@@ -64,13 +64,13 @@ Record an architecture decision after the comparison. If both options fail manda
 
 ```mermaid
 flowchart TD
-    UI[STAR KIT workspace frontend] <--> D[Local starmux daemon]
+    UI[STAR KIT workspace frontend] <--> D[Local starflux daemon]
     UI <--> C[Private compositor and Kitty surface worker]
     C --> K[Local Kitty instances]
     K <--> A[Terminal attach clients]
     A <--> D
     D <--> L[Local session workers and PTYs]
-    D <-->|OpenSSH transport| R[Remote starmux host daemon]
+    D <-->|OpenSSH transport| R[Remote starflux host daemon]
     R <--> W[Remote session workers and PTYs]
     L --> LA[Local shells and agents]
     W --> RA[Remote shells and agents]
@@ -153,7 +153,7 @@ Place staging within a location the agent's filesystem permissions and sandbox c
 
 ### Harness delivery
 
-Codex is the first adapter. Official documentation establishes image inputs through the composer and startup `--image`; it does not establish that STAR/MUX can attach an image to every already-running TUI version. The spike must establish that exact behavior with the installed version.
+Codex is the first adapter. Official documentation establishes image inputs through the composer and startup `--image`; it does not establish that STAR/FLUX can attach an image to every already-running TUI version. The spike must establish that exact behavior with the installed version.
 
 Prefer a supported structured attachment interface where available. For a terminal harness, deliver the completed remote path using the harness's tested paste/attachment behavior and preserve bracketed paste boundaries. Keep shell escaping separate from composer text handling. Never inject a shell command into an active agent prompt.
 
@@ -179,13 +179,13 @@ Input checks cover press/repeat/release, Ctrl+C, multiline paste, terminal query
 
 Start with logical modules; split crates when the first milestone establishes stable boundaries. Proposed modules are `model`, `runtime`, `session`, `host`, `protocol`, `terminal`, `compositor`, `attachments`, `adapters`, `ui`, and `storage`.
 
-Proposed executables are `starmux`, a daemon mode, a fixed remote helper mode, and a terminal attach mode. Keep their transport implementations shared. Initial commands cover launch, list sessions, attach, detach, inspect, and stop a selected session. An explicit stop is distinct from closing the workspace.
+Proposed executables are `starflux`, a daemon mode, a fixed remote helper mode, and a terminal attach mode. Keep their transport implementations shared. Initial commands cover launch, list sessions, attach, detach, inspect, and stop a selected session. An explicit stop is distinct from closing the workspace.
 
 Use versioned request and response schemas, bounded payloads, request IDs, structured errors, sequence numbers, reconnect cursors, and cancellation. Event consumers that fall behind receive a resnapshot instruction. Mutating retryable operations need idempotency keys. Bind local sockets in private runtime directories and avoid a public TCP listener by default.
 
 Expose narrow private Kitty control sockets only to the components that need them. Agent control is session-scoped; terminal output is untrusted data and cannot grant a new capability. External action requests remain subject to the user's harness controls.
 
-Pin STAR/KIT by immutable revision after checking its source manifest and APIs; the inspected README's release discussion differs from its manifest version. The initial build may use a documented local override, but a distributable build must not require a sibling checkout. Extract shared compositor code through a deliberate change to the owning repository rather than making STAR/MUX depend on STAR/SCREEN's private UI and recording code. Review actual source licenses and required notices before copying or distributing code; older Herdr forks may differ from current upstream.
+Pin STAR/KIT by immutable revision after checking its source manifest and APIs; the inspected README's release discussion differs from its manifest version. The initial build may use a documented local override, but a distributable build must not require a sibling checkout. Extract shared compositor code through a deliberate change to the owning repository rather than making STAR/FLUX depend on STAR/SCREEN's private UI and recording code. Review actual source licenses and required notices before copying or distributing code; older Herdr forks may differ from current upstream.
 
 Use official distribution packages or Nix for build dependencies. No AUR dependency is assumed. Keep codec, audio, GPU, and desktop requirements explicit, with actionable startup diagnostics. Runtime logs must redact secrets and avoid full prompt or attachment content by default.
 

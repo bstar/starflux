@@ -3465,6 +3465,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "starflux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "crossbeam-channel",
+ "gio",
+ "gio-unix",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "libc",
+ "percent-encoding",
+ "png 0.17.16",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shell-words",
+ "smithay",
+ "starkit",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "vt100",
+]
+
+[[package]]
+name = "starflux-terminal-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "starkit",
+]
+
+[[package]]
 name = "starkit"
 version = "0.13.0"
 source = "git+https://github.com/bstar/starkit?rev=f60a8fb3ffb41a5625c0c3d43e97394f2249ce61#f60a8fb3ffb41a5625c0c3d43e97394f2249ce61"
@@ -3497,44 +3535,6 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "vello",
-]
-
-[[package]]
-name = "starmux"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "crossbeam-channel",
- "gio",
- "gio-unix",
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "libc",
- "percent-encoding",
- "png 0.17.16",
- "portable-pty",
- "serde",
- "serde_json",
- "sha2",
- "shell-words",
- "smithay",
- "starkit",
- "tempfile",
- "tracing",
- "uuid",
- "vt100",
-]
-
-[[package]]
-name = "starmux-terminal-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "starkit",
 ]
 
 [[package]]

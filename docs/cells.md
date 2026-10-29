@@ -1,15 +1,15 @@
 # Cells and graphical presentations
 
-`starmux --cells` runs directly in the launching terminal. Kitty, a desktop display,
+`starflux --cells` runs directly in the launching terminal. Kitty, a desktop display,
 and a private compositor are not needed for this presentation. Embedded terminals
 are persistent PTY sessions rendered into the parent terminal's cell grid, using
 its font and cell size. Cells are text, rather than terminal screenshots.
 
 ```sh
-starmux --cells --workspace my-project --directory /path/to/project
-starmux --cells --workspace remote-project --host user@host --directory /work/project
-starmux --cells --ssh user@host --workspace existing-project
-starmux --graphical --workspace my-project
+starflux --cells --workspace my-project --directory /path/to/project
+starflux --cells --workspace remote-project --host user@host --directory /work/project
+starflux --cells --ssh user@host --workspace existing-project
+starflux --graphical --workspace my-project
 ```
 
 Without either flag, the displaying frontend prefers graphical presentation when
@@ -100,7 +100,7 @@ The file-path dialog accepts a regular file **on the workspace host** and uses t
 existing upload-and-paste operation for the selected project's host. For a workspace
 attached with `--ssh`, this is a path on that remote workspace machine, not the local
 displaying machine. It pastes the destination reference without submitting it.
-Local CLI delivery remains available as `starmux --workspace NAME --deliver PATH`.
+Local CLI delivery remains available as `starflux --workspace NAME --deliver PATH`.
 
 App Space requires a graphical canvas. It is hidden in cells mode and in frontends
 that advertise no local or streamed app frames. Supported graphical frontends,

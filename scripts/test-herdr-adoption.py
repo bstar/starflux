@@ -16,7 +16,7 @@ import threading
 import time
 
 root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
-with tempfile.TemporaryDirectory(prefix='starmux-live-adopt-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
     tmp=Path(tmp);config=tmp/'config/herdr';config.mkdir(parents=True)
     runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
     config.joinpath('config.toml').write_text('onboarding = false\n')
@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-live-adopt-') as tmp:
         # A protocol-only legacy frontend must refresh into an independent native view.
         first=plan['projects'][0];second=plan['projects'][1]
         legacy=subprocess.Popen([str(app),'--serve',first],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE);view_processes.append(legacy)
-        endpoint=runtime/'starmux'/(first+'.sock');wait(endpoint.exists,'legacy STAR/MUX controller')
+        endpoint=runtime/'starflux'/(first+'.sock');wait(endpoint.exists,'legacy STAR/FLUX controller')
         peer=socket.socket(socket.AF_UNIX);peer.connect(str(endpoint));transport=peer.makefile('rwb',buffering=0)
         caps=dict(native_terminal_cells=True,image_transport='kitty',pixel_geometry='measured',pointer_precision='cells',keyboard=True,paste=True,presentation_ack=True,native_surfaces=True,physical_text=True,pixel_layout=True)
         hello=dict(type='hello',version=1,client='adoption-proof',viewport=dict(columns=100,rows=35,width=1000,height=700,generation=1),capabilities=caps)
@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-live-adopt-') as tmp:
                         scene=message['scene'];transport.write(json.dumps(dict(type='presented',revision=scene['revision'],generation=scene['viewport']['generation'])).encode()+b'\n')
             except (OSError,ValueError):pass
         threading.Thread(target=frames,daemon=True).start()
-        state=runtime/'starmux'/(first+'.state.json');wait(state.exists,'legacy state')
+        state=runtime/'starflux'/(first+'.state.json');wait(state.exists,'legacy state')
         subprocess.run([str(app),'--workspace',first,'--action','project:'+second],env=env,check=True,capture_output=True)
         wait(lambda:json.loads(state.read_text()).get('active_project')==second,'legacy project selection')
         prepared=subprocess.run([str(app),'--plan-herdr-migration'],env=env,check=True,capture_output=True,text=True)
@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-live-adopt-') as tmp:
                         scene=message['scene'];resumed.stdin.write(json.dumps(dict(type='presented',revision=scene['revision'],generation=scene['viewport']['generation'])).encode()+b'\n');resumed.stdin.flush()
             except (OSError,ValueError):pass
         threading.Thread(target=resumed_frames,daemon=True).start()
-        resumed_state=runtime/'starmux'/(successor+'.state.json')
+        resumed_state=runtime/'starflux'/(successor+'.state.json')
         wait(lambda:resumed_state.exists() and json.loads(resumed_state.read_text()).get('active_project')==second,'native frontend restores selected project')
         assert all(is_alive(pid) for pid in pids),'Live ownership changed an original PID'
         for p in plan['panes']:
@@ -113,11 +113,11 @@ with tempfile.TemporaryDirectory(prefix='starmux-live-adopt-') as tmp:
             subprocess.run(['tmux','-L',p['server'],'send-keys','-t',p['target'],'Enter'],env=env,check=True)
             def captured():return subprocess.check_output(['tmux','-L',p['server'],'capture-pane','-p','-t',p['target']],env=env,text=True)
             wait(lambda:'REPLY='+token in captured(),'post-transfer interactive IO')
-            # Inspect through STAR/MUX, not Herdr, and verify the original shell identity.
+            # Inspect through STAR/FLUX, not Herdr, and verify the original shell identity.
             with socket.socket(socket.AF_UNIX) as inspector:
                 inspector.connect(plan['broker']);inspector.sendall(json.dumps(dict(op='inspect',key=p['key'])).encode()+b'\n')
                 inspected=json.loads(inspector.makefile('rb').readline())
-            assert inspected['pid']==p['pid'] and inspected['alive'] and inspected['source']=='starmux-adopted'
+            assert inspected['pid']==p['pid'] and inspected['alive'] and inspected['source']=='starflux-adopted'
             project=json.loads(Path(plan['project_root'],p['workspace']+'.json').read_text())
             assert project['herdr'] is None and str(p['slot']) in project['adopted']
         assert not (config/'herdr.sock').exists(),'Old Herdr API is still running'

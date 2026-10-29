@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Headless SSH checks for staged files, raw image MIME data and browser image drops."""
 import getpass,json,os,pathlib,shlex,socket,subprocess,tempfile,time,uuid
-repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starmux'
+repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/image-drop-proof';out.mkdir(parents=True,exist_ok=True)
 local='shelf-'+uuid.uuid4().hex[:8];remote='shelf-ssh-'+uuid.uuid4().hex[:8];names=[local,remote];children=[]
 def wait(fn,label,timeout=35):
@@ -16,7 +16,7 @@ def wait(fn,label,timeout=35):
 def invoke(name,*args):return subprocess.check_output([str(app),'--workspace',name,*args],stderr=subprocess.PIPE,timeout=25)
 def inspect():return json.loads((runtime/(local+'.state.json')).read_text())
 def action(value):invoke(local,'--action',value)
-with tempfile.TemporaryDirectory(prefix='starmux-shelf-') as tmp:
+with tempfile.TemporaryDirectory(prefix='starflux-shelf-') as tmp:
     tmp=pathlib.Path(tmp)
     try:
         for key in ['host','client']:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(tmp/key)],check=True)
@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix='starmux-shelf-') as tmp:
         wait(lambda:subprocess.run(['ssh','-F',str(sshconfig),'shelf-host','true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'Private SSH unavailable')
         names=[local]
         import threading,base64,hashlib
-        config={'workspace':local,'theme':'kanagawa','host':None,'directory':str(tmp),'agent':None,'executable':str(repo/'target/release/starmux'),'project_host':True,'desktop_helper':str(app)}
+        config={'workspace':local,'theme':'kanagawa','host':None,'directory':str(tmp),'agent':None,'executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app)}
         p=runtime/(local+'.json');p.write_text(json.dumps(config));p.chmod(0o600)
         server=subprocess.Popen([str(app),'--serve',local],env={**os.environ,'STAR_TERMINAL_RENDERER':'direct'},stdout=subprocess.DEVNULL,stderr=(out/'server.log').open('w'));children.append(server)
         wait(lambda:(runtime/(local+'.sock')).exists(),'Workspace server missing')

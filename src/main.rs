@@ -45,7 +45,7 @@ use std::{
 #[derive(Parser)]
 #[command(
     version,
-    about = "S T A R / M U X — persistent local/SSH terminals in cells or graphics"
+    about = "S T A R / F L U X — persistent local/SSH terminals in cells or graphics"
 )]
 struct Args {
     /// Render text cells directly in the launching terminal
@@ -66,7 +66,7 @@ struct Args {
     /// Import the default Herdr session as an isolated interactive collection
     #[arg(long)]
     import_herdr: bool,
-    /// Transfer live default Herdr terminals into STAR/MUX without restarting them
+    /// Transfer live default Herdr terminals into STAR/FLUX without restarting them
     #[arg(long)]
     migrate_herdr: bool,
     /// Prepare and back up a live Herdr migration without applying it
@@ -81,11 +81,11 @@ struct Args {
     /// SSH destination for this project (legacy workspaces retain their sessions)
     #[arg(long)]
     host: Option<String>,
-    /// Render locally while attaching to a saved STAR/MUX workspace over SSH
+    /// Render locally while attaching to a saved STAR/FLUX workspace over SSH
     #[arg(long, conflicts_with = "host")]
     ssh: Option<String>,
-    /// STAR/MUX executable on the workspace host
-    #[arg(long, default_value = "starmux", requires = "ssh")]
+    /// STAR/FLUX executable on the workspace host
+    #[arg(long, default_value = "starflux", requires = "ssh")]
     remote_executable: String,
     /// OpenSSH configuration file for the remote host
     #[arg(long)]
@@ -114,7 +114,7 @@ struct Args {
     /// Application executable and arguments for --app-launch
     #[arg(last = true, requires = "app_launch")]
     app_argv: Vec<String>,
-    /// S T A R / M U X executable on the app host (default: starmux)
+    /// S T A R / F L U X executable on the app host (default: starflux)
     #[arg(long)]
     desktop_helper: Option<String>,
     /// Send a workspace action (e.g. terminal:new, terminal:split, git:details)
@@ -610,10 +610,11 @@ fn run() -> Result<()> {
             mode != presentation::Mode::Cells,
             "Cells mode requires an interactive terminal"
         );
-        let mut c = Command::new(std::env::var("STARMUX_KITTY").unwrap_or_else(|_| "kitty".into()));
+        let mut c =
+            Command::new(std::env::var("STARFLUX_KITTY").unwrap_or_else(|_| "kitty".into()));
         c.args([
             "--title",
-            "S T A R / M U X",
+            "S T A R / F L U X",
             "-o",
             "initial_window_width=1400",
             "-o",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""STAR/MUX live PTY ownership receiver and tmux proxy (Herdr handoff v1).
+"""STAR/FLUX live PTY ownership receiver and tmux proxy (Herdr handoff v1).
 
 No agent process is relaunched. Before commit, failure closes only duplicated
 masters and staged proxies; Herdr still owns its original descriptors.
@@ -129,7 +129,7 @@ class Broker:
                 if re.search(choice+r'(?:yes\b|allow once\b)',footer) and re.search(choice+r"(?:no\b|don't allow\b|deny this\b)",footer) and ('esc' in footer or 'enter' in footer):status='waiting_for_approval'
                 if re.search(r'(?m)^\s*[│┃|>›❯●* ]*(?:question[ :]|user input requested)',footer) and re.search(choice,footer) and any(v in footer for v in ['enter to submit','enter to confirm','enter to select']):status='needs_input'
             except (OSError,subprocess.TimeoutExpired):pass
-        t['health']=dict(alive=alive,exited=not alive,pid=pid,command=agent or command,agent=agent,agent_pid=agent_pid,state=status,source='starmux-adopted',output_fingerprint=t['hash'].hexdigest())
+        t['health']=dict(alive=alive,exited=not alive,pid=pid,command=agent or command,agent=agent,agent_pid=agent_pid,state=status,source='starflux-adopted',output_fingerprint=t['hash'].hexdigest())
         t['inspect_at']=now;return t['health']
     def request(self,peer,request):
         c=self.clients[peer];key=request.get('key');op=request.get('op')

@@ -320,7 +320,7 @@ fn renderer() -> Result<GlesRenderer> {
         match result {
             Ok(context) => match unsafe { GlesRenderer::new(context) } {
                 Ok(mut renderer) => {
-                    if std::env::var_os("STARMUX_RENDER_TIMING").is_some() {
+                    if std::env::var_os("STARFLUX_RENDER_TIMING").is_some() {
                         let name = renderer.with_context(|gl| unsafe {
                             let name = gl.GetString(0x1F01); // GL_RENDERER
                             if name.is_null() {
@@ -386,17 +386,17 @@ pub(super) fn run(
         }
     }
     let output = Output::new(
-        "STAR/MUX".into(),
+        "STAR/FLUX".into(),
         PhysicalProperties {
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
-            make: "STAR/MUX".into(),
+            make: "STAR/FLUX".into(),
             model: "Demo desktop".into(),
         },
     );
     output.create_global::<State>(&dh);
     let mut seat_state = SeatState::new();
-    let mut seat = seat_state.new_wl_seat(&dh, "starmux");
+    let mut seat = seat_state.new_wl_seat(&dh, "starflux");
     seat.add_keyboard(Default::default(), 250, 30)?;
     seat.add_pointer();
     let mut state = State {
@@ -744,7 +744,7 @@ pub(super) fn run(
                     }
                 }
                 last_pixels = Some(Arc::new(pixels));
-                if std::env::var_os("STARMUX_RENDER_TIMING").is_some() {
+                if std::env::var_os("STARFLUX_RENDER_TIMING").is_some() {
                     eprintln!(
                         "Compositor frame: at_ns={} render_us={} readback_us={}",
                         crate::runtime::monotonic_ns(),
@@ -890,10 +890,10 @@ impl State {
             let args = shell_words::split(&launch.command).context("Invalid command quoting")?;
             let program = args.first().context("Enter an application command")?;
             let mut command = Command::new(program);
-            if let Some(path) = std::env::var_os("STARMUX_SYSTEM_PATH") {
+            if let Some(path) = std::env::var_os("STARFLUX_SYSTEM_PATH") {
                 command.env("PATH", path);
                 for key in [
-                    "STARMUX_SYSTEM_PATH",
+                    "STARFLUX_SYSTEM_PATH",
                     "GST_PLUGIN_SYSTEM_PATH_1_0",
                     "GST_PLUGIN_SCANNER",
                     "GST_REGISTRY",

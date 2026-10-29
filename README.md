@@ -1,16 +1,16 @@
-# S T A R / M U X
+# S T A R / F L U X
 
-[![CI](https://github.com/bstar/starmux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bstar/starmux/actions/workflows/ci.yml)
-[![Release builds](https://github.com/bstar/starmux/actions/workflows/release.yml/badge.svg)](https://github.com/bstar/starmux/actions/workflows/release.yml)
-[![Arch package](https://github.com/bstar/starmux/actions/workflows/arch.yml/badge.svg)](https://github.com/bstar/starmux/actions/workflows/arch.yml)
+[![CI](https://github.com/bstar/starflux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bstar/starflux/actions/workflows/ci.yml)
+[![Release builds](https://github.com/bstar/starflux/actions/workflows/release.yml/badge.svg)](https://github.com/bstar/starflux/actions/workflows/release.yml)
+[![Arch package](https://github.com/bstar/starflux/actions/workflows/arch.yml/badge.svg)](https://github.com/bstar/starflux/actions/workflows/arch.yml)
 
 An agent workspace built with STAR/KIT, with persistent local and SSH terminals,
 a graphical interface, and a full text-cell interface for ordinary terminals.
 
 ```sh
-starmux --cells --workspace my-app --directory /path/to/project
-starmux --cells --ssh user@host --workspace my-app
-starmux --graphical --workspace my-app
+starflux --cells --workspace my-app --directory /path/to/project
+starflux --cells --ssh user@host --workspace my-app
+starflux --graphical --workspace my-app
 ```
 
 Automatic presentation prefers graphical mode where supported and falls back to
@@ -25,11 +25,11 @@ Use **App Space** in the terminal header or **Open App Space** in a project's
 right-click menu. Cells mode and frontends without app-frame support hide these
 controls. Opening terminals alone does not start an app desktop.
 
-Download packaged builds from [GitHub Releases](https://github.com/bstar/starmux/releases). See the [release and installation notes](docs/releases/0.1.0.md) for platform requirements.
+Download packaged builds from [GitHub Releases](https://github.com/bstar/starflux/releases). See the [release and installation notes](docs/releases/0.1.0.md) for platform requirements.
 
 The workspace keeps a project's agents and terminal tabs together with a persistent
 project sidebar and shared chrome/terminal themes. New projects open a shell. Run
-Codex or another supported agent in any terminal; STAR/MUX tracks it automatically.
+Codex or another supported agent in any terminal; STAR/FLUX tracks it automatically.
 **+ Tab** opens another PTY-backed terminal in the project directory, locally or on
 its SSH host. Tabs retain their sessions and support rename and explicit splits.
 **Refresh** reloads the UI while keeping those sessions running.
@@ -40,7 +40,7 @@ The sidebar defaults to **Manual** ordering: drag project rows to arrange them; 
 
 Right-click projects and terminal tabs for rename and navigation menus. The header shows live Git status; click it for staged/unstaged files, branch/upstream details and work totals on the project’s local or SSH host.
 
-Click to type; returning to the STAR/MUX window restores input to the selected agent or terminal pane, including splits. Open dialogs keep their keyboard focus. **Ctrl+Esc** releases input. Closing the workspace retains agents, shells and app workers. Use `--workspace NAME` to reconnect and `--stop` to explicitly end that project’s processes. Dragged files are copied to the destination host before a usable reference is pasted into the agent.
+Click to type; returning to the STAR/FLUX window restores input to the selected agent or terminal pane, including splits. Open dialogs keep their keyboard focus. **Ctrl+Esc** releases input. Closing the workspace retains agents, shells and app workers. Use `--workspace NAME` to reconnect and `--stop` to explicitly end that project’s processes. Dragged files are copied to the destination host before a usable reference is pasted into the agent.
 
 Terminals use a PTY cell stream over local/SSH connections and are drawn directly
 by the presenting terminal. They do not require a virtual desktop, terminal
