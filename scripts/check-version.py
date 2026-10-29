@@ -14,6 +14,7 @@ entry=next(p for p in lock['package'] if p['name']=='starkit')
 assert entry['source']==f"git+{kit['git']}?rev={kit['rev']}#{kit['rev']}", 'SDK lock must retain its Git source and revision'
 assert entry['version'].startswith(kit['version']+'.'), 'SDK version mismatch'
 assert 'cargoToml.package.version' in (root/'flake.nix').read_text()
+assert (root/'docs/releases'/f"{manifest['package']['version']}.md").is_file(), 'Versioned release notes are missing'
 if os.environ.get('GITHUB_REF_TYPE')=='tag':
     assert os.environ['GITHUB_REF_NAME']=='v'+manifest['package']['version'], 'Release tag/version mismatch'
 print('Workspace versions and immutable Git dependency pin are consistent')

@@ -25,7 +25,7 @@ Use **App Space** in the terminal header or **Open App Space** in a project's
 right-click menu. Cells mode and frontends without app-frame support hide these
 controls. Opening terminals alone does not start an app desktop.
 
-Download packaged builds from [GitHub Releases](https://github.com/bstar/starflux/releases). See the [release and installation notes](docs/releases/0.1.0.md) for platform requirements.
+Download packaged builds from [GitHub Releases](https://github.com/bstar/starflux/releases). See the [release and installation notes](docs/releases/0.2.0.md) for platform requirements.
 
 The workspace keeps a project's agents and terminal tabs together with a persistent
 project sidebar and shared chrome/terminal themes. New projects open a shell. Run
