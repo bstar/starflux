@@ -76,7 +76,11 @@ class Broker:
     def watch(self,key):
         t=self.terms[key]
         if t['eof']:return
-        events=(selectors.EVENT_READ if self.committed and t['peer'] else 0)|(selectors.EVENT_WRITE if self.committed and t['pending'] else 0)
+        # Stop reading the original PTY before its proxy queue fills. The
+        # kernel then backpressures the application without dropping its bridge.
+        peer=t['peer']
+        readable=peer in self.clients and len(self.clients[peer]['out'])<QUEUE//2
+        events=(selectors.EVENT_READ if self.committed and readable else 0)|(selectors.EVENT_WRITE if self.committed and t['pending'] else 0)
         if t['registered']:
             if events:self.sel.modify(t['fd'],events,('pty',key))
             else:self.sel.unregister(t['fd']);t['registered']=False
@@ -124,7 +128,10 @@ class Broker:
             try:
                 captured=subprocess.run(['tmux','-L',p['server'],'capture-pane','-p','-t',p['target']],capture_output=True,timeout=.5).stdout.decode(errors='replace')
                 footer='\n'.join(captured.splitlines()[-32:]).lower()
-                if re.search(r'\([0-9.]+[hms0-9. ]*[^)\n]{0,48}esc to interrupt\)',footer):status='working'
+                for line in reversed(footer.splitlines()):
+                    line=line.lstrip(' \t│┃|●*•')
+                    if line.startswith('worked for '):break
+                    if re.match(r'^(?:working|thinking|running|executing)\s+\([0-9][hms0-9. ·•]*esc to interrupt\)',line):status='working';break
                 choice=r'(?m)^\s*[│┃|>›❯●* ]*(?:\d+[.)]|[yn]\))\s*'
                 if re.search(choice+r'(?:yes\b|allow once\b)',footer) and re.search(choice+r"(?:no\b|don't allow\b|deny this\b)",footer) and ('esc' in footer or 'enter' in footer):status='waiting_for_approval'
                 if re.search(r'(?m)^\s*[│┃|>›❯●* ]*(?:question[ :]|user input requested)',footer) and re.search(choice,footer) and any(v in footer for v in ['enter to submit','enter to confirm','enter to select']):status='needs_input'
@@ -177,6 +184,7 @@ class Broker:
                             self.request(peer,json.loads(text))
                     if mask&selectors.EVENT_WRITE and c['out']:
                         count=peer.send(c['out']);del c['out'][:count]
+                        if c['key']:self.watch(c['key'])
                     if not c['out']:
                         if c['close']:self.disconnect(peer)
                         elif peer in self.clients:self.sel.modify(peer,selectors.EVENT_READ,('client',peer))
@@ -198,6 +206,7 @@ class Broker:
                     else:
                         t['sequence']+=1;t['hash'].update(data)
                         if t['peer']:self.output(t['peer'],data)
+                        self.watch(key)
                 if mask&selectors.EVENT_WRITE and not t['eof'] and t['pending']:
                     try:count=os.write(t['fd'],t['pending']);del t['pending'][:count]
                     except BlockingIOError:pass

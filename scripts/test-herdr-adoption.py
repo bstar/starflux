@@ -107,6 +107,15 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         resumed_state=runtime/'starflux'/(successor+'.state.json')
         wait(lambda:resumed_state.exists() and json.loads(resumed_state.read_text()).get('active_project')==second,'native frontend restores selected project')
         assert all(is_alive(pid) for pid in pids),'Live ownership changed an original PID'
+        active=next(p for p in plan['panes'] if p['workspace']==second)
+        bridge_pid=int(subprocess.check_output(['tmux','-L',active['server'],'display-message','-p','-t',active['target'],'#{pane_pid}'],env=env,text=True))
+        assert bridge_pid not in pids,'Recovery must terminate only the private presentation proxy'
+        os.kill(bridge_pid,15)
+        def bridge_recovered():
+            value=subprocess.check_output(['tmux','-L',active['server'],'display-message','-p','-t',active['target'],'#{pane_dead} #{pane_pid}'],env=env,text=True).split()
+            return value[0]=='0' and int(value[1])!=bridge_pid
+        wait(bridge_recovered,'dead presentation bridge reconnects automatically')
+        assert all(is_alive(pid) for pid in pids),'Bridge recovery restarted an original shell'
         for p in plan['panes']:
             token='AFTER_TRANSFER_'+secrets.token_hex(4)
             subprocess.run(['tmux','-L',p['server'],'send-keys','-t',p['target'],'-l',token],env=env,check=True)

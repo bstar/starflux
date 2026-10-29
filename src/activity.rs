@@ -124,15 +124,29 @@ pub fn screen_state(text: &str) -> &'static str {
     if yes && no && (footer.contains("esc") || footer.contains("enter")) {
         return "waiting_for_approval";
     }
-    if footer.lines().any(|line| {
-        line.split_once("esc to interrupt")
-            .is_some_and(|(before, _)| {
-                before
-                    .rsplit_once('(')
-                    .is_some_and(|(_, elapsed)| elapsed.chars().any(|c| c.is_ascii_digit()))
-            })
-    }) {
-        return "working";
+    for line in footer.lines().rev() {
+        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•".contains(c));
+        if line.starts_with("worked for ") {
+            return "idle";
+        }
+        let Some((label, tail)) = line.split_once('(') else {
+            continue;
+        };
+        if !matches!(
+            label.trim(),
+            "working" | "thinking" | "running" | "executing"
+        ) {
+            continue;
+        }
+        if let Some((elapsed, after)) = tail.split_once("esc to interrupt")
+            && elapsed.starts_with(|c: char| c.is_ascii_digit())
+            && elapsed
+                .chars()
+                .all(|c| c.is_ascii_digit() || ".hms ·•".contains(c))
+            && after.starts_with(')')
+        {
+            return "working";
+        }
     }
     "idle"
 }
@@ -238,7 +252,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
             })
         {
             let value = if let Some(terminal) = project.adopted_terminal(pane) {
-                terminal.inspect().ok()
+                terminal.observe(pane).ok()
             } else {
                 read(project.command(pane, &json!({"workspace": project.workspace, "pane": format!("p{pane}"), "action": "inspect"}), false))
             };
@@ -283,9 +297,16 @@ mod tests {
             "Press Enter to continue; Esc to cancel",
             "The previous tool was blocked",
             "Should we change this?",
+            "Shell screen tail: '\\n• Working (4m 28s • esc to interrupt)\\n'",
+            "The old status was: Working (1s · esc to interrupt)",
+            "• Working (1s · esc to interrupt)\nWorked for 4m\n› Ask Codex to do anything",
         ] {
             assert_eq!(screen_state(idle), "idle", "{idle}");
         }
+        assert_eq!(
+            screen_state("Worked for 4m\n• Working (2s · esc to interrupt)"),
+            "working"
+        );
         let mut activity = Activity::default();
         activity.observe("needs_input");
         assert_eq!(

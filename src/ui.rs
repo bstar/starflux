@@ -925,6 +925,27 @@ impl Workspace {
                     if stopped.load(Ordering::Acquire) {
                         break;
                     }
+                    if value["alive"] == true && value["bridge_connected"] == false {
+                        let recovered = (|| -> Result<bool> {
+                            let _transaction = crate::project_sync::transaction(&config)?;
+                            let state = ProjectState::load(&config)?;
+                            if !stopped.load(Ordering::Acquire)
+                                && state.terminal_ids().contains(&pane)
+                                && state.terminal_epochs.get(&pane).cloned() == epoch
+                            {
+                                config.ensure(pane, None)?;
+                                return Ok(true);
+                            }
+                            Ok(false)
+                        })();
+                        match recovered {
+                            Ok(reconnected) => value["bridge_reconnected"] = json!(reconnected),
+                            Err(error) => {
+                                value["state"] = json!("disconnected");
+                                value["error"] = json!(format!("PTY bridge: {error:#}"));
+                            }
+                        }
+                    }
                     let mut closed = false;
                     if value["exited"] == true {
                         // Reap and remove membership under the same model transaction.

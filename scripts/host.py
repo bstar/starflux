@@ -45,8 +45,10 @@ def activity_from_screen(text):
         return 'needs_input'
     if yes and no and ('esc' in footer or 'enter' in footer):
         return 'waiting_for_approval'
-    if re.search(r'\([0-9.]+[hms0-9. ]*[^)\n]{0,48}esc to interrupt\)',footer):
-        return 'working'
+    for line in reversed(footer.splitlines()):
+        line=line.lstrip(' \t│┃|●*•')
+        if line.startswith('worked for '):return 'idle'
+        if re.match(r'^(?:working|thinking|running|executing)\s+\([0-9][hms0-9. ·•]*esc to interrupt\)',line):return 'working'
     return 'idle'
 
 def main():
@@ -84,6 +86,11 @@ def main():
         replaced=False
         cwd=os.path.expanduser(req.get('directory') or '~')
         argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']
+        if req.get('recover_proxy'):
+            if len(argv) not in (3,5) or pathlib.Path(argv[0]).name!='starflux-pty-proxy':
+                raise ValueError('Only a transferred PTY proxy can be recovered automatically')
+            if exists() and run('display-message','-p','-t',target,'#{pane_dead}').decode().strip()=='1':
+                run('respawn-pane','-t',target,'-c',cwd,shell_command(argv))
         if exists() and req.get('replace_fixture') and pane=='p1':
             info=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_start_command}').decode().strip().split('\t',2)
             try:

@@ -59,11 +59,56 @@ impl Terminal {
         serde_json::from_str(&line).context("Invalid transferred PTY status")
     }
     pub fn argv(&self) -> Vec<String> {
-        vec![
+        let mut args = vec![
             self.proxy.to_string_lossy().into_owned(),
             self.broker.to_string_lossy().into_owned(),
             self.key.clone(),
-        ]
+        ];
+        if let Ok(tty) = std::fs::read_link(format!("/proc/{}/fd/1", self.pid))
+            && tty.starts_with("/dev/pts")
+        {
+            args.push(tty.to_string_lossy().into_owned());
+            args.push(self.pid.to_string());
+        }
+        args
+    }
+    pub fn bridge_alive(&self, pane: usize) -> Result<bool> {
+        let result = Command::new("tmux")
+            .args([
+                "-L",
+                &self.server,
+                "display-message",
+                "-p",
+                "-t",
+                &format!("p{pane}:0.0"),
+                "#{pane_dead}",
+            ])
+            .output()
+            .context("Could not inspect the transferred PTY bridge")?;
+        Ok(result.status.success() && result.stdout == b"0\n")
+    }
+    pub fn observe(&self, pane: usize) -> Result<Value> {
+        let mut health = self.inspect()?;
+        health["bridge_connected"] = json!(self.bridge_alive(pane)?);
+        // Retained owners can predate current footer detection. Observe the
+        // live screen here instead of trusting their cached interpretation.
+        if health["alive"] == true && matches!(health["agent"].as_str(), Some("codex" | "claude")) {
+            let mut command = Command::new("tmux");
+            command.args([
+                "-L",
+                &self.server,
+                "capture-pane",
+                "-p",
+                "-t",
+                &format!("p{pane}:0.0"),
+            ]);
+            health["state"] = json!(
+                crate::activity::screen_observation(command)
+                    .map(|(state, _)| state)
+                    .unwrap_or_else(|| "unknown".into())
+            );
+        }
+        Ok(health)
     }
 }
 fn python(script: &str, args: &[&str]) -> Result<()> {

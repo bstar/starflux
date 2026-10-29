@@ -159,7 +159,7 @@ impl Config {
         if request["action"] == "inspect"
             && let Some(terminal) = self.adopted_terminal(pane)
         {
-            return terminal.inspect();
+            return terminal.observe(pane);
         }
         if let Some(terminal) = self.adopted_terminal(pane) {
             if request["action"] == "restart" && request["argv"].is_null() {
@@ -221,7 +221,11 @@ impl Config {
         };
         req["replace_fixture"] = json!(self.agent.is_none());
         if let Some(terminal) = self.adopted_terminal(pane) {
+            if terminal.inspect()?["alive"] != true {
+                return Ok(());
+            }
             req["argv"] = json!(terminal.argv());
+            req["recover_proxy"] = json!(true);
         } else if let Some(command) = agent_command {
             req["argv"] = json!(shell_words::split(command)?);
         }
