@@ -16,6 +16,7 @@ import time
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--exit-lifecycle',action='store_true')
 parser.add_argument('--context-menu',action='store_true')
+parser.add_argument('--pane-recovery',action='store_true')
 parser.add_argument('--font-controls',action='store_true')
 parser.add_argument('--render-cache',action='store_true')
 parser.add_argument('--app-capabilities',action='store_true')
@@ -79,6 +80,9 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
         font_sent=0
         cache_baseline=None
         cache_verified=False
+        recovery_stage=0
+        recovery_pid=None
+        recovery_attachment=None
         while time.monotonic() < deadline:
             try:
                 data = peer.recv(65536)
@@ -110,6 +114,25 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
                 assert metadata['terminal_renderer'] == 'native-kitty', metadata['terminal_renderer']
                 assert metadata['terminal_presentation']['transport'] == 'native-kitty-cells'
                 assert metadata['desktop']['windows'] == 0
+                if args.pane_recovery:
+                    def action(value):
+                        subprocess.run([str(root/'scripts/run-local.sh'),'--workspace',name,'--action',value],env=env,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    if recovery_stage==0:
+                        recovery_pid=metadata['panes'][0]['pid']
+                        recovery_attachment=metadata['direct_terminals'][0]['attachment_pid']
+                        action('reconnect-terminal:0');recovery_stage=1
+                    elif recovery_stage==1 and metadata['direct_terminals'][0]['attachment_pid']!=recovery_attachment:
+                        assert metadata['panes'][0]['pid']==recovery_pid,'Reconnect replaced the backend'
+                        action('recover-terminal:0');recovery_stage=2
+                    elif recovery_stage==2 and metadata.get('modal_open'):
+                        send(dict(type='input',id=2,revision=latest_scene['revision'],generation=1,input=dict(kind='paste',text='RECOVER')))
+                        send(dict(type='input',id=3,revision=latest_scene['revision'],generation=1,input=dict(kind='key',code='enter',modifiers=2)))
+                        recovery_stage=3
+                    elif recovery_stage==3 and not metadata.get('modal_open') and metadata['panes'][0]['pid']!=recovery_pid and metadata['direct_terminals'] and 'NATIVE_PTY_PROOF' in metadata['direct_terminals'][0]['text']:
+                        assert metadata['project_state']['terminals']==[0]
+                        assert 'NATIVE_PTY_PROOF' in metadata['direct_terminals'][0]['text']
+                        recovery_stage=4;break
+                    continue
                 if args.app_capabilities:
                     assert metadata['app_view_available']
                     if latest_scene is None:continue
@@ -163,6 +186,8 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
             assert cache_verified, 'Terminal input did not reuse unchanged graphical chrome'
         if args.context_menu:
             assert menu_kept_terminal, f'Sidebar menu failed to preserve terminal: acks={acks}, menu={metadata.get("context_menu")}, status={metadata.get("status")}'
+        if args.pane_recovery:
+            assert recovery_stage==4, f'Recovery failed at stage {recovery_stage}: {metadata.get("status")}'
         if args.font_controls:
             assert font_requests==[13500,12500,0],font_requests
         if args.exit_lifecycle:

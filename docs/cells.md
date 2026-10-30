@@ -72,6 +72,10 @@ Mouse support is optional. Clickable controls and project names use a hand point
 on terminals supporting OSC 22. Right-click projects or terminals for compact menus
 at the pointer, with hover highlighting; click outside or press Escape to dismiss.
 The terminal stays visible behind the menu. Drag project rows in Manual ordering, and drag the split separator to resize.
+Terminal menus also offer **Reconnect pane**, which preserves the running program,
+and **Recover to shellâ€¦**, which requires typing `RECOVER` before stopping a stuck
+program. Recovery affects only that pane. Transferred terminals retain their original
+shell when it is still alive; ordinary terminals reopen in a fresh shell.
 Drag inside a terminal to select text; releasing copies through the parent's clipboard
 protocol. Shift selects text in applications that enable terminal mouse reporting.
 The terminal's clipboard permissions still apply. Wheel scrolling over a terminal
@@ -84,6 +88,13 @@ opens it. The tab strip scrolls to keep the selected terminal visible. Below 60Ã
 a resize message replaces the interface and processes continue running.
 
 ## Feature parity
+
+The **Sessions** control opens the same session manager as graphical mode.
+Use Up/Down to select, Enter to open, Ctrl+N to create, Ctrl+I to import, and
+Delete to request deletion. Type to filter the list and Escape to close it.
+Deletion requires typing `DELETE`; imported tmux/Herdr sources are preserved.
+Select **Make default** (or press Ctrl+D in the picker) to choose the session used
+by ordinary launches. The same control clears an existing default.
 
 | Feature | Cells | Graphical |
 | --- | --- | --- |

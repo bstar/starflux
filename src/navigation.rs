@@ -22,6 +22,38 @@ struct Recent {
     #[serde(default)]
     signals: BTreeMap<String, String>,
 }
+#[derive(Serialize, Deserialize)]
+struct SessionOrder {
+    manual_order: Vec<String>,
+    recent: bool,
+    high_first: bool,
+}
+fn merge_visible_order(
+    previous: &[String],
+    visible: &[String],
+    present: &BTreeSet<String>,
+) -> Vec<String> {
+    let visible_set = visible.iter().collect::<BTreeSet<_>>();
+    let mut ordered = visible.iter();
+    let mut merged = Vec::new();
+    let mut seen = BTreeSet::new();
+    for old in previous.iter().filter(|id| present.contains(*id)) {
+        let next = if visible_set.contains(old) {
+            ordered.next().unwrap_or(old)
+        } else {
+            old
+        };
+        if seen.insert(next.clone()) {
+            merged.push(next.clone());
+        }
+    }
+    for remaining in ordered {
+        if seen.insert(remaining.clone()) {
+            merged.push(remaining.clone());
+        }
+    }
+    merged
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Navigation {
@@ -60,6 +92,39 @@ pub fn now() -> u64 {
         .as_millis() as u64
 }
 impl Navigation {
+    pub fn load_session_order(&mut self, config: &Config) -> Result<()> {
+        let path = crate::session_catalog::order_path(config)?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let order: SessionOrder = serde_json::from_slice(&bytes)?;
+        self.manual_order = order.manual_order;
+        self.recent = order.recent;
+        self.high_first = order.high_first;
+        Ok(())
+    }
+    pub fn save_session_order(&self, config: &Config) -> Result<()> {
+        let path = crate::session_catalog::order_path(config)?;
+        let _lock = crate::project_sync::Transaction::acquire(path.with_extension("lock"))?;
+        let previous = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<SessionOrder>(&bytes).ok())
+            .map(|v| v.manual_order)
+            .unwrap_or_default();
+        let present = crate::project_state::catalog(config)
+            .into_iter()
+            .map(|p| p.workspace)
+            .collect::<BTreeSet<_>>();
+        let order = SessionOrder {
+            manual_order: merge_visible_order(&previous, &self.manual_order, &present),
+            recent: self.recent,
+            high_first: self.high_first,
+        };
+        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&order)?)?;
+        crate::project_state::catalog_changed()
+    }
     pub fn load(controller: &str) -> Result<Self> {
         let path = crate::project_state::data_root()?.join(format!("{controller}.navigation.json"));
         if !path.exists() {
@@ -267,6 +332,29 @@ impl Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_order_preserves_hidden_projects_and_inserts_new_projects() {
+        let values = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let present = values(&["a", "hidden", "b", "c", "new"])
+            .into_iter()
+            .collect();
+        assert_eq!(
+            merge_visible_order(
+                &values(&["a", "hidden", "b", "c"]),
+                &values(&["c", "b", "a"]),
+                &present
+            ),
+            values(&["c", "hidden", "b", "a"])
+        );
+        assert_eq!(
+            merge_visible_order(
+                &values(&["a", "hidden", "b"]),
+                &values(&["new", "b", "a"]),
+                &present
+            ),
+            values(&["new", "hidden", "b", "a"])
+        );
+    }
     fn projects(ids: &[&str]) -> Vec<Config> {
         ids.iter().map(|id| serde_json::from_value(serde_json::json!({"workspace":id,"host":null,"directory":null,"agent":null,"executable":"starflux"})).unwrap()).collect()
     }

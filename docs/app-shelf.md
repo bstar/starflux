@@ -9,6 +9,28 @@ STAR/FLUX now uses the App Shelf direction from the design studies. A project ow
 
 ## Start a project
 
+Open **Sessions** beneath the STAR/FLUX name to manage saved groups of projects.
+The searchable list lets you select and open a session, create a named session
+with its first project, or delete one after typing `DELETE`. Switching retains
+the other session's programs and affects only the current view. Deletion stops
+STAR/FLUX-owned terminals and apps and closes other views of the deleted session.
+The original tmux and Herdr sessions stay running when their imports are deleted.
+
+**Import…** lists tmux sessions from the standard socket directory (including
+named servers and the current `$TMUX` socket) and running Herdr sessions. A tmux
+import retains its existing windows and panes inside a live terminal tab. A Herdr
+import retains its projects and terminal tabs. Importing attaches to the existing
+programs without restarting them. Saved sessions remain available across launches.
+
+Select a saved session and choose **Make default** to open it on ordinary launches,
+including `starflux --ssh HOST`. **Clear default** restores independent unnamed
+launches. An explicit `--workspace` overrides the default. The picker marks the
+default in its details, and deleting it clears the preference.
+
+Manual project order and the sorting mode are saved with the session, so new
+windows, refreshes, and session switches retain them. Closing a project remains
+local to its window; reopening it restores its position in the saved order.
+
 ```sh
 starflux --workspace my-app --directory /path/to/project --app 'cargo run --release'
 starflux --workspace remote-app --host buildbox --directory /work/project \
@@ -21,6 +43,7 @@ Project metadata is saved privately under `$XDG_DATA_HOME/starflux/projects` (no
 
 ## Work inside the project
 
+- Right-click a terminal tab and choose **Reconnect pane** to rebuild its attachment without stopping the program. For a hung program, choose **Recover to shell…** and type `RECOVER` to confirm. Recovery stops only the selected pane's program; transferred terminals keep their original shell when it is alive, while ordinary terminals start a fresh shell. Other tabs and App Space workers remain running.
 - The terminal view keeps all shells and agents in the same tab strip. **+ Tab** adds a shell in the project directory. **Split** opens and focuses a fresh shell beside the current terminal, even when other tabs already exist. Setup and attachment share one connection on local and SSH projects. **Unsplit** retains both sessions. **Close pane** dismisses the focused half and leaves its terminal available in its tab; right-click a terminal tab for the same action. To end the shell itself, use `exit` or Ctrl+D at its prompt. Confirmed terminal exits remove their tabs and collapse the affected split; the last exit leaves an empty project until **+ Tab** is chosen. Connection failures do not remove tabs. Drag the separator to resize it. The ratio and selected tab are saved with the project.
 - Open the virtual desktop using the bottom **Open app space** card. Use **‹ Terminals** in the app header to return to the selected terminal and its split layout.
 - **Refresh** in the top header reloads the installed UI build while retaining terminal sessions and app workers.
@@ -84,6 +107,8 @@ Repository inspection runs in the background on the project's configured host, l
 `python3 scripts/test-git-status.py` verifies mixed staged/unstaged changes, unusual paths, renames, binary changes, conflicts, unborn/detached branches, upstream counts and unchanged index bytes. `python3 scripts/test-project-tools.py` checks the real GPU menus, Unicode renames, restart persistence, retained session PIDs, isolated inspector input, background refresh and authenticated loopback SSH Git inspection. Screenshots and results are in `target/project-tools-proof`.
 
 ## Kitty-rendered local and SSH terminals
+
+The SSH bridge keeps protocol replies out of terminal echo and consumes queued replies before returning control to the shell, including when startup fails. Internal `STAR_KIT_BRIDGE` records should not appear in scrollback or shell command history. `scripts/test-bridge-history.py` checks both paths over a private SSH connection with delayed terminal replies.
 
 Kitty on the presenting machine draws native terminal characters, including over SSH. Its configured font, glyph shaping and text-composition settings apply directly. STAR/KIT draws the surrounding chrome and leaves cell-aligned transparent terminal regions. The `− / size / +` header controls the current Kitty OS window's font size when the updated bridge is loaded; otherwise Kitty's own font shortcuts remain available. Session processes survive frontend restarts.
 

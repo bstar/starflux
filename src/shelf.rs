@@ -113,7 +113,18 @@ pub struct ApplicationPicker<'a> {
     pub rows: Vec<(usize, &'a str, &'a str)>,
 }
 #[derive(serde::Serialize)]
+pub struct SessionPicker {
+    pub query: String,
+    pub external: bool,
+    pub selected: usize,
+    pub selected_default: bool,
+    pub offset: usize,
+    pub status: String,
+    pub rows: Vec<(usize, String, String)>,
+}
+#[derive(serde::Serialize)]
 pub struct Modal<'a> {
+    pub sessions: Option<SessionPicker>,
     pub applications: Option<ApplicationPicker<'a>>,
     pub catalog_available: bool,
     pub title: &'a str,
@@ -469,12 +480,27 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     p.grid(R::new(0, 48, w, l.height.saturating_sub(48)), &t.grid);
     p.fill(R::new(w.saturating_sub(1), 0, 1, l.height), &t.border);
     p.fill(R::new(0, 0, w.saturating_sub(1), 48), &t.panel);
+    p.hit(R::new(0, 0, w.saturating_sub(1), 48), "sessions:open");
     p.text(
-        R::new(16, 14, w.saturating_sub(24), 25),
+        R::new(w.saturating_sub(26), 26, 18, 16),
+        "▾",
+        &t.muted,
+        12,
+        false,
+    );
+    p.text(
+        R::new(16, 4, w.saturating_sub(32), 21),
         "S T A R / F L U X",
         &t.fg,
-        if w >= 188 { 12 } else { 9 },
+        if w >= 188 { 11 } else { 9 },
         true,
+    );
+    p.text(
+        R::new(16, 26, w.saturating_sub(48), 16),
+        "Sessions",
+        &t.muted,
+        10,
+        false,
     );
     p.text(
         R::new(16, 63, w.saturating_sub(60), 22),
@@ -1716,6 +1742,10 @@ fn draw_application_picker(
     );
 }
 fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
+    if let Some(sessions) = &m.sessions {
+        draw_sessions(p, l, t, sessions);
+        return;
+    }
     if let Some(apps) = &m.applications {
         draw_application_picker(p, l, t, m, apps);
         return;
@@ -1807,9 +1837,211 @@ fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
         false,
     );
 }
+
+fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
+    let w = 760.min(l.width.saturating_sub(24));
+    let h = 650.min(l.height.saturating_sub(24));
+    let r = R::new((l.width - w) / 2, (l.height - h) / 2, w, h);
+    p.fill(r, &t.bg);
+    p.border(r, &t.accent);
+    if w < 500 || h < 300 {
+        p.text(
+            R::new(r.x + 16, r.y + 16, w.saturating_sub(32), 40),
+            "Resize the window to browse sessions",
+            &t.fg,
+            13,
+            true,
+        );
+        p.button(
+            R::new(r.x + 16, r.y + h.saturating_sub(48), 90, 28),
+            "Close",
+            "modal:cancel",
+            t,
+            false,
+        );
+        return;
+    }
+    p.text(
+        R::new(r.x + 20, r.y + 14, w.saturating_sub(90), 30),
+        if m.external {
+            "Import a session"
+        } else {
+            "Sessions"
+        },
+        &t.fg,
+        18,
+        true,
+    );
+    p.button(
+        R::new(r.x + w - 45, r.y + 12, 26, 26),
+        "x",
+        "modal:cancel",
+        t,
+        false,
+    );
+    if !m.external {
+        p.button(
+            R::new(r.x + w - 224, r.y + 12, 166, 28),
+            if m.selected_default {
+                "Clear default"
+            } else {
+                "Make default"
+            },
+            "sessions:default",
+            t,
+            false,
+        );
+    }
+    p.fill(
+        R::new(r.x + 20, r.y + 58, w.saturating_sub(40), 34),
+        &t.panel,
+    );
+    p.text(
+        R::new(r.x + 30, r.y + 64, w.saturating_sub(60), 24),
+        format!("Search: {}│", m.query),
+        &t.fg,
+        12,
+        false,
+    );
+    let rows = usize::from(h.saturating_sub(230) / 52);
+    for (position, (index, name, detail)) in m.rows.iter().enumerate().skip(m.offset).take(rows) {
+        let y = r.y + 106 + (position - m.offset) as u16 * 52;
+        let row = R::new(r.x + 20, y, w.saturating_sub(40), 48);
+        if position == m.selected {
+            p.fill(row, &t.panel);
+            p.fill(R::new(row.x, row.y, 2, row.height), &t.accent);
+        }
+        p.hit(row, format!("sessions:row:{index}"));
+        p.text(
+            R::new(row.x + 12, y + 4, row.width.saturating_sub(24), 22),
+            name,
+            &t.fg,
+            13,
+            true,
+        );
+        p.text(
+            R::new(row.x + 12, y + 27, row.width.saturating_sub(24), 16),
+            detail,
+            &t.muted,
+            10,
+            false,
+        );
+    }
+    p.text(
+        R::new(
+            r.x + 20,
+            r.y + h.saturating_sub(117),
+            w.saturating_sub(40),
+            23,
+        ),
+        &m.status,
+        &t.muted,
+        11,
+        false,
+    );
+    let y = r.y + h.saturating_sub(82);
+    p.button(
+        R::new(r.x + 20, y, 104, 30),
+        "New session",
+        "sessions:new",
+        t,
+        false,
+    );
+    p.button(
+        R::new(r.x + 132, y, 106, 30),
+        if m.external {
+            "Saved sessions"
+        } else {
+            "Import…"
+        },
+        if m.external {
+            "sessions:open"
+        } else {
+            "sessions:import"
+        },
+        t,
+        false,
+    );
+    if !m.external {
+        p.button(
+            R::new(r.x + 246, y, 88, 30),
+            "Delete…",
+            "sessions:delete",
+            t,
+            false,
+        );
+    }
+    p.button(
+        R::new(r.x + w - 110, y, 90, 30),
+        if m.external { "Import" } else { "Open" },
+        "sessions:choose",
+        t,
+        true,
+    );
+    p.text(
+        R::new(
+            r.x + 20,
+            r.y + h.saturating_sub(38),
+            w.saturating_sub(40),
+            20,
+        ),
+        "↑/↓ select · Enter open · Ctrl+N new · Ctrl+I import · Delete remove · Esc close",
+        &t.muted,
+        10,
+        false,
+    );
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_manager_controls_fit_and_keep_delete_separate_from_open() {
+        let theme = Appearance::load("kanagawa").unwrap();
+        for (width, height) in [(320, 240), (800, 600), (1400, 900)] {
+            let mut pen = Pen::new(width, height, "transparent");
+            draw_sessions(
+                &mut pen,
+                Layout::new(width, height, Space::Terminals),
+                &theme,
+                &SessionPicker {
+                    query: String::new(),
+                    external: false,
+                    selected: 0,
+                    selected_default: false,
+                    offset: 0,
+                    status: "2 sessions".into(),
+                    rows: vec![
+                        (0, "● Default".into(), "starflux · 2 projects".into()),
+                        (1, "My project".into(), "starflux · 1 project".into()),
+                    ],
+                },
+            );
+            pen.surface.validate().unwrap();
+            if width >= 800 {
+                let open = pen
+                    .surface
+                    .hits
+                    .iter()
+                    .find(|h| h.action == "sessions:choose")
+                    .unwrap();
+                let delete = pen
+                    .surface
+                    .hits
+                    .iter()
+                    .find(|h| h.action == "sessions:delete")
+                    .unwrap();
+                assert!(delete.rect.x + delete.rect.width <= open.rect.x);
+                assert!(
+                    pen.surface
+                        .hits
+                        .iter()
+                        .any(|h| h.action == "sessions:row:1")
+                );
+            } else {
+                assert!(pen.surface.hits.iter().any(|h| h.action == "modal:cancel"));
+            }
+        }
+    }
     #[test]
     fn desktop_map_keeps_aspect_and_clips_offscreen_windows() {
         let bounds = desktop_bounds(R::new(10, 20, 140, 80), [1000, 1000]).unwrap();

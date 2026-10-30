@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise real isolated tmux persistence and atomic, checked attachment delivery."""
-import base64, hashlib, json, os, pathlib, subprocess, tempfile, time, uuid
+import base64, fcntl, hashlib, json, os, pathlib, pty, signal, subprocess, tempfile, termios, time, uuid
 root=pathlib.Path(__file__).resolve().parents[1]
 helper=root/'scripts/host.py'; workspace='test-'+uuid.uuid4().hex[:10]
 with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
@@ -43,6 +43,38 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
         assert call('inspect')['pid']==first['pid'],'Replacing the fixture disturbed the first pane'
         kept=call('ensure',pane='p1',directory=tmp,argv=['false'],replace_fixture=True)
         assert not kept['replaced_fixture'] and call('inspect',pane='p1')['pid']==shell['pid'],'A real process was replaced'
+        # Explicit recovery can replace a live/hung shell, scoped to its pane.
+        call('recover',pane='p1',directory=tmp)
+        recovered=call('inspect',pane='p1')
+        assert recovered['alive'] and recovered['pid']!=shell['pid'],recovered
+        assert call('inspect')['pid']==first['pid'],'Recovery disturbed another pane'
+        # Transferred PTYs instead retain the original shell and stop only its
+        # foreground job, even if that job ignores normal interrupts.
+        master,slave=pty.openpty()
+        def controlling_terminal():
+            os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)
+        original=subprocess.Popen(['bash','--noprofile','--norc','-i'],stdin=slave,stdout=slave,stderr=slave,preexec_fn=controlling_terminal)
+        os.close(slave)
+        try:
+            os.write(master,b"trap '' INT TERM; sleep 300\n")
+            deadline=time.monotonic()+5
+            while time.monotonic()<deadline:
+                foreground=int(pathlib.Path('/proc',str(original.pid),'stat').read_text().rsplit(')',1)[1].split()[5])
+                if foreground>1 and foreground!=original.pid:break
+                time.sleep(.02)
+            else:raise AssertionError('Fixture foreground job did not start')
+            proof=call('recover',original_pid=original.pid)
+            assert proof['shell_preserved'] and original.poll() is None
+            assert int(pathlib.Path('/proc',str(original.pid),'stat').read_text().rsplit(')',1)[1].split()[5])==original.pid
+            marker=pathlib.Path(tmp)/'recovered-original-shell'
+            os.write(master,('touch '+str(marker)+'\n').encode())
+            deadline=time.monotonic()+3
+            while not marker.exists() and time.monotonic()<deadline:time.sleep(.02)
+            assert marker.exists(),'Recovered original shell did not accept input'
+            rejected=call('recover',check=False,original_pid=os.getpid())
+            assert rejected.returncode!=0,'Unrelated process accepted as a terminal owner'
+        finally:
+            original.kill();original.wait();os.close(master)
         call('stop',pane='p1')
         call('ensure',pane='p1',directory=tmp,argv=[str(root/'target/release/starflux'),'--fixture',workspace])
         time.sleep(.15);call('paste',pane='p1',text='/quit');call('key',pane='p1',key='Enter')
