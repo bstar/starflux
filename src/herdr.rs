@@ -219,6 +219,7 @@ pub fn import(session: &str) -> Result<Config> {
             label: Some(label.clone()),
             collection: Some(collection.clone()),
             herdr: Some(source),
+            tmux: None,
             adopted: Default::default(),
             theme: crate::appearance::default_theme(),
             host: None,

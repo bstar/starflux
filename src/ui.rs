@@ -1,5 +1,7 @@
 #[path = "cells.rs"]
 mod cells;
+#[path = "session_ui.rs"]
+mod session_ui;
 use crate::{
     app_desktop::{Client as AppClient, Request as AppRequest},
     compositor::{Desktop, DesktopCommand, DesktopEvent, Input as DesktopInput, WindowInfo},
@@ -34,7 +36,14 @@ use std::{
 };
 #[derive(Debug)]
 enum Event {
+    SessionEntries(
+        Instant,
+        std::result::Result<Vec<crate::session_catalog::Entry>, String>,
+    ),
+    SessionImported(Instant, std::result::Result<Box<Config>, String>),
+    SessionDeleted(std::result::Result<(), String>),
     Ready(Box<Config>, usize),
+    Recovered(Box<Config>, usize),
     Applications(
         String,
         Instant,
@@ -68,6 +77,9 @@ struct AppHost {
 }
 #[derive(Clone)]
 enum Prompt {
+    Sessions(bool),
+    NewSession,
+    DeleteSession(String),
     Deliver,
     Launch,
     Project,
@@ -75,6 +87,7 @@ enum Prompt {
     RenameProject(String),
     RenameTab(usize),
     RenameAgent(usize),
+    RecoverTerminal(String, usize, Option<String>),
 }
 struct Catalog {
     source: String,
@@ -104,6 +117,7 @@ struct Modal {
     fields: Vec<(String, TextInput)>,
     selected: usize,
     error: String,
+    sessions: Option<session_ui::Picker>,
 }
 struct ProjectDrag {
     id: String,
@@ -127,6 +141,7 @@ pub struct Workspace {
     project_hover: Option<String>,
     project_drag: Option<ProjectDrag>,
     navigation: crate::navigation::Navigation,
+    navigation_scope: String,
     navigation_saved_at: Instant,
     states: BTreeMap<String, ProjectState>,
     workspace_id: String,
@@ -271,7 +286,7 @@ impl Workspace {
         let config = selected
             .filter(|id| id != &controller_id)
             .and_then(|id| {
-                project_state::catalog(&config)
+                crate::session_catalog::projects()
                     .into_iter()
                     .find(|c| c.workspace == id)
             })
@@ -280,8 +295,22 @@ impl Workspace {
         let state = ProjectState::load_view(&config, &controller_id)?;
         state.save(&config)?;
         let mut projects = project_state::catalog(&config);
-        let mut navigation = crate::navigation::Navigation::load(&controller_id)?;
+        let navigation_scope = format!(
+            "{}-{}",
+            controller_id,
+            crate::session_catalog::group(&config)
+        );
+        let mut navigation = crate::navigation::Navigation::load(&navigation_scope)?;
+        if !project_state::data_root()?
+            .join(format!("{navigation_scope}.navigation.json"))
+            .exists()
+        {
+            navigation = crate::navigation::Navigation::load(&controller_id)?;
+        }
         if controller_id != workspace_id
+            && !project_state::data_root()?
+                .join(format!("{navigation_scope}.navigation.json"))
+                .exists()
             && !project_state::data_root()?
                 .join(format!("{controller_id}.navigation.json"))
                 .exists()
@@ -289,6 +318,7 @@ impl Workspace {
             navigation = crate::navigation::Navigation::load(&workspace_id)?;
         }
         navigation.open_project(&config.workspace);
+        navigation.load_session_order(&config)?;
         navigation.filter_open(&mut projects);
         navigation.sort(&mut projects);
         let (controller_tx, rx) = bounded(128);
@@ -319,6 +349,7 @@ impl Workspace {
             project_hover: None,
             project_drag: None,
             navigation,
+            navigation_scope,
             navigation_saved_at: Instant::now(),
             states: BTreeMap::new(),
             workspace_id,
@@ -426,6 +457,9 @@ impl Workspace {
         }
     }
     fn save(&mut self) {
+        if let Err(error) = crate::session_catalog::remember(&self.config) {
+            self.note(format!("Save session: {error:#}"));
+        }
         if let Ok(root) = project_state::data_root() {
             let _ = starkit::fs::write_private(
                 &root.join(format!("{}.workspace.json", self.controller_id)),
@@ -673,7 +707,10 @@ impl Workspace {
                     self.navigation.reconcile(&self.projects);
                     if self.navigation.reorder(&drag.id, gap) {
                         self.navigation.sort(&mut self.projects);
-                        if let Err(error) = self.navigation.save(&self.controller_id) {
+                        if let Err(error) = self.navigation.save_session_order(&self.config) {
+                            self.note(format!("Could not save session project order: {error:#}"));
+                        }
+                        if let Err(error) = self.navigation.save(&self.navigation_scope) {
                             self.note(format!("Could not save project order: {error:#}"));
                         }
                         self.navigation_saved_at = Instant::now();
@@ -1303,6 +1340,7 @@ impl Workspace {
         self.save();
     }
     fn reopen_project(&mut self, config: Config) -> Result<()> {
+        self.navigation.load_session_order(&self.config)?;
         ensure!(
             config.collection == self.config.collection,
             "Project belongs to a different collection"
@@ -1314,7 +1352,7 @@ impl Workspace {
         }
         self.switch_project(&id)?;
         self.sort_projects(false);
-        self.navigation.save(&self.controller_id)?;
+        self.navigation.save(&self.navigation_scope)?;
         self.note("Project opened / existing sessions retained".into());
         Ok(())
     }
@@ -1333,7 +1371,7 @@ impl Workspace {
                 self.switch_project(&next)?;
             } else {
                 self.navigation.close_project(id);
-                self.navigation.save(&self.controller_id)?;
+                self.navigation.save(&self.navigation_scope)?;
                 self.quit = true;
                 return Ok(());
             }
@@ -1354,7 +1392,7 @@ impl Workspace {
         self.session_epochs.retain(|(project, _), _| project != id);
         self.health.retain(|(project, _), _| project != id);
         self.sort_projects(false);
-        self.navigation.save(&self.controller_id)?;
+        self.navigation.save(&self.navigation_scope)?;
         self.save();
         self.note("Project closed in this window / terminals and agents keep running".into());
         Ok(())
@@ -1824,6 +1862,15 @@ impl Workspace {
             }
             return;
         }
+        if let Some(terminal) = self.terminals.get(&(
+            self.config.workspace.clone(),
+            self.config.canonical_pane(self.state.selected()),
+        )) {
+            if let Err(error) = terminal.paste(&text) {
+                self.note(format!("Paste: {error:#}"));
+            }
+            return;
+        }
         let config = self.config.clone();
         let pane = self.state.selected();
         let tx = self.tx.clone();
@@ -2152,6 +2199,19 @@ impl Workspace {
                 .to_string()
         });
         let fields = match &kind {
+            Prompt::Sessions(_) => vec![field("Search sessions", String::new())],
+            Prompt::NewSession => vec![
+                field("Session name", String::new()),
+                field("First project directory", directory.clone()),
+            ],
+            Prompt::DeleteSession(_) => vec![field(
+                "Stops owned terminals/apps; preserves tmux/Herdr sources. Type DELETE",
+                String::new(),
+            )],
+            Prompt::RecoverTerminal(_, _, _) => vec![field(
+                "Stops this pane's program. Type RECOVER to return to a shell",
+                String::new(),
+            )],
             Prompt::Deliver => vec![field("File path on this workspace host", String::new())],
             Prompt::RenameProject(id) => vec![field(
                 "Project display name",
@@ -2198,13 +2258,22 @@ impl Workspace {
             visible: true,
             status: "Loading system apps…".into(),
         });
+        let sessions = if let Prompt::Sessions(external) = &kind {
+            Some(*external)
+        } else {
+            None
+        };
         self.modal = Some(Modal {
             kind,
             catalog,
             fields,
             selected: 0,
             error: String::new(),
+            sessions: None,
         });
+        if let Some(external) = sessions {
+            self.load_session_entries(external);
+        }
     }
     fn refresh_applications(&mut self) {
         let Some(modal) = self.modal.as_mut() else {
@@ -2312,6 +2381,10 @@ impl Workspace {
         Ok(())
     }
     fn accept_prompt(&mut self) -> Result<()> {
+        if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
+            self.session_action("sessions:choose")?;
+            return Ok(());
+        }
         let modal = self.modal.take().context("No dialog is open")?;
         let values: Vec<String> = modal
             .fields
@@ -2320,6 +2393,46 @@ impl Workspace {
             .collect();
         let result = (|| -> Result<()> {
             match &modal.kind {
+                Prompt::Sessions(_) => anyhow::bail!("Choose a session from the list"),
+                Prompt::NewSession => {
+                    let config =
+                        crate::session_catalog::create(&values[0], &values[1], &self.config.theme)?;
+                    self.open_session(config)?;
+                }
+                Prompt::DeleteSession(id) => {
+                    ensure!(
+                        values[0] == "DELETE",
+                        "Type DELETE to stop owned programs and delete this session"
+                    );
+                    self.delete_session(id)?;
+                }
+                Prompt::RecoverTerminal(project, pane, epoch) => {
+                    ensure!(
+                        values[0] == "RECOVER",
+                        "Type RECOVER to stop the program in this pane"
+                    );
+                    ensure!(
+                        project == &self.config.workspace,
+                        "Project changed; reopen recovery from the tab menu"
+                    );
+                    ensure!(
+                        self.state.terminal_epochs.get(pane) == epoch.as_ref(),
+                        "Terminal changed; reopen recovery from the tab menu"
+                    );
+                    let config = self.config.clone();
+                    let pane = *pane;
+                    let epoch = epoch.clone();
+                    let tx = self.tx.clone();
+                    self.release();
+                    self.note("Recovering terminal…".into());
+                    std::thread::spawn(move || {
+                        let result = config.recover(pane, epoch.as_deref());
+                        let _ = tx.send(match result {
+                            Ok(config) => Event::Recovered(Box::new(config), pane),
+                            Err(error) => Event::Error(format!("Recover terminal: {error:#}")),
+                        });
+                    });
+                }
                 Prompt::Deliver => {
                     let path = PathBuf::from(&values[0]);
                     ensure!(
@@ -2426,6 +2539,7 @@ impl Workspace {
                         label: None,
                         collection: self.config.collection.clone(),
                         herdr: None,
+                        tmux: None,
                         adopted: Default::default(),
                         theme: self.config.theme.clone(),
                         host: if values[1] == "local" || values[1].is_empty() {
@@ -2477,6 +2591,39 @@ impl Workspace {
         if code == "escape" {
             self.modal = None;
             return Ok(());
+        }
+        if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
+            match code.as_str() {
+                "up" | "pageup" => {
+                    self.choose_session_row(if code == "up" { -1 } else { -8 });
+                    return Ok(());
+                }
+                "down" | "pagedown" => {
+                    self.choose_session_row(if code == "down" { 1 } else { 8 });
+                    return Ok(());
+                }
+                "enter" => {
+                    self.session_action("sessions:choose")?;
+                    return Ok(());
+                }
+                "delete" => {
+                    self.session_action("sessions:delete")?;
+                    return Ok(());
+                }
+                "char:d" if modifiers & 2 != 0 => {
+                    self.session_action("sessions:default")?;
+                    return Ok(());
+                }
+                "char:n" if modifiers & 2 != 0 => {
+                    self.session_action("sessions:new")?;
+                    return Ok(());
+                }
+                "char:i" if modifiers & 2 != 0 => {
+                    self.session_action("sessions:import")?;
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
         if let Some(catalog) = self
             .modal
@@ -2705,6 +2852,16 @@ impl Workspace {
                         format!("split-tab:{id}"),
                     ),
                     item("New terminal tab", "+", "terminal:new".into()),
+                    item(
+                        "Reconnect pane",
+                        "Keep program",
+                        format!("reconnect-terminal:{id}"),
+                    ),
+                    item(
+                        "Recover to shell…",
+                        "Stop program",
+                        format!("recover-terminal:{id}"),
+                    ),
                 ]
                 .into_iter()
                 .chain(self.state.split.then(|| {
@@ -2783,7 +2940,7 @@ impl Workspace {
         );
         self.release();
         self.save();
-        self.navigation.save(&self.controller_id)?;
+        self.navigation.save(&self.navigation_scope)?;
         let selected = self
             .active_app
             .as_ref()
@@ -2847,6 +3004,9 @@ impl Workspace {
         Ok(())
     }
     fn action_inner(&mut self, action: &str) -> Result<()> {
+        if self.session_action(action)? {
+            return Ok(());
+        }
         if action == "presentation:require-graphical" {
             self.require_graphical();
             return Ok(());
@@ -2983,6 +3143,48 @@ impl Workspace {
             self.action(&format!("terminal:{id}"))?;
             return self.action("terminal:restart");
         }
+        if let Some(id) = action.strip_prefix("recover-terminal:") {
+            let id = id.parse::<usize>()?;
+            ensure!(
+                self.state.terminal_ids().contains(&id),
+                "Terminal no longer exists"
+            );
+            self.release();
+            self.open_prompt(Prompt::RecoverTerminal(
+                self.config.workspace.clone(),
+                id,
+                self.state.terminal_epochs.get(&id).cloned(),
+            ));
+            return Ok(());
+        }
+        if let Some(id) = action.strip_prefix("reconnect-terminal:") {
+            let id = id.parse::<usize>()?;
+            ensure!(
+                self.state.terminal_ids().contains(&id),
+                "Terminal no longer exists"
+            );
+            self.release();
+            let config = self.config.clone();
+            let epoch = self.state.terminal_epochs.get(&id).cloned();
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let result = (|| -> Result<()> {
+                    let _transaction = crate::project_sync::transaction(&config)?;
+                    let state = ProjectState::load(&config)?;
+                    ensure!(
+                        state.terminal_ids().contains(&id)
+                            && state.terminal_epochs.get(&id) == epoch.as_ref(),
+                        "Terminal changed; reconnect canceled"
+                    );
+                    config.ensure(id, None)
+                })();
+                let _ = tx.send(match result {
+                    Ok(()) => Event::Recovered(Box::new(config), id),
+                    Err(error) => Event::Error(format!("Reconnect terminal: {error:#}")),
+                });
+            });
+            return Ok(());
+        }
         match action {
             "audio:toggle" | "audio:mute" | "audio:unmute" => {
                 if !self.audio_capable && action != "audio:mute" {
@@ -2996,7 +3198,7 @@ impl Workspace {
                 };
                 self.audio_failed = None;
                 self.sync_audio();
-                self.navigation.save(&self.controller_id)?;
+                self.navigation.save(&self.navigation_scope)?;
                 if !self.audio_capable && !self.navigation.audio_muted {
                     self.note("Local audio requires an audio-enabled STAR/KIT frontend. From your listening machine run starflux --ssh HOST --workspace NAME, or use the Kitty STAR/KIT bridge".into());
                 }
@@ -3017,7 +3219,8 @@ impl Workspace {
                     self.navigation.recent = true;
                 }
                 self.sort_projects(true);
-                self.navigation.save(&self.controller_id)?;
+                self.navigation.save_session_order(&self.config)?;
+                self.navigation.save(&self.navigation_scope)?;
                 self.navigation_saved_at = Instant::now();
             }
             "git:details" => {
@@ -3454,10 +3657,20 @@ impl Workspace {
                 }
             }),
             title: match &m.kind {
+                Prompt::Sessions(external) => {
+                    if *external {
+                        "Import an existing session"
+                    } else {
+                        "Sessions"
+                    }
+                }
+                Prompt::NewSession => "Create session",
+                Prompt::DeleteSession(_) => "Delete session and stop owned programs",
                 Prompt::Deliver => "Deliver a file",
                 Prompt::RenameProject(_) => "Rename project",
                 Prompt::RenameTab(_) => "Rename terminal tab",
                 Prompt::RenameAgent(_) => "Rename agent",
+                Prompt::RecoverTerminal(_, _, _) => "Recover terminal to a shell",
                 Prompt::Project => "Add / reopen project",
                 Prompt::Launch => "Launch app in this project",
                 Prompt::RunCommand => "Set the project app command",
@@ -3473,6 +3686,7 @@ impl Workspace {
                 .collect(),
             selected: m.selected,
             error: &m.error,
+            sessions: self.session_model(),
         });
         let connected = self
             .active_app
@@ -3837,6 +4051,55 @@ impl Controller for Workspace {
         self.refresh_activity();
         for event in self.rx.try_iter().collect::<Vec<_>>() {
             match event {
+                Event::SessionEntries(token, result) => {
+                    if let Some(m) = self.modal.as_mut()
+                        && let Some(p) = m.sessions.as_mut()
+                        && p.token == token
+                    {
+                        p.loading = false;
+                        match result {
+                            Ok(entries) => p.items = entries,
+                            Err(error) => m.error = error,
+                        }
+                    }
+                }
+                Event::SessionImported(token, result) => {
+                    if self
+                        .modal
+                        .as_ref()
+                        .and_then(|m| m.sessions.as_ref())
+                        .is_some_and(|p| p.token == token)
+                    {
+                        match result {
+                            Ok(config) => {
+                                self.modal = None;
+                                if let Err(error) = self.open_session(*config) {
+                                    self.note(format!("Open imported session: {error:#}"));
+                                }
+                            }
+                            Err(error) => {
+                                if let Some(m) = self.modal.as_mut() {
+                                    m.error = error;
+                                    if let Some(p) = m.sessions.as_mut() {
+                                        p.loading = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Event::SessionDeleted(result) => {
+                    self.open_prompt(Prompt::Sessions(false));
+                    if let Err(error) = result {
+                        if let Some(m) = self.modal.as_mut() {
+                            m.error = error;
+                        }
+                    } else {
+                        self.note(
+                            "Session deleted / external tmux and Herdr sessions preserved".into(),
+                        );
+                    }
+                }
                 Event::Selected(serial, text) => {
                     if serial == self.selection_serial {
                         self.effects.push(ServerMessage::Clipboard { text });
@@ -3882,6 +4145,37 @@ impl Controller for Workspace {
                     }
                     self.launch(*config, pane);
                     self.note("Project session connected / process retained".into())
+                }
+                Event::Recovered(config, pane) => {
+                    let key = (config.workspace.clone(), pane);
+                    if let Some(project) = self
+                        .projects
+                        .iter_mut()
+                        .find(|p| p.workspace == config.workspace)
+                    {
+                        project.adopted = config.adopted.clone();
+                    }
+                    if self.config.workspace == config.workspace {
+                        self.config.adopted = config.adopted.clone();
+                    }
+                    self.terminals.remove(&key);
+                    self.launched.remove(&key);
+                    self.health.remove(&key);
+                    if let Some(stopped) = self.session_monitors.remove(&key) {
+                        stopped.store(true, Ordering::Release);
+                    }
+                    self.registered.remove(&key);
+                    self.native_layout_key.clear();
+                    if self.config.workspace == config.workspace {
+                        if let Err(error) = self.state.sync_shared(&self.config) {
+                            self.note(format!("Reload recovered terminal: {error:#}"));
+                            continue;
+                        }
+                        self.ensure_sessions();
+                    }
+                    self.launch(*config, pane);
+                    self.layout();
+                    self.note("Terminal reconnected".into());
                 }
                 Event::Health(project, pane, value, stopped) => {
                     if stopped.load(Ordering::Acquire) {
@@ -4165,7 +4459,7 @@ impl Controller for Workspace {
         }
         if self.navigation.dirty && self.navigation_saved_at.elapsed() >= Duration::from_secs(2) {
             self.sort_projects(false);
-            if let Err(error) = self.navigation.save(&self.controller_id) {
+            if let Err(error) = self.navigation.save(&self.navigation_scope) {
                 self.note(format!("Could not save project order: {error:#}"));
             }
             self.navigation_saved_at = Instant::now();
@@ -4178,6 +4472,12 @@ impl Controller for Workspace {
                     .and_then(|r| fs::metadata(r.join("catalog-version")).ok())
                     .and_then(|m| m.modified().ok());
                 if stamp != self.catalog_stamp {
+                    if let Err(error) = self.refresh_session_default() {
+                        self.note(format!("Load default session: {error:#}"));
+                    }
+                    if let Err(error) = self.navigation.load_session_order(&self.config) {
+                        self.note(format!("Load project order: {error:#}"));
+                    }
                     if let Ok(config) = crate::saved(&self.config.workspace) {
                         self.config = config;
                     }
@@ -4212,6 +4512,8 @@ impl Controller for Workspace {
                     "legacy-stereo"
                 });
                 snapshot["presentation"] = json!(if self.cells { "cells" } else { "graphical" });
+                snapshot["session_manager"] = json!(self.session_model());
+                snapshot["session_id"] = json!(crate::session_catalog::group(&self.config));
                 snapshot["app_view_available"] = json!(self.app_view_available);
                 snapshot["cell_terminal_focus"] = json!(self.cell_ui.terminal_focus);
                 if self.cells {
@@ -4518,11 +4820,15 @@ impl Controller for Workspace {
                     Input::Pointer { action, .. }
                         if action == "scroll_up" || action == "scroll_down" =>
                     {
-                        self.action(if action == "scroll_up" {
-                            "modal:apps:up"
+                        if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
+                            self.choose_session_row(if action == "scroll_up" { -1 } else { 1 });
                         } else {
-                            "modal:apps:down"
-                        })?;
+                            self.action(if action == "scroll_up" {
+                                "modal:apps:up"
+                            } else {
+                                "modal:apps:down"
+                            })?;
+                        }
                     }
                     Input::Osc72 { text } => self.drop_message(&text)?,
                     _ => {}
@@ -4768,7 +5074,7 @@ impl Controller for Workspace {
     }
     fn shutdown(&mut self) {
         self.close_audio();
-        let _ = self.navigation.save(&self.controller_id);
+        let _ = self.navigation.save(&self.navigation_scope);
         // Keep startup preferences when the last window closes; active peers keep theirs.
         if self.controller_id != self.workspace_id
             && crate::frontend::active(&self.workspace_id).is_ok_and(|v| v.len() <= 1)

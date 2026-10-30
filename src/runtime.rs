@@ -32,6 +32,8 @@ pub struct Config {
     pub collection: Option<String>,
     #[serde(default)]
     pub herdr: Option<crate::herdr::Source>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmux: Option<crate::tmux_source::Source>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub adopted: std::collections::BTreeMap<usize, crate::adoption::Terminal>,
     #[serde(default = "crate::appearance::default_theme")]
@@ -62,6 +64,9 @@ pub fn fresh_agent_command(command: &str) -> String {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        if let Some(source) = &self.tmux {
+            source.validate()?;
+        }
         crate::appearance::Appearance::load(&self.theme)?;
         for terminal in self.adopted.values() {
             terminal.validate()?;
@@ -119,6 +124,12 @@ impl Config {
         self.host.is_some() && (pane != 0 || self.project_host)
     }
     pub fn command(&self, pane: usize, request: &Value, tty: bool) -> Command {
+        if pane == 0
+            && request["action"] == "capture"
+            && let Some(source) = &self.tmux
+        {
+            return source.command(&["capture-pane", "-p", "-e", "-t", &source.session]);
+        }
         if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
             let p = &source.panes[&pane];
             return source.command(&[
@@ -156,6 +167,11 @@ impl Config {
         }
     }
     pub fn call(&self, pane: usize, request: &Value) -> Result<Value> {
+        if pane == 0
+            && let Some(source) = &self.tmux
+        {
+            return source.call(request);
+        }
         if request["action"] == "inspect"
             && let Some(terminal) = self.adopted_terminal(pane)
         {
@@ -209,6 +225,12 @@ impl Config {
         Ok(serde_json::from_slice(&out.stdout)?)
     }
     pub fn ensure(&self, pane: usize, agent_command: Option<&str>) -> Result<()> {
+        if pane == 0
+            && let Some(source) = &self.tmux
+        {
+            source.inspect()?;
+            return Ok(());
+        }
         if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
             source.inspect(pane)?;
             return Ok(());
@@ -232,6 +254,69 @@ impl Config {
         self.call(pane, &req)?;
         Ok(())
     }
+    /// Explicit user recovery, scoped to one terminal. Transferred live shells
+    /// keep their owner; an exited owner is replaced by an ordinary shell.
+    pub fn recover(&self, pane: usize, epoch: Option<&str>) -> Result<Self> {
+        let _transaction = crate::project_sync::transaction(self)?;
+        let saved = crate::project_state::data_root()?.join(format!("{}.json", self.workspace));
+        let mut config: Self = serde_json::from_slice(&fs::read(saved)?)?;
+        ensure!(
+            pane != 0 || config.tmux.is_none(),
+            "Imported tmux sessions stay owned by tmux; open a new terminal tab for a fresh shell"
+        );
+        let mut state = crate::project_state::ProjectState::load(&config)?;
+        ensure!(
+            state.terminal_ids().contains(&pane),
+            "Terminal no longer exists"
+        );
+        ensure!(
+            state.terminal_epochs.get(&pane).map(String::as_str) == epoch,
+            "Terminal changed; recovery canceled"
+        );
+        ensure!(
+            !config
+                .herdr
+                .as_ref()
+                .is_some_and(|h| h.panes.contains_key(&pane)),
+            "Transfer this terminal from Herdr before recovering it"
+        );
+        if let Some(terminal) = config.adopted_terminal(pane) {
+            let alive = match terminal.inspect() {
+                Ok(health) => health["alive"] == true,
+                Err(error) => {
+                    ensure!(
+                        !std::path::Path::new(&format!("/proc/{}", terminal.pid)).exists(),
+                        "PTY owner unavailable; original shell left running: {error:#}"
+                    );
+                    false
+                }
+            };
+            if !alive {
+                config.adopted.remove(&pane);
+                // Stop only the abandoned presentation proxy, never an owner.
+                let stopped = self
+                    .command(pane, &self.request(pane, "stop"), false)
+                    .output()?;
+                ensure!(
+                    stopped.status.success(),
+                    "Could not close the abandoned PTY bridge"
+                );
+                state
+                    .terminal_epochs
+                    .insert(pane, uuid::Uuid::new_v4().to_string());
+                state.save(&config)?;
+            }
+        }
+        config.ensure(pane, None)?;
+        let mut request = config.request(pane, "recover");
+        request["directory"] = json!(config.directory);
+        config.call(pane, &request)?;
+        starkit::fs::write_private(
+            &config_path(&config.workspace)?,
+            &serde_json::to_vec_pretty(&config)?,
+        )?;
+        Ok(config)
+    }
     pub fn canonical_pane(&self, pane: usize) -> usize {
         if let Some(source) = &self.herdr
             && let Some(p) = source.panes.get(&pane)
@@ -246,6 +331,11 @@ impl Config {
         pane
     }
     pub fn paste(&self, pane: usize, text: &str) -> Result<()> {
+        if pane == 0
+            && let Some(source) = &self.tmux
+        {
+            return source.paste(text);
+        }
         let socket = crate::terminal::socket(&self.workspace, self.canonical_pane(pane))?;
         if socket.exists() {
             return crate::terminal::paste(&socket, text);
@@ -321,6 +411,11 @@ impl Config {
         self.attach_argv_with_shell(pane, false)
     }
     pub fn attach_argv_with_shell(&self, pane: usize, ensure_shell: bool) -> Vec<String> {
+        if pane == 0
+            && let Some(source) = &self.tmux
+        {
+            return source.attach_argv();
+        }
         if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
             let p = &source.panes[&pane];
             if !p.terminal_id.is_empty() {
@@ -645,6 +740,7 @@ mod tests {
             label: None,
             collection: None,
             herdr: None,
+            tmux: None,
             adopted: Default::default(),
             theme: crate::appearance::default_theme(),
             host: None,

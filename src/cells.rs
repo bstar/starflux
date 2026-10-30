@@ -256,6 +256,7 @@ impl Workspace {
                 ("Theme", "theme:next"),
                 ("File", "file:deliver"),
                 ("Refresh", "ui:refresh"),
+                ("Sessions", "sessions:open"),
                 ("Tab menu", "cells:tab-menu"),
                 ("Project menu", "cells:project-menu"),
                 ("Order", "projects:sort:mode"),
@@ -548,12 +549,173 @@ impl Workspace {
             }
         }
         self.cell_ui.controls.clear();
+        if let Some(model) = self.session_model() {
+            if !model.external {
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: area.width.saturating_sub(28),
+                        y: 1,
+                        width: 19,
+                        height: 1,
+                    },
+                    if model.selected_default {
+                        "[Clear default]"
+                    } else {
+                        "[Make default]"
+                    },
+                    "sessions:default".into(),
+                    false,
+                );
+            }
+            put(
+                b,
+                1,
+                0,
+                area.width.saturating_sub(12),
+                if model.external {
+                    "Import a session"
+                } else {
+                    "Sessions"
+                },
+                accent,
+            );
+            self.cell_button(
+                b,
+                Rect {
+                    x: area.width.saturating_sub(9),
+                    y: 0,
+                    width: 8,
+                    height: 1,
+                },
+                "[Close]",
+                "modal:cancel".into(),
+                false,
+            );
+            put(
+                b,
+                1,
+                2,
+                area.width.saturating_sub(2),
+                &format!("Search: {}│", model.query),
+                accent,
+            );
+            let rows = usize::from(area.height.saturating_sub(9) / 2);
+            for (position, (index, name, detail)) in
+                model.rows.iter().enumerate().skip(model.offset).take(rows)
+            {
+                let y = 4 + (position - model.offset) as u16 * 2;
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: 1,
+                        y,
+                        width: area.width.saturating_sub(2),
+                        height: 1,
+                    },
+                    name,
+                    format!("sessions:row:{index}"),
+                    position == model.selected,
+                );
+                put(
+                    b,
+                    3,
+                    y + 1,
+                    area.width.saturating_sub(4),
+                    detail,
+                    base.fg(color(&self.appearance.muted)),
+                );
+            }
+            let y = area.height.saturating_sub(4);
+            self.cell_button(
+                b,
+                Rect {
+                    x: 1,
+                    y,
+                    width: 13,
+                    height: 1,
+                },
+                "[New session]",
+                "sessions:new".into(),
+                false,
+            );
+            self.cell_button(
+                b,
+                Rect {
+                    x: 16,
+                    y,
+                    width: 12,
+                    height: 1,
+                },
+                if model.external {
+                    "[Saved]"
+                } else {
+                    "[Import…]"
+                },
+                if model.external {
+                    "sessions:open"
+                } else {
+                    "sessions:import"
+                }
+                .into(),
+                false,
+            );
+            if !model.external {
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: 30,
+                        y,
+                        width: 10,
+                        height: 1,
+                    },
+                    "[Delete…]",
+                    "sessions:delete".into(),
+                    false,
+                );
+            }
+            self.cell_button(
+                b,
+                Rect {
+                    x: area.width.saturating_sub(12),
+                    y,
+                    width: 11,
+                    height: 1,
+                },
+                if model.external { "[Import]" } else { "[Open]" },
+                "sessions:choose".into(),
+                true,
+            );
+            put(
+                b,
+                1,
+                area.height.saturating_sub(2),
+                area.width.saturating_sub(2),
+                &model.status,
+                accent,
+            );
+            put(
+                b,
+                1,
+                area.height.saturating_sub(1),
+                area.width.saturating_sub(2),
+                "↑/↓ select · Enter open · Ctrl+N new · Ctrl+I import · Del delete · Esc close",
+                accent,
+            );
+            return;
+        }
         if let Some(modal) = &self.modal {
             let title = match &modal.kind {
+                Prompt::Sessions(_) => "Sessions",
+                Prompt::NewSession => "Create session",
+                Prompt::DeleteSession(_) => {
+                    "Delete session (external tmux/Herdr sessions are preserved)"
+                }
                 Prompt::Deliver => "Deliver a file (path on workspace host)",
                 Prompt::Project => "Add / reopen project",
                 Prompt::RenameProject(_) => "Rename project",
                 Prompt::RenameTab(_) => "Rename terminal tab",
+                Prompt::RecoverTerminal(_, _, _) => "Recover terminal to a shell",
                 Prompt::RenameAgent(_) => "Rename agent",
                 Prompt::Launch | Prompt::RunCommand => "App view unavailable",
             };
@@ -806,7 +968,8 @@ impl Workspace {
     }
     fn cell_reorder(&mut self, id: &str, gap: usize) -> Result<()> {
         if !self.navigation.recent && self.navigation.reorder(id, gap) {
-            self.navigation.save(&self.controller_id)?;
+            self.navigation.save_session_order(&self.config)?;
+            self.navigation.save(&self.navigation_scope)?;
             self.sort_projects(false);
         }
         Ok(())
@@ -1017,6 +1180,11 @@ impl Workspace {
                     return Ok(());
                 }
                 if self.cells_overlay() {
+                    if self.modal.as_ref().is_some_and(|m| m.sessions.is_some())
+                        && action.starts_with("scroll_")
+                    {
+                        self.choose_session_row(if action == "scroll_up" { -1 } else { 1 });
+                    }
                     return Ok(());
                 }
                 let layout = Layout::new(self.viewport, self.cell_ui.sidebar);

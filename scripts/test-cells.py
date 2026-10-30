@@ -205,10 +205,24 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         # Popup positioning stays inside the terminal even at its lower-right edge.
         write(b'\x1b[<2;79;21M\x1b[<2;79;21m')
         wait(lambda: snapshot().get('context_menu') is not None, 'terminal context menu did not open')
+        actions={item['action'] for item in snapshot()['context_menu']['items']}
+        assert 'reconnect-terminal:0' in actions and 'recover-terminal:0' in actions, actions
         bounds = snapshot()['context_menu']['bounds']
         assert bounds['x'] + bounds['width'] <= 80 and bounds['y'] + bounds['height'] <= 24, bounds
         write(b'\x1b')
         wait(lambda: snapshot().get('context_menu') is None, 'Escape did not dismiss the popup')
+        # Recovery is reachable for live/hung programs, and cancellation never
+        # sends dialog input to the retained program, locally or over SSH.
+        before=inputs()
+        command('--action','recover-terminal:0')
+        wait(lambda: snapshot().get('modal_open'), 'recovery confirmation did not open')
+        write(b'\x1b')
+        wait(lambda: not snapshot().get('modal_open'), 'recovery did not cancel')
+        assert inputs()==before and snapshot()['panes'][0]['pid']==backend_pid
+        attachment=snapshot()['direct_terminals'][0]['attachment_pid']
+        command('--action','reconnect-terminal:0')
+        wait(lambda: snapshot()['direct_terminals'] and snapshot()['direct_terminals'][0]['attachment_pid']!=attachment, 'pane did not reconnect')
+        assert snapshot()['panes'][0]['pid']==backend_pid, 'reconnect replaced the running program'
         write(b'\x1b[<0;2;22M\x1b[<0;2;22m')
         wait(lambda: snapshot().get('modal_open'), 'bottom Add project button did not open the dialog')
         write(b'\x1b')

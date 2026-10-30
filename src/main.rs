@@ -7,6 +7,7 @@ mod appearance;
 mod applications;
 #[cfg(test)]
 mod blueprint;
+mod bridge_handoff;
 mod compositor;
 mod features;
 mod fixture;
@@ -24,8 +25,10 @@ mod refresh;
 mod remote_video;
 mod runtime;
 mod selection;
+mod session_catalog;
 mod shelf;
 mod terminal;
+mod tmux_source;
 mod ui;
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
@@ -63,6 +66,8 @@ struct Args {
     /// List saved workspace names for reattachment
     #[arg(long)]
     sessions: bool,
+    #[arg(long, hide = true)]
+    default_workspace: bool,
     /// Import the default Herdr session as an isolated interactive collection
     #[arg(long)]
     import_herdr: bool,
@@ -286,7 +291,56 @@ fn run() -> Result<()> {
     if a.migrate_herdr || a.plan_herdr_migration {
         return adoption::migrate(a.plan_herdr_migration);
     }
+    if a.default_workspace {
+        println!(
+            "{}",
+            session_catalog::default_project()?.unwrap_or_else(|| "demo".into())
+        );
+        return Ok(());
+    }
     if let Some(host) = &a.ssh {
+        if !a.refresh
+            && !raw
+                .iter()
+                .any(|s| s == "--workspace" || s.starts_with("--workspace="))
+        {
+            let mut command = Command::new("ssh");
+            if let Some(path) = &a.ssh_config {
+                command.arg("-F").arg(path);
+            }
+            let output = command
+                .args([
+                    "-T",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "ServerAliveInterval=15",
+                    "-o",
+                    "ServerAliveCountMax=3",
+                    "--",
+                    host,
+                ])
+                .arg(shell_words::join([
+                    a.remote_executable.as_str(),
+                    "--default-workspace",
+                ]))
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "Read default session on SSH host: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            let workspace = String::from_utf8(output.stdout)?.trim().to_owned();
+            ensure!(
+                !workspace.is_empty()
+                    && workspace.len() <= 32
+                    && workspace
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+                "SSH host returned an invalid default workspace"
+            );
+            a.workspace = workspace;
+        }
         if a.refresh {
             return refresh::request_remote(
                 host,
@@ -366,7 +420,7 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
-    let explicit_workspace = raw
+    let mut explicit_workspace = raw
         .iter()
         .any(|s| s == "--workspace" || s.starts_with("--workspace="));
     let management = a.inspect
@@ -377,7 +431,18 @@ fn run() -> Result<()> {
         || a.deliver.is_some()
         || a.action.is_some();
     if !explicit_workspace && !management {
-        a.workspace = auto_workspace();
+        let default =
+            if a.directory.is_none() && a.host.is_none() && a.agent.is_none() && a.app.is_none() {
+                session_catalog::default_project()?
+            } else {
+                None
+            };
+        if let Some(project) = default {
+            a.workspace = project;
+            explicit_workspace = true;
+        } else {
+            a.workspace = auto_workspace();
+        }
     }
     if !management {
         adoption::wait(&a.workspace)?;
@@ -390,6 +455,7 @@ fn run() -> Result<()> {
         label: None,
         collection: None,
         herdr: None,
+        tmux: None,
         adopted: Default::default(),
         theme: a.theme.clone().unwrap_or_else(appearance::default_theme),
         host: a.host,
@@ -594,16 +660,20 @@ fn run() -> Result<()> {
         starkit::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
         return Ok(());
     }
-    if mode != presentation::Mode::Cells
-        && let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()?
-    {
-        let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
-        refresh::register_local(&config.workspace, &view.id, mode)?;
-        let socket = view.ensure()?;
-        if mode == presentation::Mode::Graphical {
-            frontend::action(&view, "presentation:require-graphical")?;
+    if mode != presentation::Mode::Cells {
+        let mut handoff = bridge_handoff::Handoff::acquire()?;
+        if let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()? {
+            if let Some(handoff) = &mut handoff {
+                handoff.attached();
+            }
+            let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
+            refresh::register_local(&config.workspace, &view.id, mode)?;
+            let socket = view.ensure()?;
+            if mode == presentation::Mode::Graphical {
+                frontend::action(&view, "presentation:require-graphical")?;
+            }
+            return bridge.relay_with_presentation(&socket, None, mode.cells());
         }
-        return bridge.relay_with_presentation(&socket, None, mode.cells());
     }
     if unsafe { libc::isatty(0) } == 0 {
         ensure!(
@@ -668,6 +738,7 @@ mod workspace_tests {
             label: None,
             collection: None,
             herdr: None,
+            tmux: None,
             adopted: Default::default(),
             theme: appearance::default_theme(),
             host: None,

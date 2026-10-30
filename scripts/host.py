@@ -1,5 +1,5 @@
 """One-shot host helper. Payload is base64 JSON, file bytes use stdin."""
-import base64, fcntl, hashlib, json, os, pathlib, re, shlex, subprocess, sys, tempfile
+import base64, fcntl, hashlib, json, os, pathlib, re, shlex, signal, subprocess, sys, tempfile, termios, time
 
 def agent_family(args):
     families={'codex':'codex','claude':'claude','claude-code':'claude','gemini':'gemini','gemini-cli':'gemini','opencode':'opencode','aider':'aider'}
@@ -77,7 +77,7 @@ def main():
     def exists():return subprocess.run(tm+['has-session','-t',pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
     action=req['action']
     lifecycle_lock=None
-    if action in ['ensure','restart','reap','stop'] or (action=='attach' and req.get('ensure_shell')):
+    if action in ['ensure','restart','recover','reap','stop'] or (action=='attach' and req.get('ensure_shell')):
         lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))
         lock_root.mkdir(mode=0o700,exist_ok=True)
         lifecycle_lock=(lock_root/(workspace+'-'+pane+'.lock')).open('a')
@@ -120,6 +120,53 @@ def main():
             lifecycle_lock.close()
             os.execvp('tmux',tm+['attach-session','-t',pane])
         print(json.dumps({'session':pane,'server':server,'replaced_fixture':replaced}))
+    elif action=='recover':
+        if req.get('original_pid'):
+            # A transferred terminal's tmux process is only a proxy. Recover
+            # the original foreground job, keeping its shell and PTY owner.
+            pid=int(req['original_pid']); proc=pathlib.Path('/proc')/str(pid)
+            stat=(proc/'stat').read_text().rsplit(')',1)[1].split()
+            if proc.stat().st_uid!=os.getuid() or int(stat[3])!=pid:
+                raise ValueError('Original shell identity changed; recovery refused')
+            tty=os.readlink(proc/'fd/0')
+            if not tty.startswith('/dev/pts/'):
+                raise ValueError('Original terminal is unavailable')
+            foreground=int(stat[5])
+            if foreground<1:raise ValueError('Original shell has no foreground terminal')
+            if foreground>1 and foreground!=pid:
+                members=[]
+                for entry in pathlib.Path('/proc').iterdir():
+                    if not entry.name.isdigit():continue
+                    try:
+                        info=(entry/'stat').read_text().rsplit(')',1)[1].split()
+                        if int(info[2])==foreground:
+                            if int(info[3])!=pid or entry.stat().st_uid!=os.getuid():
+                                raise ValueError('Foreground group belongs to another session')
+                            members.append(int(entry.name))
+                    except (FileNotFoundError,ProcessLookupError,PermissionError):continue
+                if members:
+                    try:os.killpg(foreground,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                deadline=time.monotonic()+2
+                while time.monotonic()<deadline:
+                    current=(proc/'stat').read_text().rsplit(')',1)[1].split()
+                    if int(current[5])==pid:break
+                    time.sleep(.02)
+                else:raise ValueError('Foreground job stopped, but the shell has not reclaimed the terminal')
+            fd=os.open(tty,os.O_RDWR|os.O_NOCTTY|os.O_NONBLOCK)
+            try:
+                termios.tcflow(fd,termios.TCOON)
+                subprocess.run(['stty','sane'],stdin=fd,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+                os.write(fd,b'\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[2J\x1b[H')
+            finally:os.close(fd)
+            if exists():run('send-keys','-t',target,'C-l')
+            print(json.dumps({'recovered':True,'shell_preserved':True}))
+        else:
+            if not exists():raise ValueError('Session is missing; reconnect it first')
+            argv=[os.environ.get('SHELL','/bin/bash'),'-l']
+            run('respawn-pane','-k','-t',target,'-c',os.path.expanduser(req.get('directory') or '~'),shell_command(argv))
+            run('set-option','-p','-u','-t',target,'@starflux_state')
+            print(json.dumps({'recovered':True,'shell_preserved':False}))
     elif action=='restart':
         if not exists():raise ValueError('Session is missing; attach it first')
         dead=run('display-message','-p','-t',target,'#{pane_dead}').decode().strip()
