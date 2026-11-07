@@ -33,12 +33,19 @@ impl Picker {
             .map(|(i, _)| i)
             .collect()
     }
-    pub fn model(&self, query: &str, current: &str, error: &str) -> crate::shelf::SessionPicker {
+    pub fn model(
+        &self,
+        query: &str,
+        cursor: usize,
+        current: &str,
+        error: &str,
+    ) -> crate::shelf::SessionPicker {
         let selected = self
             .selected
             .min(self.matches(query).len().saturating_sub(1));
         crate::shelf::SessionPicker {
             query: query.into(),
+            cursor,
             external: self.external,
             selected,
             selected_default: self
@@ -111,19 +118,25 @@ impl Workspace {
         let m = self.modal.as_ref()?;
         Some(m.sessions.as_ref()?.model(
             m.fields[0].1.text(),
+            m.fields[0].1.cursor(),
             &session_catalog::group(&self.config),
             &m.error,
         ))
     }
     pub(super) fn choose_session_row(&mut self, delta: isize) {
-        let rows = if self.cells {
-            usize::from(self.viewport.rows.saturating_sub(9) / 2)
-        } else {
-            650.min(self.viewport.height.saturating_sub(24))
-                .saturating_sub(230) as usize
-                / 52
-        }
-        .max(1);
+        let rows = crate::responsive::session_rows(
+            if self.cells {
+                self.viewport.columns
+            } else {
+                self.viewport.width as u16
+            },
+            if self.cells {
+                self.viewport.rows
+            } else {
+                self.viewport.height as u16
+            },
+            self.cells,
+        );
         if let Some(m) = self.modal.as_mut()
             && let Some(p) = m.sessions.as_mut()
         {

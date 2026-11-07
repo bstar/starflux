@@ -1,5 +1,7 @@
 # Cells and graphical presentations
 
+Both presentations share [configurable keyboard shortcuts](keyboard.md). Press **F1** for help or **Ctrl+B**, then **?**. Projects, sessions, tabs, pane focus, context menus and terminal history are accessible without a mouse.
+
 `starflux --cells` runs directly in the launching terminal. Kitty, a desktop display,
 and a private compositor are not needed for this presentation. Embedded terminals
 are persistent PTY sessions rendered into the parent terminal's cell grid, using
@@ -34,7 +36,7 @@ its graphical dependencies; cells mode does not start those graphical services.
 
 Use **Add project** at the bottom of the project sidebar to create a project or
 reopen one by its saved name. In narrow windows, open the sidebar with **Projects**. Existing names retain their saved host, directory, tabs and running processes.
-Use **Close project**, the **x** beside a sidebar row, or the project context menu to
+Use **Close project** or the project context menu to
 remove a project from this window. Closing never stops its terminals or agents.
 Closed rows stay hidden through refresh and catalog updates. Other windows keep
 independent project lists. Closing the last project closes that frontend.
@@ -51,8 +53,8 @@ distinguish Ctrl+Esc. **Escape** or **F6** returns from controls to the terminal
 
 | With workspace controls focused | Action |
 | --- | --- |
-| Tab / Shift+Tab | Move through visible controls, projects and tabs |
-| Enter | Activate the focused control |
+| Tab / Shift+Tab | Hop between projects, controls, tabs and split panes |
+| Enter | Open the focused picker/menu or return to terminal input |
 | `n` | New terminal |
 | `+` / `p` | Add or reopen a project |
 | `x` | Close the selected project, keeping sessions running |
@@ -84,7 +86,8 @@ Wheel scrolling over the sidebar scrolls the project list.
 
 The sidebar appears automatically at 100 columns. Longer project lists scroll with
 the mouse wheel; the Add project button stays pinned at the bottom. At narrower sizes, **Projects**
-opens it. The tab strip scrolls to keep the selected terminal visible. Below 60×16,
+opens it; below 60 columns it opens a project picker instead of shrinking the terminal.
+**More** opens every workspace control. The tab strip keeps the selected terminal visible. Below 32×10,
 a resize message replaces the interface and processes continue running.
 
 ## Feature parity

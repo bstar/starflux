@@ -25,7 +25,7 @@ for executable in starflux starflux-terminal-client starflux-pty-proxy; do
     install -m755 "$bin/$executable" "$appdir/usr/bin/"
 done
 # Internal process management and audio capture work without distro packages.
-for executable in tmux pactl parec dbus-daemon dbus-launch; do
+for executable in tmux pactl parec dbus-daemon dbus-launch notify-send; do
     install -m755 "$(command -v "$executable")" "$appdir/usr/bin/"
 done
 install -m755 /usr/bin/dbus-run-session "$appdir/usr/libexec/dbus-run-session"

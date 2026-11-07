@@ -11,6 +11,32 @@ use std::{
 thread_local! { static LOCKS: RefCell<BTreeMap<PathBuf,(File,usize)>> = const {RefCell::new(BTreeMap::new())}; }
 pub struct Transaction(PathBuf, std::marker::PhantomData<std::rc::Rc<()>>);
 impl Transaction {
+    pub fn try_acquire(path: PathBuf) -> Result<Option<Self>> {
+        let acquired = LOCKS.with(|locks| -> Result<bool> {
+            let mut locks = locks.borrow_mut();
+            if let Some((_, count)) = locks.get_mut(&path) {
+                *count += 1;
+                return Ok(true);
+            }
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(&path)?;
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    return Ok(false);
+                }
+                return Err(error.into());
+            }
+            locks.insert(path.clone(), (file, 1));
+            Ok(true)
+        })?;
+        Ok(acquired.then(|| Self(path, std::marker::PhantomData)))
+    }
     pub fn acquire(path: PathBuf) -> Result<Self> {
         LOCKS.with(|locks| -> Result<()> {
             let mut locks = locks.borrow_mut();
@@ -58,6 +84,10 @@ pub const SHARED: &[&str] = &[
     "terminals",
     "terminal_epochs",
     "terminal_labels",
+    "terminal_commands",
+    "terminal_plugins",
+    "terminal_launch_pending",
+    "save_terminal_screens",
     "agents",
     "agent_labels",
     "app_command",
@@ -70,6 +100,9 @@ pub const VIEW: &[&str] = &[
     "split",
     "split_panes",
     "split_ratio",
+    "pane_tree",
+    "pane_zoom",
+    "plugin_overlay",
     "agent",
     "terminal_font_size",
     "terminal_font_explicit",
@@ -121,6 +154,38 @@ pub fn merge(base: &Value, local: &Value, latest: &Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn snapshot_lock_skips_busy_projects_and_preserves_nested_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("project.lock");
+        let outer = Transaction::acquire(path.clone()).unwrap();
+        let nested = Transaction::try_acquire(path.clone()).unwrap().unwrap();
+        drop(nested);
+        let other = path.clone();
+        assert!(
+            std::thread::spawn(move || { Transaction::try_acquire(other).unwrap().is_none() })
+                .join()
+                .unwrap()
+        );
+        drop(outer);
+        assert!(LOCKS.with(|locks| !locks.borrow().contains_key(&path)));
+        assert!(
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                loop {
+                    if Transaction::try_acquire(path.clone()).unwrap().is_some() {
+                        return true;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            })
+            .join()
+            .unwrap()
+        );
+    }
     #[test]
     fn stale_view_cannot_erase_a_new_terminal_or_another_windows_label() {
         let base =

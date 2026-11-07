@@ -3,7 +3,20 @@ use crate::{appearance::Appearance, project_state::Space};
 use starkit::native_surface::{HitRegion, PixelRect as R, Primitive, Surface};
 
 const TAB_HEIGHT: u16 = 31;
-const TAB_LEAD: u16 = 8;
+const TAB_LEAD: u16 = 16;
+const TAB_TAIL: u16 = 8;
+const TAB_TOP_PADDING: u16 = 4;
+const TERMINAL_PADDING: u16 = 6;
+fn terminal_inset(bounds: R) -> R {
+    let x = TERMINAL_PADDING.min(bounds.width.saturating_sub(1) / 2);
+    let y = TERMINAL_PADDING.min(bounds.height.saturating_sub(1) / 2);
+    R::new(
+        bounds.x + x,
+        bounds.y + y,
+        bounds.width - 2 * x,
+        bounds.height - 2 * y,
+    )
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
     pub width: u16,
@@ -17,6 +30,50 @@ pub struct Layout {
 }
 impl Layout {
     pub fn new(width: u16, height: u16, space: Space) -> Self {
+        if width < 600 {
+            let header = 38.min(height.saturating_sub(2));
+            let tab_h = if space == Space::Apps {
+                0
+            } else {
+                (28 + TAB_TOP_PADDING).min(height.saturating_sub(header + 1))
+            };
+            let bottom = height.saturating_sub(24).max(header + tab_h + 1);
+            let mut canvas = R::new(
+                0,
+                header + tab_h,
+                width.max(1),
+                bottom.saturating_sub(header + tab_h).max(1),
+            );
+            if space == Space::Apps {
+                canvas = crate::app_view::canvas(canvas);
+            } else {
+                canvas = terminal_inset(canvas);
+            }
+            return Self {
+                width,
+                height,
+                sidebar: R::default(),
+                frame: R::new(0, header, width, bottom.saturating_sub(header)),
+                canvas,
+                shelf: R::default(),
+                tabs: R::new(
+                    0,
+                    header
+                        + if space == Space::Apps {
+                            0
+                        } else {
+                            TAB_TOP_PADDING
+                        },
+                    width,
+                    tab_h.saturating_sub(if space == Space::Apps {
+                        0
+                    } else {
+                        TAB_TOP_PADDING
+                    }),
+                ),
+                footer: R::new(0, height.saturating_sub(24), width, 24),
+            };
+        }
         let side = if width >= 1100 {
             252
         } else if width >= 800 {
@@ -41,25 +98,27 @@ impl Layout {
         layout
     }
     fn body(width: u16, height: u16, space: Space) -> Self {
-        let margin = if width < 600 { 8 } else { 14 };
-        let x = margin;
-        let w = width.saturating_sub(margin * 2).max(1);
-        let y = 90.min(height.saturating_sub(100));
+        let x = 0;
+        let w = width.max(1);
+        let y = 82.min(height.saturating_sub(100));
         let shelf_h = 0;
-        let bottom = height.saturating_sub(40 + shelf_h);
+        let bottom = height.saturating_sub(28 + shelf_h);
         let frame = R::new(x, y, w, bottom.saturating_sub(y).max(1));
-        let tab_h = if space != Space::Apps { 34 } else { 0 };
+        let tab_h = if space != Space::Apps {
+            34 + TAB_TOP_PADDING
+        } else {
+            0
+        };
         let mut canvas = R::new(
-            x + 1,
+            x,
             y + 37 + tab_h,
-            w.saturating_sub(2).max(1),
-            frame
-                .height
-                .saturating_sub(38 + tab_h + if space == Space::Apps { 34 } else { 0 })
-                .max(1),
+            w,
+            frame.height.saturating_sub(37 + tab_h).max(1),
         );
         if space == Space::Apps {
             canvas = crate::app_view::canvas(canvas);
+        } else {
+            canvas = terminal_inset(canvas);
         }
         Self {
             width,
@@ -68,13 +127,14 @@ impl Layout {
             frame,
             canvas,
             shelf: R::new(x, bottom.saturating_add(10), w, shelf_h.saturating_sub(12)),
-            tabs: R::new(x + 1, y + 37, w.saturating_sub(2), tab_h),
+            tabs: R::new(x, y + 37, w, tab_h),
             footer: R::new(0, height.saturating_sub(28), width, 28),
         }
     }
 }
 #[derive(serde::Serialize)]
 pub struct ProjectTab<'a> {
+    pub failed: usize,
     pub id: &'a str,
     pub name: &'a str,
     pub host: &'a str,
@@ -115,6 +175,7 @@ pub struct ApplicationPicker<'a> {
 #[derive(serde::Serialize)]
 pub struct SessionPicker {
     pub query: String,
+    pub cursor: usize,
     pub external: bool,
     pub selected: usize,
     pub selected_default: bool,
@@ -147,9 +208,37 @@ pub struct ContextMenu {
     pub selected: Option<usize>,
 }
 impl ContextMenu {
+    pub fn offset(&self, capacity: usize) -> usize {
+        let capacity = capacity.max(1);
+        self.selected.unwrap_or(0) / capacity * capacity
+    }
     pub fn bounds(&self, width: u16, height: u16) -> R {
-        let w = 288.min(width.saturating_sub(12));
-        let h = (88 + self.items.len() as u16 * 34).min(height.saturating_sub(12));
+        let w = (if matches!(self.title.as_str(), "Category agent" | "Plugins") {
+            760
+        } else if matches!(
+            self.title.as_str(),
+            "Keyboard shortcuts"
+                | "Agent status"
+                | "Attention inbox"
+                | "Attention item"
+                | "Machines"
+                | "SSH machine"
+                | "Machine projects"
+                | "Notification settings"
+                | "Notification delivery"
+                | "Monospace fonts"
+        ) {
+            480
+        } else {
+            288
+        })
+        .min(width.saturating_sub(12));
+        let h = if matches!(self.title.as_str(), "Category agent" | "Plugins") {
+            height.saturating_sub(24)
+        } else {
+            (88usize.saturating_add(self.items.len().saturating_mul(34)))
+                .min(usize::from(height.saturating_sub(12))) as u16
+        };
         R::new(
             self.position[0].min(width.saturating_sub(w + 6)),
             self.position[1].min(height.saturating_sub(h + 6)),
@@ -184,6 +273,7 @@ pub struct Model<'a> {
     pub terminal: usize,
     pub terminal_font_size: String,
     pub split: bool,
+    pub plugin_overlay: bool,
     pub agent_name: &'a str,
     pub agent_state: &'a str,
     pub status: &'a str,
@@ -466,6 +556,9 @@ fn move_surface(surface: &mut Surface, x: u16, width: u16) {
     }
 }
 pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) {
+    if l.sidebar.width == 0 {
+        return compact_surfaces(l, t, m);
+    }
     let body = Layout::body(
         l.width.saturating_sub(l.sidebar.width).max(1),
         l.height,
@@ -503,8 +596,19 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         false,
     );
     p.text(
+        R::new(w / 2, 26, (w / 2).saturating_sub(24), 16),
+        "Inbox",
+        &t.muted,
+        10,
+        false,
+    );
+    p.hit(
+        R::new(w / 2, 24, (w / 2).saturating_sub(8), 22),
+        "attention:inbox",
+    );
+    p.text(
         R::new(16, 63, w.saturating_sub(60), 22),
-        "PROJECTS",
+        "CATEGORIES",
         &t.muted,
         11,
         true,
@@ -516,55 +620,87 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         11,
         true,
     );
-    let mode = R::new(8, 86, w.saturating_sub(108).min(116), 24);
-    if m.sort_mode_hover {
-        p.border(mode, &t.border);
-    }
-    p.centered_text(
-        mode,
-        if m.project_manual {
-            "Manual ↕"
-        } else {
-            "Activity"
-        },
-        &t.muted,
-        11,
-        false,
+    let rows = crate::categories::sidebar_capacity(
+        l.height,
+        m.project_offset,
+        &m.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
     );
-    p.hit(mode, "projects:sort:mode");
-    if m.project_manual {
-        if w >= 220 {
+    let start = m.project_offset.min(m.projects.len().saturating_sub(rows));
+    for (n, project) in m.projects.iter().enumerate().skip(start).take(rows) {
+        let y = 122
+            + m.projects[start..n]
+                .iter()
+                .map(|p| crate::categories::row_height(p.id))
+                .sum::<u16>();
+        let r = R::new(8, y, w.saturating_sub(20), 32);
+        if let Some(id) = project.id.strip_prefix("category-end:") {
+            let target = m
+                .project_drag
+                .is_some_and(|(source, gap)| !source.starts_with("category:") && gap == Some(n));
+            if target {
+                p.fill(R::new(8, y, w.saturating_sub(20), 2), &t.accent);
+                p.text(
+                    R::new(24, y, w.saturating_sub(32), 12),
+                    "Drop at end of category",
+                    &t.accent,
+                    9,
+                    false,
+                );
+            }
+            p.hit(R::new(0, y, w, 12), format!("categories:append:{id}"));
+            continue;
+        }
+        if let Some(id) = project.id.strip_prefix("category:") {
+            let padding = crate::categories::HEADER_PADDING;
+            let header_height = crate::categories::HEADER_HEIGHT;
+            let drop_target = m
+                .project_drag
+                .is_some_and(|(source, gap)| !source.starts_with("category:") && gap == Some(n));
+            p.fill(R::new(0, y, w.saturating_sub(1), header_height), &t.panel);
+            if m.project_hover == Some(project.id) || drop_target {
+                p.border(
+                    R::new(1, y, w.saturating_sub(3), header_height - 1),
+                    &t.accent,
+                );
+            }
             p.text(
-                R::new(w - 120, 92, 108, 18),
-                "Drag to reorder",
-                &t.muted,
+                R::new(10, y + padding, w.saturating_sub(48), 18),
+                project.name,
+                if project.failed > 0 {
+                    &t.warning
+                } else {
+                    &t.accent
+                },
+                11,
+                true,
+            );
+            p.text(
+                R::new(10, y + padding + 20, w.saturating_sub(20), 12),
+                if drop_target {
+                    "Drop project here"
+                } else {
+                    project.host
+                },
+                if drop_target { &t.accent } else { &t.muted },
                 9,
                 false,
             );
+            p.hit(
+                R::new(0, y, w, header_height),
+                format!("categories:toggle:{id}"),
+            );
+            for dot in 0..3 {
+                p.fill(
+                    R::new(w.saturating_sub(19) + dot * 5, y + padding + 8, 2, 2),
+                    &t.muted,
+                );
+            }
+            p.hit(
+                R::new(w.saturating_sub(24), y + padding, 24, 20),
+                format!("categories:details:{id}"),
+            );
+            continue;
         }
-    } else {
-        let sort = R::new(w.saturating_sub(84), 86, 68, 24);
-        if m.sort_hover {
-            p.border(sort, &t.border);
-        }
-        p.centered_text(
-            sort,
-            if m.project_sort_high {
-                "High ↓"
-            } else {
-                "Low ↑"
-            },
-            &t.muted,
-            11,
-            false,
-        );
-        p.hit(sort, "projects:sort:direction");
-    }
-    let rows = project_rows(l.height);
-    let start = m.project_offset.min(m.projects.len().saturating_sub(rows));
-    for (n, project) in m.projects.iter().enumerate().skip(start).take(rows) {
-        let y = 122 + (n - start) as u16 * 34;
-        let r = R::new(8, y, w.saturating_sub(20), 32);
         let selected = project.id == m.project;
         if m.project_hover == Some(project.id) {
             p.fill(R::new(0, y, w.saturating_sub(1), 34), &t.panel);
@@ -575,20 +711,19 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         if selected {
             p.fill(R::new(r.x, r.y, 2, r.height), &t.accent);
         }
-        p.text(
-            R::new(17, y + 5, 22, 18),
-            format!("{:02}", n + 1),
-            if selected { &t.accent } else { &t.muted },
-            9,
-            false,
-        );
-        let label = R::new(43, y + 2, w.saturating_sub(83), 19);
+        let label = R::new(24, y + 2, w.saturating_sub(64), 19);
         let working = project.working > 0;
-        if project.waiting > 0 {
+        if project.failed > 0 || project.waiting > 0 {
             let r = R::new(w.saturating_sub(33), y + 5, 14, 14);
             p.text(
                 R::new(r.x + 3, r.y.saturating_sub(2), 10, 19),
-                if project.questions > 0 { "?" } else { "!" },
+                if project.failed > 0 {
+                    "!"
+                } else if project.questions > 0 {
+                    "?"
+                } else {
+                    "!"
+                },
                 &t.warning,
                 16,
                 true,
@@ -669,7 +804,14 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
                 selected || working,
             );
         }
-        let detail = if working && project.waiting > 0 {
+        let detail = if project.failed > 0 {
+            format!(
+                "{} · {} agent error{}",
+                project.host,
+                project.failed,
+                if project.failed == 1 { "" } else { "s" }
+            )
+        } else if working && project.waiting > 0 {
             format!("{} working · {} waiting", project.working, project.waiting)
         } else if project.working > 0 {
             format!("{} · {} working", project.host, project.working)
@@ -690,7 +832,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             }
         };
         p.text(
-            R::new(43, y + 20, w.saturating_sub(61), 12),
+            R::new(24, y + 20, w.saturating_sub(42), 12),
             detail,
             if project.waiting > 0 {
                 &t.warning
@@ -710,8 +852,33 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         && gap >= start
         && gap <= start + rows
     {
+        if gap == m.projects.len() {
+            p.text(
+                R::new(
+                    16,
+                    126 + m.projects[start..gap]
+                        .iter()
+                        .map(|p| crate::categories::row_height(p.id))
+                        .sum::<u16>(),
+                    w.saturating_sub(32),
+                    18,
+                ),
+                "Drop at end",
+                &t.accent,
+                10,
+                false,
+            );
+        }
         p.fill(
-            R::new(12, 122 + (gap - start) as u16 * 34, w.saturating_sub(28), 2),
+            R::new(
+                12,
+                122 + m.projects[start..gap]
+                    .iter()
+                    .map(|p| crate::categories::row_height(p.id))
+                    .sum::<u16>(),
+                w.saturating_sub(28),
+                2,
+            ),
             &t.accent,
         );
     }
@@ -799,17 +966,6 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         11,
         false,
     );
-    if l.width > 600 {
-        let x = l.width.saturating_sub(theme_w + 14);
-        p.fill(R::new(x + 9, 43, 4, 4), &t.accent);
-        p.text(
-            R::new(x + 21, 37, theme_w.saturating_sub(30), 17),
-            m.host,
-            &t.muted,
-            11,
-            false,
-        );
-    }
     p.button(
         R::new(l.width.saturating_sub(theme_w + 14), 10, theme_w, 26),
         m.theme,
@@ -859,7 +1015,6 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
     );
     p.fill(l.frame, &t.bg);
     p.fill(R::new(l.frame.x, l.frame.y, l.frame.width, 37), &t.panel);
-    p.border(l.frame, if m.hover { &t.warning } else { &t.accent });
     let title = match space {
         Space::Agent | Space::Terminals => {
             if m.agent_state == "stopped" {
@@ -879,7 +1034,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
                 l.frame.y + 9,
                 l.frame
                     .width
-                    .saturating_sub(if m.app_view { 430 } else { 310 }),
+                    .saturating_sub(if m.app_view { 554 } else { 438 }),
                 24,
             ),
             title,
@@ -922,9 +1077,9 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             );
         }
     }
-    if m.app_view && space != Space::Apps && l.frame.width >= 420 {
+    if m.app_view && space != Space::Apps && l.frame.width >= 554 {
         p.button(
-            R::new(l.width.saturating_sub(306), l.frame.y + 6, 106, 26),
+            R::new(l.width.saturating_sub(530), l.frame.y + 6, 106, 26),
             "App Space",
             "view:apps",
             t,
@@ -932,7 +1087,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         );
     }
     if space != Space::Apps {
-        let x = l.width.saturating_sub(190);
+        let x = l.width.saturating_sub(414);
         let y = l.frame.y + 6;
         p.button(
             R::new(x, y, 34, 26),
@@ -942,14 +1097,14 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             false,
         );
         p.button(
-            R::new(x + 40, y, 66, 26),
+            R::new(x + 40, y, 166, 26),
             &m.terminal_font_size,
-            "terminal:font:reset",
+            "terminal:font:select",
             t,
             false,
         );
         p.button(
-            R::new(x + 112, y, 34, 26),
+            R::new(x + 212, y, 34, 26),
             "+",
             "terminal:font:increase",
             t,
@@ -957,9 +1112,24 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         );
     }
     if space != Space::Apps {
+        let y = l.frame.y + 6;
+        p.button(
+            R::new(l.width.saturating_sub(160), y, 74, 26),
+            "+ Tab",
+            "terminal:new",
+            t,
+            false,
+        );
+        p.button(
+            R::new(l.width.saturating_sub(80), y, 68, 26),
+            if m.split { "Unsplit" } else { "Split" },
+            "terminal:split",
+            t,
+            false,
+        );
         let tab_left = l.tabs.x;
         let mut x = tab_left + TAB_LEAD;
-        let mut controls = if m.split { 275 } else { 175 };
+        let mut controls = if m.split { 110 } else { 0 };
         // Shape the marker with the label so their complete visual group is
         // centered. An independently anchored dot made the right padding uneven.
         let labels = m
@@ -983,12 +1153,12 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             .iter()
             .map(|label| (label.chars().count() as u16 * 8 + 34).clamp(90, 240))
             .collect();
-        let available = l.width.saturating_sub(controls + x + TAB_LEAD + 12);
+        let available = l.width.saturating_sub(controls + x + TAB_TAIL + 12);
         let overflow = widths.iter().map(|w| u32::from(*w)).sum::<u32>() > u32::from(available);
         if overflow {
             controls += 68;
         }
-        let available = l.width.saturating_sub(controls + x + TAB_LEAD + 12);
+        let available = l.width.saturating_sub(controls + x + TAB_TAIL + 12);
         let selected = m
             .terminals
             .iter()
@@ -1006,7 +1176,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
         }
         // Give the baseline the same short lead and tail, with an explicit
         // gap before the fixed controls rather than filling the whole strip.
-        let tabs_right = l.width.saturating_sub(controls + TAB_LEAD + 12);
+        let tabs_right = l.width.saturating_sub(controls + TAB_TAIL + 12);
         let mut tab_end = x;
         for width in widths.iter().skip(start) {
             if tab_end + width > tabs_right {
@@ -1014,7 +1184,7 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
             }
             tab_end += width;
         }
-        let baseline_end = (tab_end + TAB_LEAD).min(l.width.saturating_sub(controls + 12));
+        let baseline_end = (tab_end + TAB_TAIL).min(l.width.saturating_sub(controls + 12));
         p.fill(
             R::new(
                 tab_left,
@@ -1058,29 +1228,19 @@ fn body_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface)
                 false,
             );
         }
-        if m.split {
+        if m.split || m.plugin_overlay {
             p.button(
-                R::new(l.width.saturating_sub(275), l.tabs.y + 3, 94, 27),
-                "Close pane",
+                R::new(l.width.saturating_sub(110), l.tabs.y + 3, 94, 27),
+                if m.plugin_overlay {
+                    "Close overlay"
+                } else {
+                    "Close pane"
+                },
                 "terminal:close-pane",
                 t,
                 false,
             );
         }
-        p.button(
-            R::new(l.width.saturating_sub(175), l.tabs.y + 3, 74, 27),
-            "+ Tab",
-            "terminal:new",
-            t,
-            false,
-        );
-        p.button(
-            R::new(l.width.saturating_sub(95), l.tabs.y + 3, 68, 27),
-            if m.split { "Unsplit" } else { "Split" },
-            "terminal:split",
-            t,
-            false,
-        );
     }
     if space != Space::Apps && m.terminals.is_empty() {
         p.centered_text(
@@ -1235,6 +1395,10 @@ pub fn git_rows(height: u16) -> usize {
     usize::from(680.min(height.saturating_sub(24)).saturating_sub(282) / 26)
 }
 fn draw_git(p: &mut Pen, l: Layout, t: &Appearance, m: &Model<'_>) {
+    if l.width < 600 || l.height < 400 {
+        draw_compact_git(p, l, t, m);
+        return;
+    }
     let w = 1000.min(l.width.saturating_sub(24));
     let h = 680.min(l.height.saturating_sub(24));
     let r = R::new((l.width - w) / 2, (l.height - h) / 2, w, h);
@@ -1497,8 +1661,16 @@ fn draw_context_menu(p: &mut Pen, l: Layout, t: &Appearance, m: &ContextMenu) {
         R::new(r.x + 12, r.y + 56, r.width.saturating_sub(24), 1),
         &t.border,
     );
-    for (i, item) in m.items.iter().enumerate() {
-        let y = r.y + 63 + i as u16 * 34;
+    let capacity = usize::from(r.height.saturating_sub(63) / 34);
+    for (row_index, (i, item)) in m
+        .items
+        .iter()
+        .enumerate()
+        .skip(m.offset(capacity))
+        .take(capacity)
+        .enumerate()
+    {
+        let y = r.y + 63 + row_index as u16 * 34;
         if y + 32 > r.y + r.height {
             break;
         }
@@ -1507,8 +1679,16 @@ fn draw_context_menu(p: &mut Pen, l: Layout, t: &Appearance, m: &ContextMenu) {
             p.fill(row, &t.selection);
             p.fill(R::new(row.x, row.y + 6, 2, 20), &t.accent);
         }
+        let hint_width = (item.hint.chars().count() as u16 * 7 + 12)
+            .max(44)
+            .min(row.width / 2);
         p.text(
-            R::new(row.x + 12, y + 7, row.width.saturating_sub(70), 22),
+            R::new(
+                row.x + 12,
+                y + 7,
+                row.width.saturating_sub(hint_width + 26),
+                22,
+            ),
             &item.label,
             if m.selected == Some(i) {
                 &t.accent
@@ -1519,7 +1699,12 @@ fn draw_context_menu(p: &mut Pen, l: Layout, t: &Appearance, m: &ContextMenu) {
             false,
         );
         p.text(
-            R::new(row.x + row.width.saturating_sub(54), y + 8, 44, 20),
+            R::new(
+                row.x + row.width.saturating_sub(hint_width + 10),
+                y + 8,
+                hint_width,
+                20,
+            ),
             &item.hint,
             &t.muted,
             10,
@@ -1643,11 +1828,12 @@ fn draw_application_picker(
     if split {
         let x = r.x + left + 42;
         let width = w.saturating_sub(left + 62);
-        for (i, f) in m.fields.iter().enumerate() {
-            let y = r.y + 62 + i as u16 * 84;
-            if y + 60 > r.y + h.saturating_sub(70) {
-                break;
-            }
+        let capacity = usize::from(h.saturating_sub(162) / 84).max(1);
+        for (row, i) in
+            crate::responsive::field_range(m.fields.len(), m.selected, capacity).enumerate()
+        {
+            let f = &m.fields[i];
+            let y = r.y + 62 + row as u16 * 84;
             p.text(
                 R::new(x, y, width, 21),
                 if i == 0 && apps.selection_name.is_some() {
@@ -1672,7 +1858,11 @@ fn draw_application_picker(
             let text = if let Some(name) = apps.selection_name.filter(|_| i == 0) {
                 name.into()
             } else if !apps.focused && i == m.selected {
-                format!("{}|{}", &f.text[..f.cursor], &f.text[f.cursor..])
+                crate::responsive::edit_window(
+                    f.text,
+                    f.cursor,
+                    usize::from(width.saturating_sub(18) / 8).max(1),
+                )
             } else {
                 f.text.into()
             };
@@ -1769,11 +1959,20 @@ fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
         t,
         false,
     );
-    for (i, f) in m.fields.iter().enumerate() {
-        let y = r.y + 57 + i as u16 * 68;
-        if y + 58 > r.y + h - 42 {
-            break;
-        }
+    let capacity = usize::from(h.saturating_sub(133) / 68).max(1);
+    let range = crate::responsive::field_range(m.fields.len(), m.selected, capacity);
+    if range.len() < m.fields.len() {
+        p.text(
+            R::new(r.x + w.saturating_sub(112), r.y + 15, 66, 23),
+            format!("{}/{}", m.selected + 1, m.fields.len()),
+            &t.accent,
+            12,
+            true,
+        );
+    }
+    for (row, i) in range.enumerate() {
+        let f = &m.fields[i];
+        let y = r.y + 57 + row as u16 * 68;
         p.text(
             R::new(r.x + 20, y, w.saturating_sub(40), 20),
             f.label,
@@ -1792,7 +1991,11 @@ fn draw_modal(p: &mut Pen, l: Layout, t: &Appearance, m: &Modal<'_>) {
             },
         );
         let text = if i == m.selected {
-            format!("{}|{}", &f.text[..f.cursor], &f.text[f.cursor..])
+            crate::responsive::edit_window(
+                f.text,
+                f.cursor,
+                usize::from(field.width.saturating_sub(18) / 8).max(1),
+            )
         } else {
             f.text.into()
         };
@@ -1845,20 +2048,7 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
     p.fill(r, &t.bg);
     p.border(r, &t.accent);
     if w < 500 || h < 300 {
-        p.text(
-            R::new(r.x + 16, r.y + 16, w.saturating_sub(32), 40),
-            "Resize the window to browse sessions",
-            &t.fg,
-            13,
-            true,
-        );
-        p.button(
-            R::new(r.x + 16, r.y + h.saturating_sub(48), 90, 28),
-            "Close",
-            "modal:cancel",
-            t,
-            false,
-        );
+        draw_compact_sessions(p, l, t, m);
         return;
     }
     p.text(
@@ -1898,7 +2088,14 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
     );
     p.text(
         R::new(r.x + 30, r.y + 64, w.saturating_sub(60), 24),
-        format!("Search: {}│", m.query),
+        format!(
+            "Search: {}",
+            crate::responsive::edit_window(
+                &m.query,
+                m.cursor,
+                usize::from(w.saturating_sub(100) / 7)
+            )
+        ),
         &t.fg,
         12,
         false,
@@ -1991,9 +2188,370 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
         false,
     );
 }
+fn compact_surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) {
+    let mut p = Pen::new(l.width, l.height, &t.bg);
+    let mut fg = Pen::new(l.width, l.height, "transparent");
+    p.fill(R::new(0, 0, l.width, 38), &t.panel);
+    p.button(R::new(4, 5, 56, 27), "Menu", "workspace:menu", t, false);
+    p.button(
+        R::new(64, 5, 80, 27),
+        "Projects",
+        "workspace:projects",
+        t,
+        false,
+    );
+    p.text(
+        R::new(152, 8, l.width.saturating_sub(160), 23),
+        m.project_label,
+        &t.fg,
+        12,
+        true,
+    );
+    if m.space != Space::Apps {
+        p.button(
+            R::new(3, l.tabs.y, 28, 27),
+            "‹",
+            "terminal:previous",
+            t,
+            false,
+        );
+        let label = m
+            .terminals
+            .iter()
+            .find(|(id, _)| *id == m.terminal)
+            .map(|(_, name)| name.as_str())
+            .unwrap_or("Terminal tabs");
+        p.button(
+            R::new(35, l.tabs.y, l.width.saturating_sub(111), 27),
+            label,
+            "workspace:tabs",
+            t,
+            true,
+        );
+        p.button(
+            R::new(l.width.saturating_sub(72), l.tabs.y, 30, 27),
+            "›",
+            "terminal:next",
+            t,
+            false,
+        );
+        p.button(
+            R::new(l.width.saturating_sub(38), l.tabs.y, 34, 27),
+            "+",
+            "terminal:new",
+            t,
+            false,
+        );
+    }
+    p.fill(l.canvas, &t.bg);
+    p.fill(l.footer, &t.panel);
+    p.text(
+        R::new(
+            6,
+            l.footer.y + 2,
+            l.footer
+                .width
+                .saturating_sub(if m.transferring { 90 } else { 12 }),
+            20,
+        ),
+        m.status,
+        &t.muted,
+        10,
+        false,
+    );
+    if m.transferring {
+        p.button(
+            R::new(l.width.saturating_sub(84), l.footer.y, 80, 24),
+            "Cancel",
+            "cancel-transfer",
+            t,
+            false,
+        );
+    }
+    if let Some(modal) = &m.modal {
+        draw_modal(&mut fg, l, t, modal);
+    }
+    if m.git_open {
+        draw_git(&mut fg, l, t, m);
+    }
+    if let Some(menu) = m.context_menu {
+        draw_context_menu(&mut fg, l, t, menu);
+    }
+    (p.surface, fg.surface)
+}
+fn draw_compact_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
+    let w = 760.min(l.width.saturating_sub(16));
+    let h = 650.min(l.height.saturating_sub(16));
+    let r = R::new((l.width - w) / 2, (l.height - h) / 2, w, h);
+    p.fill(r, &t.bg);
+    p.border(r, &t.accent);
+    p.text(
+        R::new(r.x + 10, r.y + 6, w.saturating_sub(50), 25),
+        if m.external {
+            "Import session"
+        } else {
+            "Sessions"
+        },
+        &t.fg,
+        15,
+        true,
+    );
+    p.button(
+        R::new(r.x + w.saturating_sub(36), r.y + 5, 26, 26),
+        "x",
+        "modal:cancel",
+        t,
+        false,
+    );
+    let search = R::new(r.x + 10, r.y + 38, w.saturating_sub(20), 26);
+    p.fill(search, &t.panel);
+    p.text(
+        R::new(
+            search.x + 6,
+            search.y + 3,
+            search.width.saturating_sub(12),
+            21,
+        ),
+        format!(
+            "Search: {}",
+            crate::responsive::edit_window(
+                &m.query,
+                m.cursor,
+                usize::from(search.width.saturating_sub(64) / 7)
+            )
+        ),
+        &t.fg,
+        11,
+        false,
+    );
+    for (position, (index, name, _)) in m
+        .rows
+        .iter()
+        .enumerate()
+        .skip(m.offset)
+        .take(crate::responsive::session_rows(l.width, l.height, false))
+    {
+        let row = R::new(
+            r.x + 10,
+            r.y + 70 + (position - m.offset) as u16 * 28,
+            w.saturating_sub(20),
+            26,
+        );
+        p.button(
+            row,
+            name,
+            format!("sessions:row:{index}"),
+            t,
+            position == m.selected,
+        );
+    }
+    p.text(
+        R::new(
+            r.x + 10,
+            r.y + h.saturating_sub(64),
+            w.saturating_sub(20),
+            20,
+        ),
+        &m.status,
+        &t.muted,
+        10,
+        false,
+    );
+    let labels = if m.external {
+        [
+            ("New", "sessions:new"),
+            ("Saved", "sessions:open"),
+            ("Import", "sessions:choose"),
+            ("Close", "modal:cancel"),
+            ("", "menu:panel"),
+        ]
+    } else {
+        [
+            ("New", "sessions:new"),
+            ("Import", "sessions:import"),
+            ("Delete", "sessions:delete"),
+            ("Default", "sessions:default"),
+            ("Open", "sessions:choose"),
+        ]
+    };
+    let count = if m.external { 4 } else { 5 };
+    let button_w = w.saturating_sub(20 + (count - 1) * 4) / count;
+    for (i, (label, action)) in labels.into_iter().take(count as usize).enumerate() {
+        p.button(
+            R::new(
+                r.x + 10 + i as u16 * (button_w + 4),
+                r.y + h.saturating_sub(36),
+                button_w,
+                27,
+            ),
+            label,
+            action,
+            t,
+            action == "sessions:choose" || (action == "sessions:default" && m.selected_default),
+        );
+    }
+}
+
+fn draw_compact_git(p: &mut Pen, l: Layout, t: &Appearance, m: &Model<'_>) {
+    let w = l.width.saturating_sub(16);
+    let h = l.height.saturating_sub(16);
+    let r = R::new(8, 8, w, h);
+    p.hit(R::new(0, 0, l.width, l.height), "git:close");
+    p.fill(r, &t.panel);
+    p.border(r, &t.accent);
+    p.hit(r, "git:panel");
+    p.text(
+        R::new(18, 14, w.saturating_sub(120), 26),
+        "Working tree",
+        &t.fg,
+        14,
+        true,
+    );
+    p.button(
+        R::new(r.x + w.saturating_sub(110), r.y + 5, 68, 26),
+        "Refresh",
+        "git:refresh",
+        t,
+        false,
+    );
+    p.button(
+        R::new(r.x + w.saturating_sub(36), r.y + 5, 26, 26),
+        "x",
+        "git:close",
+        t,
+        false,
+    );
+    let lines = crate::responsive::git_lines(m.git, usize::from(w.saturating_sub(20) / 7));
+    let rows = usize::from(h.saturating_sub(72) / 22).max(1);
+    let offset = m.git_scroll.min(lines.len().saturating_sub(rows));
+    for (i, line) in lines.iter().skip(offset).take(rows).enumerate() {
+        p.text(
+            R::new(r.x + 10, r.y + 42 + i as u16 * 22, w.saturating_sub(20), 21),
+            line,
+            &t.fg,
+            11,
+            false,
+        );
+    }
+    p.text(
+        R::new(
+            r.x + 10,
+            r.y + h.saturating_sub(25),
+            w.saturating_sub(20),
+            20,
+        ),
+        format!(
+            "{}–{} / {} · ↑↓ / PgUp PgDn · Esc",
+            offset + 1,
+            (offset + rows).min(lines.len()),
+            lines.len()
+        ),
+        &t.muted,
+        10,
+        false,
+    );
+}
+pub fn minimum_surface(width: u16, height: u16, t: &Appearance) -> Surface {
+    let mut p = Pen::new(width, height, &t.bg);
+    p.text(
+        R::new(
+            4,
+            4,
+            width.saturating_sub(8),
+            height.saturating_sub(8).min(80),
+        ),
+        "Resize to at least 320 × 240. Sessions remain running.",
+        &t.fg,
+        12,
+        true,
+    );
+    if width >= 120 && height >= 100 {
+        p.button(
+            R::new(8, height.saturating_sub(36), 104, 28),
+            "Detach",
+            "keyboard:detach",
+            t,
+            false,
+        );
+    }
+    p.surface
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn short_forms_keep_each_selected_field_and_accept_button_visible() {
+        let theme = Appearance::load("kanagawa").unwrap();
+        let text = "/very/long/café/世界/directory/name";
+        for (width, height) in [(320, 240), (480, 320), (800, 300), (1200, 700)] {
+            for selected in 0..5 {
+                let modal = Modal {
+                    sessions: None,
+                    applications: None,
+                    catalog_available: false,
+                    title: "Saved SSH machine",
+                    fields: (0..5)
+                        .map(|_| ModalField {
+                            label: "Field",
+                            text,
+                            cursor: text.len(),
+                        })
+                        .collect(),
+                    selected,
+                    error: "",
+                };
+                let mut p = Pen::new(width, height, "transparent");
+                draw_modal(
+                    &mut p,
+                    Layout::new(width, height, Space::Terminals),
+                    &theme,
+                    &modal,
+                );
+                p.surface.validate().unwrap();
+                let field = p
+                    .surface
+                    .hits
+                    .iter()
+                    .find(|h| h.action == format!("modal:field:{selected}"))
+                    .expect("focused field must be visible");
+                let accept = p
+                    .surface
+                    .hits
+                    .iter()
+                    .find(|h| h.action == "modal:accept")
+                    .unwrap();
+                assert!(field.rect.y + field.rect.height < accept.rect.y);
+            }
+        }
+    }
+    #[test]
+    fn emergency_views_fit_tiny_viewports() {
+        let theme = Appearance::load("kanagawa").unwrap();
+        for (w, h) in [(1, 1), (80, 40), (160, 120), (319, 239)] {
+            minimum_surface(w, h, &theme).validate().unwrap();
+        }
+    }
+    #[test]
+    fn large_context_menu_bounds_do_not_overflow() {
+        let menu = ContextMenu {
+            position: [16, 16],
+            title: "Attention inbox".into(),
+            subtitle: String::new(),
+            items: vec![
+                MenuItem {
+                    label: "Retained item".into(),
+                    hint: String::new(),
+                    action: "menu:panel".into()
+                };
+                3000
+            ],
+            selected: Some(2999),
+        };
+        let bounds = menu.bounds(800, 600);
+        assert!(bounds.width <= 788 && bounds.height <= 588);
+        assert!(bounds.x + bounds.width <= 800 && bounds.y + bounds.height <= 600);
+    }
+
     #[test]
     fn session_manager_controls_fit_and_keep_delete_separate_from_open() {
         let theme = Appearance::load("kanagawa").unwrap();
@@ -2005,6 +2563,7 @@ mod tests {
                 &theme,
                 &SessionPicker {
                     query: String::new(),
+                    cursor: 0,
                     external: false,
                     selected: 0,
                     selected_default: false,
@@ -2109,6 +2668,7 @@ mod tests {
                     terminal: 0,
                     terminal_font_size: "16px".into(),
                     split: false,
+                    plugin_overlay: false,
                     agent_name: "Codex",
                     agent_state: "running",
                     status: "Ready",
@@ -2152,11 +2712,54 @@ mod tests {
                 model.app_view = true;
                 let layout = Layout::new(width, height, space);
                 let (enabled, _) = surfaces(layout, &theme, &model);
-                if space == Space::Apps {
+                if width < 600 {
+                    assert_eq!(layout.sidebar.width, 0);
+                    assert_eq!(
+                        layout.canvas.width,
+                        if space == Space::Apps {
+                            width / 2 * 2
+                        } else {
+                            width.saturating_sub(TERMINAL_PADDING * 2)
+                        }
+                    );
+                    assert!(enabled.hits.iter().any(|h| h.action == "workspace:menu"));
+                    assert!(
+                        enabled
+                            .hits
+                            .iter()
+                            .any(|h| h.action == "workspace:projects")
+                    );
+                } else if space == Space::Apps {
                     assert!(enabled.hits.iter().any(|h| h.action == "launch-app"));
                     assert!(enabled.hits.iter().any(|h| h.action == "view:terminals"));
-                } else if layout.frame.width >= 420 {
+                } else if layout.frame.width >= 554 {
                     assert!(enabled.hits.iter().any(|h| h.action == "view:apps"));
+                }
+                if width >= 600 && space != Space::Apps {
+                    let controls = enabled
+                        .hits
+                        .iter()
+                        .filter(|h| {
+                            h.action.starts_with("terminal:font:")
+                                || matches!(
+                                    h.action.as_str(),
+                                    "view:apps" | "terminal:new" | "terminal:split"
+                                )
+                        })
+                        .collect::<Vec<_>>();
+                    for (index, a) in controls.iter().enumerate() {
+                        for b in controls.iter().skip(index + 1) {
+                            let overlap = a.rect.x < b.rect.x + b.rect.width
+                                && b.rect.x < a.rect.x + a.rect.width
+                                && a.rect.y < b.rect.y + b.rect.height
+                                && b.rect.y < a.rect.y + a.rect.height;
+                            assert!(
+                                !overlap,
+                                "Toolbar controls overlap: {} and {} at {width}px",
+                                a.action, b.action
+                            );
+                        }
+                    }
                 }
                 enabled.validate().unwrap();
                 model.app_view = false;
@@ -2178,6 +2781,23 @@ mod tests {
                 assert!(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height);
                 assert_eq!(overlay.hits.first().unwrap().action, "menu:dismiss");
                 assert_eq!(overlay.hits.last().unwrap().action, "menu:item:0");
+                let long_menu = ContextMenu {
+                    position: [width - 2, height - 2],
+                    title: "Keyboard shortcuts".into(),
+                    subtitle: "Navigation".into(),
+                    selected: Some(99),
+                    items: (0..100)
+                        .map(|i| MenuItem {
+                            label: format!("Command {i}"),
+                            hint: "Ctrl+b Shift+r".into(),
+                            action: format!("command:{i}"),
+                        })
+                        .collect(),
+                };
+                model.context_menu = Some(&long_menu);
+                let (_, overlay) = surfaces(Layout::new(width, height, space), &theme, &model);
+                overlay.validate().unwrap();
+                assert!(overlay.hits.iter().any(|h| h.action == "menu:item:99"));
                 model.context_menu = None;
                 model.git_open = true;
                 let git = crate::git::Status {
@@ -2221,6 +2841,7 @@ mod tests {
                 projects: ids
                     .iter()
                     .map(|id| ProjectTab {
+                        failed: 0,
                         id,
                         name: id,
                         host: "local",
@@ -2235,6 +2856,7 @@ mod tests {
                 terminal: 0,
                 terminal_font_size: "14.7px".into(),
                 split: false,
+                plugin_overlay: false,
                 agent_name: "Codex",
                 agent_state: "working",
                 status: "Ready",
@@ -2275,15 +2897,31 @@ mod tests {
         }
     }
     #[test]
-    fn hidden_app_shelf_returns_space_to_terminal() {
+    fn borderless_workspace_keeps_only_a_small_terminal_content_inset() {
+        for (width, height) in [(460, 420), (800, 600), (1400, 900), (1920, 1080)] {
+            let layout = Layout::new(width, height, Space::Terminals);
+            assert_eq!(layout.canvas.x, layout.sidebar.width + TERMINAL_PADDING);
+            assert_eq!(
+                layout.canvas.x + layout.canvas.width + TERMINAL_PADDING,
+                width
+            );
+            assert_eq!(
+                layout.canvas.y,
+                layout.tabs.y + layout.tabs.height + TERMINAL_PADDING
+            );
+            assert_eq!(
+                layout.canvas.y + layout.canvas.height + TERMINAL_PADDING,
+                layout.footer.y
+            );
+        }
         let l = Layout::new(1400, 900, Space::Agent);
         assert_eq!(l.sidebar.width, 252);
-        assert_eq!(l.canvas.width, 1118);
-        assert!(l.canvas.x > l.sidebar.width);
+        assert_eq!(l.canvas.width, 1136);
+        assert_eq!(l.canvas.x, l.sidebar.width + TERMINAL_PADDING);
         assert_eq!(l.shelf.height, 0);
-        assert_eq!(l.canvas.x, l.sidebar.width + 15);
-        assert_eq!(l.canvas.x + l.canvas.width + 15, l.width);
-        assert_eq!(l.canvas.y + l.canvas.height + 13, l.footer.y);
+        assert_eq!(l.canvas.x, l.sidebar.width + TERMINAL_PADDING);
+        assert_eq!(l.canvas.x + l.canvas.width + TERMINAL_PADDING, l.width);
+        assert_eq!(l.canvas.y + l.canvas.height + TERMINAL_PADDING, l.footer.y);
         let apps = Layout::new(1400, 900, Space::Apps);
         assert!(apps.canvas.height >= l.canvas.height);
         assert!(apps.canvas.y < l.canvas.y);

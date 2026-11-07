@@ -137,7 +137,7 @@ def prepare(executable,proxy):
             state['terminal_labels'].setdefault(str(slot),tab.get('label') or 'Terminal '+str(slot+1))
             entry=dict(key=key,pid=pid,epoch=epoch,workspace=name,source_pane=pane_id,terminal_id=pane['terminal_id'],slot=slot,server=server,session='p'+str(slot),target='p'+str(slot)+':0.0',cwd=cwd,screen=base64.b64encode(screen).decode())
             entries.append(entry)
-            adopted[str(slot)]=dict(broker=str(root/('adopted-'+stamp.rsplit('-',1)[-1]+'.sock')),key=key,server=server,pid=pid,epoch=epoch,proxy=str(Path(proxy).resolve()))
+            adopted[str(slot)]=dict(broker=str(root/('adopted-'+stamp.rsplit('-',1)[-1]+'.sock')),key=key,server=server,pid=pid,epoch=epoch,proxy=str(Path(proxy).resolve()),owner_boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip())
         state['terminals']=ids
         state['terminal']=aliases.get(int(state.get('terminal',0)),int(state.get('terminal',0)))
         if state['terminal'] not in ids:state['terminal']=ids[0]

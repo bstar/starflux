@@ -5,22 +5,120 @@ cd "$(dirname "$0")/.."
 python3 scripts/check-version.py
 python3 scripts/dist/test-apprun.py
 cargo fmt --all --check
+cargo fmt --manifest-path vendor/vt100/Cargo.toml --check
 cargo clippy --release --locked --workspace --all-targets --all-features -- -D warnings -A dead_code
 cargo test --release --locked --workspace --all-features
 cargo test --release --locked --workspace --no-default-features
 cargo deny --all-features check advisories bans licenses sources
 cargo build --locked --workspace --release
+cargo build --locked --workspace --release --examples
 cc -std=c11 -O2 -Wall -Wextra -Werror native/pty-proxy.c -o target/release/starflux-pty-proxy.new
 mv -f target/release/starflux-pty-proxy.new target/release/starflux-pty-proxy
 python3 scripts/write-runtime.py
 python3 scripts/test-adopted-bridge.py
 python3 scripts/test-adopted-bridge.py --legacy-owner
 python3 scripts/test-host.py
+python3 scripts/test-plugins.py
+python3 scripts/test-plugins.py --ssh
+python3 scripts/test-plugins.py --panes
+python3 scripts/test-plugins.py --ssh --panes
+python3 scripts/test-session-manager.py --plugin-panes-ui
+python3 scripts/test-session-manager.py --cells --plugin-panes-ui
+python3 scripts/test-session-manager.py --ssh --plugin-panes-ui
+python3 scripts/test-session-manager.py --ssh --cells --plugin-panes-ui
+python3 scripts/test-session-manager.py --plugin-pane-upgrade
+python3 scripts/test-session-manager.py --ssh --plugin-pane-upgrade
+python3 scripts/test-session-manager.py --plugin-popups-ui
+python3 scripts/test-session-manager.py --cells --plugin-popups-ui
+python3 scripts/test-session-manager.py --ssh --plugin-popups-ui
+python3 scripts/test-session-manager.py --ssh --cells --plugin-popups-ui
+python3 scripts/test-session-manager.py --plugin-popups-managed
+python3 scripts/test-session-manager.py --ssh --plugin-popups-managed
+python3 scripts/test-cells.py --plugin-popup
+python3 scripts/test-cells.py --ssh --plugin-popup
+python3 scripts/test-session-manager.py --plugin-popup-keyboard
+python3 scripts/test-session-manager.py --cells --plugin-popup-keyboard
+python3 scripts/test-session-manager.py --ssh --plugin-popup-keyboard
+python3 scripts/test-session-manager.py --ssh --cells --plugin-popup-keyboard
+python3 scripts/test-cells.py --plugin-popup-keyboard
+python3 scripts/test-cells.py --ssh --plugin-popup-keyboard
+python3 scripts/test-plugins.py --links
+python3 scripts/test-plugins.py --links --ssh
+python3 scripts/test-plugins.py --packages
+python3 scripts/test-plugins.py --packages --ssh
+python3 scripts/test-plugins.py --capacity
+python3 scripts/test-plugins.py --ssh --capacity
+python3 scripts/test-session-manager.py --plugin-ui
+python3 scripts/test-session-manager.py --cells --plugin-ui
+python3 scripts/test-session-manager.py --ssh --plugin-ui
+python3 scripts/test-session-manager.py --ssh --cells --plugin-ui
+python3 scripts/test-transferred-termination.py
 python3 scripts/test-bridge-history.py
 python3 scripts/test-bridge-history.py --startup-error
 python3 scripts/test-agent-activity.py
+python3 scripts/test-session-manager.py --frontend-commands
+python3 scripts/test-session-manager.py --ssh --frontend-commands
+python3 scripts/test-session-manager.py --ssh --cells --frontend-commands
+python3 scripts/test-session-manager.py --query-upgrade
+python3 scripts/test-session-manager.py --ssh --query-upgrade
+python3 scripts/test-snapshot-service.py
+python3 scripts/test-snapshot-service.py --ssh
+python3 scripts/test-snapshot-service.py --upgrade
+python3 scripts/test-snapshot-service.py --ssh --upgrade
+python3 scripts/test-graphics-observer.py
+python3 scripts/test-graphics-observer.py --ssh
+python3 scripts/test-graphics-observer.py --owner-executable target/release/examples/graphics-owner-proof --decoder-executable target/release/examples/graphics-stream-proof --authority-executable target/release/examples/graphics-authority-proof --flow-control --composition --mutations
+python3 scripts/test-graphics-observer.py --ssh --owner-executable target/release/examples/graphics-owner-proof --decoder-executable target/release/examples/graphics-stream-proof --authority-executable target/release/examples/graphics-authority-proof --flow-control --composition --mutations
+python3 scripts/test-source-broker.py --streams --executable target/release/examples/native-source-broker
+python3 scripts/test-source-broker.py --ssh --streams --executable target/release/examples/native-source-broker
+python3 scripts/test-source-broker.py --service --streams --executable target/release/examples/native-source-broker --worker-executable target/release/starflux
+python3 scripts/test-source-broker.py --ssh --service --streams --executable target/release/examples/native-source-broker --worker-executable target/release/starflux
+python3 scripts/test-session-manager.py --snapshot-service
+python3 scripts/test-session-manager.py --ssh --snapshot-service
+python3 scripts/test-session-manager.py --ssh --cells --snapshot-service
+python3 scripts/test-session-manager.py --panel-focus
+python3 scripts/test-session-manager.py --categories
+python3 scripts/test-session-manager.py --ssh --categories
+python3 scripts/test-session-manager.py --ssh --cells --categories
+python3 scripts/test-session-manager.py --ssh --panel-focus
+python3 scripts/test-session-manager.py --ssh --cells --panel-focus
+python3 scripts/test-session-manager.py --background-screens
+python3 scripts/test-session-manager.py --ssh --background-screens
+python3 scripts/test-session-manager.py --ssh --cells --background-screens
+python3 scripts/test-session-manager.py --cold-start
+python3 scripts/test-session-manager.py --ssh --cold-start
+python3 scripts/test-session-manager.py --ssh --cells --cold-start
+python3 scripts/test-session-manager.py --narrow
+python3 scripts/test-session-manager.py --ssh --narrow
+python3 scripts/test-session-manager.py --ssh --cells --narrow
+python3 scripts/test-session-manager.py --notifications
+python3 scripts/test-session-manager.py --ssh --notifications
+python3 scripts/test-session-manager.py --ssh --cells --notifications
+python3 scripts/test-session-manager.py --machines
+python3 scripts/test-session-manager.py --ssh --machines
+python3 scripts/test-session-manager.py --ssh --cells --machines
+python3 scripts/test-worktree-host.py
+python3 scripts/test-session-manager.py --worktrees
+python3 scripts/test-session-manager.py --ssh --worktrees
+python3 scripts/test-session-manager.py --ssh --cells --worktrees
+python3 scripts/test-automation.py
+python3 scripts/test-automation.py --ssh
+python3 scripts/test-automation.py --session-imports
+python3 scripts/test-automation.py --ssh --session-imports
+python3 scripts/test-session-manager.py --automation
+python3 scripts/test-session-manager.py --ssh --automation
+python3 scripts/test-session-manager.py --ssh --cells --automation
+python3 scripts/test-session-manager.py --agent-lifecycle
+python3 scripts/test-session-manager.py --ssh --agent-lifecycle
+python3 scripts/test-session-manager.py --ssh --cells --agent-lifecycle
 python3 scripts/test-native-terminal.py --context-menu
 python3 scripts/test-native-terminal.py --pane-recovery
+python3 scripts/test-session-manager.py --pane-layouts
+python3 scripts/test-session-manager.py --ssh --pane-layouts
+python3 scripts/test-session-manager.py --ssh --cells --pane-layouts
+python3 scripts/test-session-manager.py --terminal-history
+python3 scripts/test-session-manager.py --ssh --terminal-history
+python3 scripts/test-session-manager.py --ssh --cells --terminal-history
 python3 scripts/test-session-manager.py
 python3 scripts/test-session-manager.py --ssh --cells
 python3 scripts/test-native-terminal.py --app-capabilities

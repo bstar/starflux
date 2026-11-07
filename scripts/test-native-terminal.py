@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
     config = dict(workspace=name, host=None, directory=str(temp), agent=None,
                   executable=str(root / 'scripts/run-local.sh'), project_host=True)
     (state / (name + '.json')).write_text(json.dumps(config))
-    env = {**os.environ, 'XDG_RUNTIME_DIR': str(runtime), 'XDG_DATA_HOME': str(temp / 'data'),
+    env = {**os.environ, 'XDG_RUNTIME_DIR': str(runtime), 'XDG_DATA_HOME': str(temp / 'data'), 'XDG_CONFIG_HOME': str(temp / 'config'),
            'STAR_TERMINAL_RENDERER': 'native', 'SHELL': str(shell), 'NATIVE_PROOF_MARKER': str(temp/'shell-started')}
     log = (temp / 'controller.log').open('w+')
     process = subprocess.Popen([str(root / 'scripts/run-local.sh'), '--serve', name],

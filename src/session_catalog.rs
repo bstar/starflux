@@ -43,7 +43,7 @@ fn root() -> Result<PathBuf> {
     starkit::terminal_graphics::session::private_root(&path)?;
     Ok(path)
 }
-fn valid(id: &str) -> Result<()> {
+pub(crate) fn valid(id: &str) -> Result<()> {
     ensure!(
         !id.is_empty()
             && id.len() <= 64
@@ -81,7 +81,7 @@ pub fn set_default(id: Option<&str>) -> Result<()> {
             "Session no longer exists"
         );
     }
-    starkit::fs::write_private(&root()?.join("default-session"), &serde_json::to_vec(&id)?)?;
+    crate::automation::persist(&root()?.join("default-session"), &serde_json::to_vec(&id)?)?;
     project_state::catalog_changed()
 }
 pub fn default_project() -> Result<Option<String>> {
@@ -102,12 +102,13 @@ pub fn projects() -> Vec<Config> {
     {
         if let Ok(entries) = fs::read_dir(root) {
             for entry in entries.flatten() {
-                if entry.path().extension().is_none_or(|s| s != "json") {
+                if !runtime::config_file(&entry.path()) {
                     continue;
                 }
                 if let Ok(bytes) = fs::read(entry.path())
                     && let Ok(config) = serde_json::from_slice::<Config>(&bytes)
                     && config.validate().is_ok()
+                    && !crate::worktrees::removed(&config)
                 {
                     projects.insert(config.workspace.clone(), config);
                 }
@@ -119,7 +120,7 @@ pub fn projects() -> Vec<Config> {
 pub fn save(session: &Session) -> Result<()> {
     valid(&session.id)?;
     project_state::validate_label(&session.name)?;
-    starkit::fs::write_private(
+    crate::automation::persist(
         &root()?.join(format!("{}.json", session.id)),
         &serde_json::to_vec_pretty(session)?,
     )?;
@@ -145,7 +146,7 @@ pub fn remember(config: &Config) -> Result<()> {
             id.clone()
         }
     });
-    starkit::fs::write_private(
+    crate::automation::persist(
         &path,
         &serde_json::to_vec_pretty(&Session {
             id,
@@ -200,6 +201,14 @@ pub fn list() -> Result<Vec<Entry>> {
     Ok(entries)
 }
 pub fn create(name: &str, directory: &str, theme: &str) -> Result<Config> {
+    create_with_source(name, directory, theme, None)
+}
+fn create_with_source(
+    name: &str,
+    directory: &str,
+    theme: &str,
+    tmux: Option<crate::tmux_source::Source>,
+) -> Result<Config> {
     project_state::validate_label(name)?;
     let directory = fs::canonicalize(directory).context("Choose an existing project directory")?;
     ensure!(directory.is_dir(), "Choose a directory");
@@ -212,7 +221,7 @@ pub fn create(name: &str, directory: &str, theme: &str) -> Result<Config> {
         label: Some(name.into()),
         collection: Some(id.clone()),
         herdr: None,
-        tmux: None,
+        tmux,
         adopted: Default::default(),
         theme: theme.into(),
         host: None,
@@ -258,23 +267,19 @@ pub fn external() -> Vec<Entry> {
         sockets.insert(socket);
     }
     for socket in sockets {
-        let Ok(out) = Command::new("tmux")
-            .args([
-                "-u",
-                "-S",
-                &socket.to_string_lossy(),
-                "list-sessions",
-                "-F",
-                "#{session_id}\t#{session_name}\t#{session_windows}",
-            ])
-            .output()
-        else {
+        let mut command = Command::new("tmux");
+        command.args([
+            "-u",
+            "-S",
+            &socket.to_string_lossy(),
+            "list-sessions",
+            "-F",
+            "#{session_id}\t#{session_name}\t#{session_windows}",
+        ]);
+        let Ok(out) = crate::read_query::output(command) else {
             continue;
         };
-        if !out.status.success() {
-            continue;
-        }
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
+        for line in String::from_utf8_lossy(&out).lines() {
             let fields = line.split('\t').collect::<Vec<_>>();
             if fields.len() != 3 {
                 continue;
@@ -298,11 +303,10 @@ pub fn external() -> Vec<Entry> {
         }
     }
     let herdr = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
-    if let Ok(out) = Command::new(herdr)
-        .args(["session", "list", "--json"])
-        .output()
-        && out.status.success()
-        && let Ok(data) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+    let mut command = Command::new(herdr);
+    command.args(["session", "list", "--json"]);
+    if let Ok(out) = crate::read_query::output(command)
+        && let Ok(data) = serde_json::from_slice::<serde_json::Value>(&out)
         && let Some(sessions) = data["sessions"].as_array()
     {
         for session in sessions.iter().filter(|s| s["running"] == true) {
@@ -322,8 +326,17 @@ pub fn external() -> Vec<Entry> {
     entries
 }
 pub fn import(entry: &Entry) -> Result<Config> {
+    import_prepared(entry, None)
+}
+pub(crate) fn import_prepared(
+    entry: &Entry,
+    snapshot: Option<serde_json::Value>,
+) -> Result<Config> {
     if entry.source == "herdr" {
-        let config = crate::herdr::import(&entry.name)?;
+        let config = match snapshot {
+            Some(snapshot) => crate::herdr::import_snapshot(&entry.name, snapshot)?,
+            None => crate::herdr::import(&entry.name)?,
+        };
         save(&Session {
             id: group(&config),
             name: format!("Herdr / {}", entry.name),
@@ -343,28 +356,20 @@ pub fn import(entry: &Entry) -> Result<Config> {
     }) {
         return Ok(config);
     }
-    let output = source
-        .command(&[
-            "display-message",
-            "-p",
-            "-t",
-            &source.session,
-            "#{pane_current_path}",
-        ])
-        .output()?;
-    let directory = String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_owned();
-    let mut config = create(
+    let output = crate::read_query::output(source.command(&[
+        "display-message",
+        "-p",
+        "-t",
+        &source.session,
+        "#{pane_current_path}",
+    ]))?;
+    let output = String::from_utf8(output).context("tmux project directory is not UTF-8")?;
+    let directory = output.strip_suffix('\n').unwrap_or(&output).to_owned();
+    let config = create_with_source(
         &format!("tmux / {}", entry.name),
         &directory,
         &crate::appearance::default_theme(),
-    )?;
-    config.tmux = Some(source);
-    ProjectState::default().save(&config)?;
-    starkit::fs::write_private(
-        &runtime::config_path(&config.workspace)?,
-        &serde_json::to_vec_pretty(&config)?,
+        Some(source),
     )?;
     Ok(config)
 }
@@ -445,6 +450,19 @@ pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
         for pane in state.terminal_ids() {
             config.call(pane, &config.request(pane, "stop"))?;
         }
+        for pane in 0..32 {
+            crate::cold_start::remove(&config.workspace, pane)?;
+        }
+        let recovery = project_state::data_root()?
+            .parent()
+            .context("No recovery directory")?
+            .join("terminal-recovery")
+            .join(&config.workspace);
+        match fs::remove_dir_all(recovery) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
         for target in state.app_targets {
             let mut app = config.clone();
             app.host = target.host;
@@ -452,7 +470,7 @@ pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
             crate::app_desktop::stop(&app)?;
         }
         for root in [runtime::root()?, project_state::data_root()?] {
-            for suffix in [".json", ".layout.json", ".model.json"] {
+            for suffix in [".json", ".layout.json", ".model.json", ".agents.json"] {
                 let path = root.join(format!("{}{suffix}", config.workspace));
                 match fs::remove_file(path) {
                     Ok(()) => {}

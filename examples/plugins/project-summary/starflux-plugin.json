@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "org.starflux.project-summary",
+  "name": "Project summary",
+  "description": "Read the current local project's Git status without changing files.",
+  "actions": [
+    {
+      "id": "summary",
+      "title": "Summarize repository changes",
+      "argv": ["package:summary.py"],
+      "cwd": "project",
+      "timeout_ms": 10000
+    }
+  ]
+}

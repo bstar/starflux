@@ -12,6 +12,9 @@ pub struct Gesture {
     selecting: bool,
 }
 impl Gesture {
+    pub fn active(&self) -> bool {
+        self.origin.is_some()
+    }
     pub fn cancel(&mut self) {
         self.origin = None;
         self.selecting = false;

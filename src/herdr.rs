@@ -67,6 +67,9 @@ impl Source {
         );
         let data: Value = serde_json::from_slice(&out.stdout)?;
         let p = &data["result"]["pane"];
+        Ok(self.health_from_pane(pane, p))
+    }
+    pub(crate) fn health_from_pane(&self, pane: usize, p: &Value) -> Value {
         let observed = self.observed_status(&self.panes[&pane].pane_id, p["agent"].as_str());
         let state = observed.as_ref().map(|v| v.0.as_str()).unwrap_or_else(|| {
             if matches!(p["agent"].as_str(), Some("codex" | "claude")) {
@@ -75,21 +78,17 @@ impl Source {
                 p["agent_status"].as_str().unwrap_or("unknown")
             }
         });
-        Ok(
-            json!({"alive":true,"command":p["agent"].as_str().unwrap_or("Herdr shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":"herdr","read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]}),
-        )
+        let cwd = p["foreground_cwd"]
+            .as_str()
+            .filter(|cwd| !cwd.is_empty())
+            .or_else(|| p["cwd"].as_str());
+        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().unwrap_or("Herdr shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":"herdr","read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
     }
 }
-fn checked(command: &mut Command) -> Result<Value> {
-    let out = command.output()?;
-    ensure!(
-        out.status.success(),
-        "Herdr read failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    Ok(serde_json::from_slice(&out.stdout)?)
-}
 pub fn import(session: &str) -> Result<Config> {
+    import_snapshot(session, live_snapshot(session)?)
+}
+pub(crate) fn socket_path(session: &str) -> Result<PathBuf> {
     ensure!(
         !session.is_empty()
             && session.len() <= 16
@@ -98,27 +97,52 @@ pub fn import(session: &str) -> Result<Config> {
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
         "Invalid Herdr session name"
     );
-    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
-    let snapshot =
-        checked(Command::new(&executable).args(["--session", session, "api", "snapshot"]))?;
     let home = std::env::home_dir().context("No home directory")?;
     let config_path = std::env::var_os("HERDR_CONFIG_PATH")
         .map(PathBuf::from)
         .unwrap_or(home.join(".config/herdr/config.toml"));
-    let saved_path = if session == "default" {
-        config_path.parent().unwrap().join("session.json")
+    Ok(if session == "default" {
+        config_path
+            .parent()
+            .context("No Herdr config directory")?
+            .join("herdr.sock")
     } else {
         config_path
             .parent()
-            .unwrap()
+            .context("No Herdr config directory")?
             .join("sessions")
             .join(session)
-            .join("session.json")
+            .join("herdr.sock")
+    })
+}
+pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
+    use std::os::unix::{
+        fs::{FileTypeExt, MetadataExt},
+        net::UnixStream,
     };
-    let saved: Value = serde_json::from_slice(
-        &fs::read(&saved_path)
-            .with_context(|| format!("Cannot read Herdr layout {}", saved_path.display()))?,
-    )?;
+    let socket = socket_path(session)?;
+    let metadata = fs::symlink_metadata(&socket)?;
+    ensure!(
+        metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() },
+        "Herdr session socket is not owned by this user"
+    );
+    drop(UnixStream::connect(&socket).context("Herdr session is not running")?);
+    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
+    let mut command = Command::new(executable);
+    command.args(["--session", session, "api", "snapshot"]);
+    Ok(serde_json::from_slice(&crate::read_query::output(
+        command,
+    )?)?)
+}
+pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> {
+    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
+    let socket = socket_path(session)?;
+    let saved_path = socket.with_file_name("session.json");
+    let saved: Value = match fs::read(&saved_path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).context("Read saved Herdr layout")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => return Err(error).context("Read saved Herdr layout"),
+    };
     let snap = &snapshot["result"]["snapshot"];
     let workspaces = snap["workspaces"]
         .as_array()
@@ -157,6 +181,7 @@ pub fn import(session: &str) -> Result<Config> {
         let label = w["label"].as_str().unwrap_or(wid).to_owned();
         let directory = saved_workspace
             .and_then(|w| w["identity_cwd"].as_str())
+            .or_else(|| w["identity_cwd"].as_str())
             .or_else(|| ws_panes[0]["cwd"].as_str())
             .unwrap_or("~")
             .to_owned();
@@ -274,7 +299,7 @@ pub fn import(session: &str) -> Result<Config> {
         &root.join(format!("{collection}.snapshot.json")),
         &serde_json::to_vec_pretty(&snapshot)?,
     )?;
-    println!(
+    eprintln!(
         "Imported {count} Herdr workspaces, {} tabs and {pane_count} panes as interactive live terminal references.\nOpen with: starflux --workspace {}",
         tabs.len(),
         config.workspace

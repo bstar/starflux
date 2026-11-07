@@ -1,35 +1,78 @@
 mod activity;
 mod adoption;
+mod agent_state;
 mod app_audio;
 mod app_desktop;
 mod app_view;
 mod appearance;
 mod applications;
+mod automation;
+mod backend_snapshot;
 #[cfg(test)]
 mod blueprint;
 mod bridge_handoff;
+mod categories;
+mod category_agent;
+mod category_agent_files;
+mod category_agent_runtime;
+mod cold_start;
 mod compositor;
 mod features;
 mod fixture;
+mod font_frontend;
 mod frontend;
+mod frontend_commands;
 mod git;
 mod graphical;
+mod graphics_decode;
+mod graphics_owner;
+mod graphics_paint;
+mod graphics_reply;
+mod graphics_requests;
+mod graphics_resources;
+mod graphics_store;
+mod graphics_stream;
+mod graphics_transfer;
 mod herdr;
+#[cfg(test)]
+mod inline_graphics_tests;
+mod keyboard;
 mod kitty_selection;
+mod machines;
 mod navigation;
+mod notifications;
+#[cfg(test)]
+mod osc8_tests;
+mod panes;
+mod plugin_links;
+mod plugin_packages;
+mod plugin_panes;
+mod plugin_popup;
+mod plugin_runner;
+mod plugin_store;
+mod plugins;
 mod presentation;
 mod project;
 mod project_state;
 mod project_sync;
+mod read_query;
 mod refresh;
 mod remote_video;
+mod responsive;
 mod runtime;
 mod selection;
 mod session_catalog;
+mod session_import;
 mod shelf;
+mod snapshot_service;
+#[cfg(target_os = "linux")]
+mod source_broker;
 mod terminal;
+mod terminal_history;
+mod terminal_links;
 mod tmux_source;
 mod ui;
+mod worktrees;
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use runtime::{Config, config_path, root};
@@ -89,8 +132,11 @@ struct Args {
     /// Render locally while attaching to a saved STAR/FLUX workspace over SSH
     #[arg(long, conflicts_with = "host")]
     ssh: Option<String>,
+    /// Connect to a saved machine by identity or label
+    #[arg(long, conflicts_with_all = ["host", "ssh", "ssh_config"])]
+    machine: Option<String>,
     /// STAR/FLUX executable on the workspace host
-    #[arg(long, default_value = "starflux", requires = "ssh")]
+    #[arg(long, default_value = "starflux")]
     remote_executable: String,
     /// OpenSSH configuration file for the remote host
     #[arg(long)]
@@ -104,6 +150,18 @@ struct Args {
     /// Report live session state as JSON
     #[arg(long)]
     inspect: bool,
+    /// Report structured lifecycle/identity JSON for --pane (1-based)
+    #[arg(long)]
+    agent_report: Option<String>,
+    /// Inspect layered agent health and saved conversation references as JSON
+    #[arg(long)]
+    agent_status: bool,
+    /// Execute one versioned JSON automation request
+    #[arg(long, conflicts_with = "api_stdio")]
+    api: Option<String>,
+    /// Serve versioned JSON Lines automation requests on stdin/stdout
+    #[arg(long)]
+    api_stdio: bool,
     /// Saved command for the application under development
     #[arg(long)]
     app: Option<String>,
@@ -190,7 +248,13 @@ fn auto_workspace() -> String {
 }
 fn relay(route: &str) -> Result<()> {
     let view = frontend::View::parse(route)?;
-    session::relay(&view.ensure()?)
+    let path = view.ensure()?;
+    if std::env::var_os("SSH_CONNECTION").is_none() && std::env::var_os("KITTY_WINDOW_ID").is_some()
+    {
+        font_frontend::relay(&path)
+    } else {
+        session::relay(&path)
+    }
 }
 fn main() -> Result<()> {
     refresh::finish(run())
@@ -198,6 +262,102 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     runtime::initialize_environment()?;
     let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).is_some_and(|s| s == "--category-agent-handoffs") {
+        return category_agent_runtime::handoffs(
+            raw.get(2).context("Missing project")?,
+            raw.get(3).context("Missing category")?,
+        );
+    }
+    if raw.get(1).is_some_and(|s| s == "--category-agent-worker") {
+        return category_agent_runtime::worker(
+            raw.get(2).context("Missing category project")?,
+            raw.get(3).context("Missing category")?,
+            raw.get(4).context("Missing review identity")?,
+        );
+    }
+    if raw
+        .get(1)
+        .is_some_and(|s| s == "--category-repository-query")
+    {
+        let value: serde_json::Value =
+            serde_json::from_str(raw.get(2).context("Missing repository query")?)?;
+        let result = category_agent_files::local(
+            value["directory"].as_str().context("Missing repository")?,
+            value["operation"].as_str().context("Missing operation")?,
+            value["path"].as_str().unwrap_or(""),
+            value["pattern"].as_str().unwrap_or(""),
+        )?;
+        println!("{}", result);
+        return Ok(());
+    }
+    if raw.get(1).is_some_and(|s| s == "--plugin-popup-worker") {
+        return plugin_popup::worker(
+            raw.get(2).context("Missing popup store")?,
+            raw.get(3).context("Missing popup id")?,
+        );
+    }
+    if raw.get(1).is_some_and(|s| s == "--plugin-pane") {
+        return plugin_panes::worker(
+            raw.get(2).context("Missing plugin pane store")?,
+            raw.get(3).context("Missing plugin pane identity")?,
+        );
+    }
+    if raw.get(1).is_some_and(|s| s == "--plugin-service") {
+        return plugin_runner::service(raw.get(2).context("Missing plugin store")?);
+    }
+    if raw.get(1).is_some_and(|s| s == "--plugin-job") {
+        return plugin_runner::worker(
+            raw.get(2).context("Missing plugin store")?,
+            raw.get(3).context("Missing plugin job")?,
+        );
+    }
+    #[cfg(target_os = "linux")]
+    if raw.get(1).is_some_and(|s| s == "--native-source-service") {
+        anyhow::ensure!(raw.len() == 3, "Expected native source data namespace");
+        return source_broker::service::run(std::path::Path::new(&raw[2]));
+    }
+    #[cfg(target_os = "linux")]
+    if raw
+        .get(1)
+        .is_some_and(|s| s == "--native-source-stdio" || s == "--native-source-attach")
+    {
+        anyhow::ensure!(
+            raw.len() == 3 || raw.len() == 4,
+            "Expected native source data namespace and optional owner"
+        );
+        let owner = if raw[1] == "--native-source-attach" {
+            Some(serde_json::from_str::<source_broker::service::Identity>(
+                raw.get(3).context("Missing native source owner")?,
+            )?)
+        } else {
+            anyhow::ensure!(raw.len() == 3, "Unexpected native source arguments");
+            None
+        };
+        return source_broker::service::stdio(
+            std::path::Path::new(&raw[2]),
+            std::path::Path::new("/proc/self/exe"),
+            owner.as_ref(),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    if raw.get(1).is_some_and(|s| s == "--native-source-discover") {
+        anyhow::ensure!(raw.len() == 3, "Expected native source data namespace");
+        let handle = source_broker::service::ensure(
+            std::path::Path::new(&raw[2]),
+            std::path::Path::new("/proc/self/exe"),
+        )?;
+        println!("{}", serde_json::to_string(&handle.owner)?);
+        return Ok(());
+    }
+    if raw.get(1).is_some_and(|s| s == "--read-query-worker") {
+        return read_query::run();
+    }
+    if raw.get(1).is_some_and(|s| s == "--snapshot-worker") {
+        return snapshot_service::run(
+            raw.get(2).context("Missing snapshot runtime")?,
+            raw.get(3).context("Missing snapshot namespace")?,
+        );
+    }
     if raw.get(1).is_some_and(|s| s == "--validate-pty-plan") {
         return adoption::validate_plan(raw.get(2).context("Missing migration plan")?);
     }
@@ -212,10 +372,11 @@ fn run() -> Result<()> {
         .get(1)
         .is_some_and(|s| s == "--graphical-terminal-client")
     {
-        return client::run_terminal_socket_with_events(
-            std::path::Path::new(raw.get(2).context("Missing terminal socket")?),
-            terminal_event,
-        );
+        let _font_output = font_frontend::LocalOutput::start()?;
+        let proxy = font_frontend::Proxy::new(std::path::Path::new(
+            raw.get(2).context("Missing terminal socket")?,
+        ))?;
+        return client::run_terminal_socket_with_events(&proxy.path, terminal_event);
     }
     if raw.get(1).is_some_and(|s| s == "--herdr-view") {
         return herdr::viewer(
@@ -280,7 +441,46 @@ fn run() -> Result<()> {
             relay(name)
         };
     }
+    if raw.get(1).is_some_and(|s| s == "--automation-worker") {
+        return automation::worker();
+    }
     let mut a = Args::parse();
+    let mut machine_workspace = false;
+    if let Some(id) = &a.machine {
+        let machine = machines::get(id)?;
+        ensure!(
+            machine.enabled,
+            "Machine is disabled; enable it in the machine manager before connecting"
+        );
+        ensure!(
+            !raw.iter()
+                .any(|v| v == "--remote-executable" || v.starts_with("--remote-executable=")),
+            "--machine uses its saved remote executable"
+        );
+        a.ssh = Some(machine.target);
+        a.ssh_config = machine.ssh_config;
+        a.remote_executable = machine.remote_executable;
+        if !raw
+            .iter()
+            .any(|v| v == "--workspace" || v.starts_with("--workspace="))
+            && let Some(workspace) = machine.workspace
+        {
+            a.workspace = workspace;
+            machine_workspace = true;
+        }
+    }
+    if a.api.is_some() || a.api_stdio {
+        return if let Some(host) = &a.ssh {
+            automation::remote(
+                host,
+                &a.remote_executable,
+                a.ssh_config.as_deref(),
+                a.api.as_deref(),
+            )
+        } else {
+            automation::run(a.api.as_deref())
+        };
+    }
     let mode = if a.cells {
         presentation::Mode::Cells
     } else if a.graphical {
@@ -300,6 +500,7 @@ fn run() -> Result<()> {
     }
     if let Some(host) = &a.ssh {
         if !a.refresh
+            && !machine_workspace
             && !raw
                 .iter()
                 .any(|s| s == "--workspace" || s.starts_with("--workspace="))
@@ -424,6 +625,8 @@ fn run() -> Result<()> {
         .iter()
         .any(|s| s == "--workspace" || s.starts_with("--workspace="));
     let management = a.inspect
+        || a.agent_status
+        || a.agent_report.is_some()
         || a.close
         || a.stop
         || a.refresh
@@ -477,6 +680,31 @@ fn run() -> Result<()> {
     if let Some(ssh_config) = &config.ssh_config {
         config.ssh_config =
             Some(fs::canonicalize(ssh_config).context("SSH configuration not found")?);
+    }
+    if let Some(report) = a.agent_report {
+        ensure!(report.len() <= 65536, "Agent report exceeds 64 KiB");
+        let record = agent_state::publish(
+            &config,
+            usize::from(a.pane - 1),
+            serde_json::from_str(&report)?,
+        )?;
+        println!("{}", serde_json::to_string(&record)?);
+        return Ok(());
+    }
+    if a.agent_status {
+        let state = project_state::ProjectState::load(&config)?;
+        let panes=state.terminal_ids().into_iter().map(|pane| {
+            let mut health=config.call(pane,&config.request(pane,"inspect")).unwrap_or_else(|e|serde_json::json!({"state":"disconnected","error":format!("{e:#}")}));
+            agent_state::enrich(&config,pane,&mut health);
+            serde_json::json!({"pane":pane+1,"epoch":state.terminal_epochs.get(&pane),"status":health})
+        }).collect::<Vec<_>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({"workspace":config.workspace,"panes":panes,"records":agent_state::records(&config)?})
+            )?
+        );
+        return Ok(());
     }
     if let Some(action) = a
         .action
@@ -662,6 +890,9 @@ fn run() -> Result<()> {
     }
     if mode != presentation::Mode::Cells {
         let mut handoff = bridge_handoff::Handoff::acquire()?;
+        if handoff.is_some() {
+            font_frontend::select_terminal_client()?;
+        }
         if let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()? {
             if let Some(handoff) = &mut handoff {
                 handoff.attached();

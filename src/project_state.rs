@@ -33,7 +33,23 @@ pub struct ProjectState {
     #[serde(default)]
     pub split_panes: Option<[usize; 2]>,
     #[serde(default)]
+    pub pane_tree: Option<crate::panes::Tree>,
+    #[serde(default)]
+    pub pane_zoom: bool,
+    #[serde(default)]
+    pub plugin_overlay: Option<crate::plugin_panes::Overlay>,
+    #[serde(default)]
     pub terminal_labels: std::collections::BTreeMap<usize, String>,
+    #[serde(default)]
+    pub terminal_commands: std::collections::BTreeMap<usize, String>,
+    /// Persistent plugin ownership; never an automatic restart instruction.
+    #[serde(default)]
+    pub terminal_plugins: std::collections::BTreeMap<usize, String>,
+    /// One-shot launch permission, consumed before later attachment/recovery.
+    #[serde(default)]
+    pub terminal_launch_pending: Vec<usize>,
+    #[serde(default = "enabled")]
+    pub save_terminal_screens: bool,
     #[serde(default = "default_ratio")]
     pub split_ratio: f64,
     #[serde(default = "default_agent")]
@@ -73,6 +89,9 @@ pub fn default_terminal_font_size() -> u16 {
 fn default_terminals() -> Vec<usize> {
     vec![0]
 }
+fn enabled() -> bool {
+    true
+}
 fn default_ratio() -> f64 {
     0.5
 }
@@ -89,8 +108,15 @@ impl Default for ProjectState {
             terminal: 0,
             terminals: vec![0],
             terminal_epochs: Default::default(),
+            terminal_commands: Default::default(),
+            terminal_plugins: Default::default(),
+            terminal_launch_pending: vec![],
+            save_terminal_screens: true,
             split: false,
             split_panes: None,
+            pane_tree: None,
+            pane_zoom: false,
+            plugin_overlay: None,
             terminal_labels: Default::default(),
             split_ratio: 0.5,
             agent: 1,
@@ -104,15 +130,18 @@ impl Default for ProjectState {
         }
     }
 }
-pub fn data_root() -> Result<PathBuf> {
-    let path = std::env::var_os("XDG_DATA_HOME")
+pub fn data_path() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or(
             std::env::home_dir()
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join(".local/share"),
         )
-        .join("starflux/projects");
+        .join("starflux/projects")
+}
+pub fn data_root() -> Result<PathBuf> {
+    let path = data_path();
     starkit::terminal_graphics::session::private_root(&path)?;
     Ok(path)
 }
@@ -131,6 +160,7 @@ impl ProjectState {
             if config.agent.is_some() {
                 s.agents = vec![s.agent];
                 s.terminal = s.agent;
+                s.terminal_launch_pending.push(s.agent);
             }
             if !config.project_host
                 && config
@@ -233,6 +263,17 @@ impl ProjectState {
                 .or_insert(label);
         }
         self.agent_labels.retain(|id, _| self.agents.contains(id));
+        self.terminal_launch_pending = self
+            .terminal_launch_pending
+            .iter()
+            .map(|id| config.canonical_pane(*id))
+            .collect();
+        let ids = self.terminal_ids();
+        self.terminal_launch_pending.retain(|id| ids.contains(id));
+        if let Some(tree) = &mut self.pane_tree {
+            tree.map_ids(&|id| config.canonical_pane(id));
+        }
+        self.repair_view();
     }
     pub fn add_agent(&mut self) -> Result<usize> {
         let mut agents = self.agent_ids();
@@ -246,6 +287,7 @@ impl ProjectState {
         self.terminal_epochs
             .insert(id, uuid::Uuid::new_v4().to_string());
         agents.push(id);
+        self.terminal_launch_pending.push(id);
         self.agents = agents;
         self.agent = id;
         self.terminal = id;
@@ -257,6 +299,39 @@ impl ProjectState {
         Ok(id)
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.terminal_plugins.len() <= 32
+                && self.terminal_plugins.iter().all(|(pane, id)| self
+                    .terminal_ids()
+                    .contains(pane)
+                    && self.terminal_epochs.contains_key(pane)
+                    && uuid::Uuid::parse_str(id).is_ok()),
+            "Invalid plugin pane ownership"
+        );
+
+        ensure!(
+            self.terminal_launch_pending.len() <= 32
+                && self
+                    .terminal_launch_pending
+                    .iter()
+                    .all(|id| self.terminal_ids().contains(id)),
+            "Invalid pending terminal launch"
+        );
+        ensure!(
+            self.pane_tree
+                .as_ref()
+                .is_none_or(|tree| tree.valid(&self.terminal_ids())),
+            "Invalid pane layout"
+        );
+        ensure!(
+            self.terminal_commands
+                .iter()
+                .all(|(pane, command)| self.terminal_ids().contains(pane)
+                    && !command.trim().is_empty()
+                    && command.len() <= 262144
+                    && !command.contains('\0')),
+            "Invalid saved terminal command"
+        );
         let agents = self.agent_ids();
         let mut unique = agents.clone();
         unique.sort();
@@ -352,6 +427,15 @@ impl ProjectState {
         }
         local["__config"] = local_config;
         *self.baseline.borrow_mut() = local;
+        let durable_value = serde_json::to_value(&durable)?;
+        if config_changed
+            || ["terminals", "agents", "terminal_epochs", "terminal_labels"]
+                .iter()
+                .any(|key| latest[*key] != durable_value[*key])
+        {
+            let event_config: Config = serde_json::from_value(merged_config)?;
+            crate::automation::journal::project_saved(&event_config, &durable)?;
+        }
         Ok(())
     }
     pub fn save_view(&self, config: &Config, frontend: &str) -> Result<()> {
@@ -408,10 +492,27 @@ impl ProjectState {
         self.repair_view();
         Ok(true)
     }
-    fn repair_view(&mut self) {
+    pub(crate) fn repair_view(&mut self) {
+        if self
+            .plugin_overlay
+            .as_ref()
+            .is_some_and(|o| !self.terminal_ids().contains(&o.pane))
+        {
+            self.restore_plugin_overlay();
+        }
         let ids = self.terminal_ids();
         if !ids.contains(&self.terminal) {
             self.terminal = ids.first().copied().unwrap_or(0)
+        }
+        if let Some(tree) = self.pane_tree.take() {
+            let retained = tree.retain(&ids);
+            if let Some(tree) = &retained
+                && !tree.ids().contains(&self.terminal)
+            {
+                self.terminal = tree.ids()[0];
+            }
+            self.install_tree(retained);
+            return;
         }
         if self.split
             && (ids.len() < 2
@@ -422,6 +523,13 @@ impl ProjectState {
             self.split = false;
             self.split_panes = None;
         }
+    }
+    pub fn add_background_terminal(&mut self) -> Result<usize> {
+        let mut addition = self.clone();
+        let pane = addition.add_terminal()?;
+        self.terminals = addition.terminals;
+        self.terminal_epochs = addition.terminal_epochs;
+        Ok(pane)
     }
     pub fn add_terminal(&mut self) -> Result<usize> {
         ensure!(
@@ -443,6 +551,10 @@ impl ProjectState {
         Ok(id)
     }
     pub fn remove_terminal(&mut self, pane: usize) -> bool {
+        if self.plugin_overlay.as_ref().is_some_and(|o| o.pane == pane) {
+            self.restore_plugin_overlay();
+        }
+        let tree = self.split.then(|| self.unzoomed_tree()).flatten();
         let ids = self.terminal_ids();
         let Some(index) = ids.iter().position(|id| *id == pane) else {
             return false;
@@ -453,6 +565,9 @@ impl ProjectState {
         self.terminals.retain(|id| *id != pane);
         self.agents.retain(|id| *id != pane);
         self.terminal_labels.remove(&pane);
+        self.terminal_commands.remove(&pane);
+        self.terminal_plugins.remove(&pane);
+        self.terminal_launch_pending.retain(|id| *id != pane);
         self.agent_labels.remove(&pane);
         if self.agent == pane {
             self.agent = self.agents.first().copied().unwrap_or(1);
@@ -476,9 +591,26 @@ impl ProjectState {
                 })
                 .unwrap_or(0);
         }
+        if let Some(tree) = tree {
+            let retained = tree.retain(&remaining);
+            if let Some(tree) = &retained
+                && !tree.ids().contains(&self.terminal)
+            {
+                self.terminal = tree.ids()[0];
+            }
+            self.install_tree(retained);
+        }
         true
     }
     pub fn select_terminal(&mut self, id: usize) {
+        if self.plugin_overlay.as_ref().is_some_and(|o| o.pane != id) {
+            self.restore_plugin_overlay();
+        }
+        if let Some(tree) = &mut self.pane_tree
+            && !tree.ids().contains(&id)
+        {
+            tree.replace(self.terminal, id);
+        }
         if let Some(pair) = &mut self.split_panes
             && !pair.contains(&id)
         {
@@ -493,13 +625,9 @@ impl ProjectState {
             return Ok(());
         }
         if self.split {
-            self.split = false;
-            self.split_panes = None;
+            self.install_tree(None);
         } else {
-            let previous = self.terminal;
-            let fresh = self.add_terminal()?;
-            self.split_panes = Some([previous, fresh]);
-            self.split = true;
+            self.split_pane(crate::panes::Axis::Right)?;
         }
         self.space = Space::Terminals;
         Ok(())
@@ -512,37 +640,118 @@ impl ProjectState {
         }
     }
     pub fn visible(&self) -> Vec<usize> {
+        self.layout_tree()
+            .map(|tree| tree.ids())
+            .unwrap_or_default()
+    }
+    pub fn unzoomed_tree(&self) -> Option<crate::panes::Tree> {
+        use crate::panes::{Axis, Tree};
         if self.terminal_ids().is_empty() {
-            return vec![];
+            return None;
         }
-        match self.space {
-            Space::Agent => vec![self.agent],
-            Space::Apps => vec![],
-            Space::Terminals => {
-                if self.terminal_ids().is_empty() {
-                    return vec![];
-                }
-                if self.split
-                    && let Some(pair) = self.split_panes
-                    && pair.contains(&self.terminal)
-                    && pair.iter().all(|id| self.terminal_ids().contains(id))
-                {
-                    return pair.to_vec();
-                }
-                let mut ids = vec![self.terminal];
-                if self.split
-                    && let Some(other) = self
-                        .terminal_ids()
-                        .into_iter()
-                        .find(|i| *i != self.terminal)
-                {
-                    ids.push(other);
-                    // Focusing the other half must not exchange pane geometry
-                    // underneath a pointer drag.
-                    ids.sort_unstable();
-                }
-                ids
+        if self.split {
+            if let Some(tree) = &self.pane_tree
+                && tree.valid(&self.terminal_ids())
+            {
+                return Some(tree.clone());
             }
+            if let Some(pair) = self.split_panes
+                && pair.iter().all(|id| self.terminal_ids().contains(id))
+            {
+                return Some(Tree::pair(
+                    pair[0],
+                    pair[1],
+                    Axis::Right,
+                    (self.split_ratio * 10000.) as u16,
+                ));
+            }
+            if let Some(other) = self
+                .terminal_ids()
+                .into_iter()
+                .find(|id| *id != self.terminal)
+            {
+                let (a, b) = (self.terminal.min(other), self.terminal.max(other));
+                return Some(Tree::pair(
+                    a,
+                    b,
+                    Axis::Right,
+                    (self.split_ratio * 10000.) as u16,
+                ));
+            }
+        }
+        Some(Tree::leaf(self.terminal))
+    }
+    pub fn layout_tree(&self) -> Option<crate::panes::Tree> {
+        if self.terminal_ids().is_empty() || self.space == Space::Apps {
+            None
+        } else if self.space == Space::Agent {
+            Some(crate::panes::Tree::leaf(self.agent))
+        } else if self.pane_zoom {
+            Some(crate::panes::Tree::leaf(self.terminal))
+        } else {
+            self.unzoomed_tree()
+        }
+    }
+    fn install_tree(&mut self, tree: Option<crate::panes::Tree>) {
+        let tree = tree.filter(|t| t.ids().len() > 1);
+        self.split = tree.is_some();
+        self.split_panes = tree.as_ref().and_then(|t| t.ids().try_into().ok());
+        if let Some(t) = &tree {
+            self.split_ratio = t.root_ratio().clamp(0.2, 0.8);
+        }
+        self.pane_tree = tree;
+        if !self.split {
+            self.pane_zoom = false;
+        }
+    }
+    pub fn split_pane(&mut self, axis: crate::panes::Axis) -> Result<()> {
+        if self.terminal_ids().is_empty() {
+            self.add_terminal()?;
+            return Ok(());
+        }
+        let previous = self.terminal;
+        let mut tree = self.unzoomed_tree().unwrap();
+        let fresh = self.add_terminal()?;
+        ensure!(
+            tree.split(previous, fresh, axis),
+            "Focused pane is missing from layout"
+        );
+        self.install_tree(Some(tree));
+        self.terminal = fresh;
+        self.pane_zoom = false;
+        self.space = Space::Terminals;
+        Ok(())
+    }
+    pub fn close_pane(&mut self) {
+        if self.restore_plugin_overlay() {
+            return;
+        }
+        if !self.split {
+            return;
+        }
+        if let Some(tree) = self.unzoomed_tree() {
+            let ids = tree
+                .ids()
+                .into_iter()
+                .filter(|id| *id != self.terminal)
+                .collect::<Vec<_>>();
+            if let Some(id) = ids.first() {
+                self.terminal = *id;
+            }
+            self.install_tree(tree.retain(&ids));
+            self.pane_zoom = false;
+        }
+    }
+    pub fn resize_pane(&mut self, path: &[bool], ratio: u16) {
+        if let Some(mut tree) = self.unzoomed_tree() {
+            tree.set_ratio(path, ratio);
+            self.install_tree(Some(tree));
+        }
+    }
+    pub fn swap_panes(&mut self, a: usize, b: usize) {
+        if let Some(mut tree) = self.unzoomed_tree() {
+            tree.swap(a, b);
+            self.install_tree(Some(tree));
         }
     }
 }
@@ -558,9 +767,13 @@ pub fn catalog(current: &Config) -> Vec<Config> {
     for root in roots.into_iter().flatten() {
         if let Ok(entries) = fs::read_dir(root) {
             for entry in entries.flatten() {
+                if !crate::runtime::config_file(&entry.path()) {
+                    continue;
+                }
                 if let Ok(bytes) = fs::read(entry.path())
                     && let Ok(config) = serde_json::from_slice::<Config>(&bytes)
                     && config.validate().is_ok()
+                    && !crate::worktrees::removed(&config)
                     && config.collection == current.collection
                     && !configs.iter().any(|c| c.workspace == config.workspace)
                 {
@@ -724,6 +937,73 @@ mod tests {
             assert!(validate_label(label).is_err());
         }
         assert!(validate_label(&"a".repeat(65)).is_err());
+    }
+    #[test]
+    fn nested_layout_survives_focus_zoom_close_and_unrelated_exit() {
+        use crate::panes::Axis;
+        let mut state = ProjectState::default();
+        state.split_pane(Axis::Right).unwrap();
+        state.split_pane(Axis::Down).unwrap();
+        state.select_terminal(0);
+        state.split_pane(Axis::Down).unwrap();
+        assert_eq!(state.visible(), vec![0, 3, 1, 2]);
+        let tree = state.pane_tree.clone();
+        state.select_terminal(1);
+        assert_eq!(state.pane_tree, tree);
+        state.pane_zoom = true;
+        assert_eq!(state.visible(), vec![1]);
+        state.pane_zoom = false;
+        let restored: ProjectState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored.pane_tree, tree);
+        restored.validate().unwrap();
+        state.close_pane();
+        assert_eq!(state.visible(), vec![0, 3, 2]);
+        assert!(state.terminal_ids().contains(&1));
+        state.remove_terminal(1);
+        assert_eq!(state.visible(), vec![0, 3, 2]);
+        state.remove_terminal(3);
+        assert_eq!(state.visible(), vec![0, 2]);
+        state.validate().unwrap();
+    }
+    #[test]
+    fn shared_exit_focuses_the_remaining_visible_leaf() {
+        let mut state = ProjectState::default();
+        for _ in 0..3 {
+            state.add_terminal().unwrap();
+        }
+        state.pane_tree = Some(crate::panes::Tree::pair(
+            0,
+            3,
+            crate::panes::Axis::Right,
+            5000,
+        ));
+        state.split = true;
+        state.terminal = 0;
+        state.terminals.retain(|id| *id != 0);
+        state.terminal_epochs.remove(&0);
+        state.repair_view();
+        assert_eq!(state.visible(), vec![3]);
+        assert_eq!(state.terminal, 3);
+        assert!(!state.split);
+    }
+    #[test]
+    fn nested_layout_respects_terminal_capacity_without_partial_mutation() {
+        let mut state = ProjectState::default();
+        for i in 0..31 {
+            state
+                .split_pane(if i % 2 == 0 {
+                    crate::panes::Axis::Right
+                } else {
+                    crate::panes::Axis::Down
+                })
+                .unwrap();
+        }
+        state.validate().unwrap();
+        assert_eq!(state.visible().len(), 32);
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(state.split_pane(crate::panes::Axis::Right).is_err());
+        assert_eq!(before, serde_json::to_value(&state).unwrap());
     }
     #[test]
     fn terminals_are_primary_and_legacy_sessions_migrate_without_new_ids() {

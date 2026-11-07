@@ -15,6 +15,18 @@ starflux --graphical --workspace my-app
 
 Automatic presentation prefers graphical mode where supported and falls back to
 cells. Cells mode runs in the parent terminal, using its font and cell grid.
+Both modes share [configurable keyboard shortcuts](docs/keyboard.md): **F1** opens
+help, and **Ctrl+B** starts project, session, tab, pane and history commands.
+The pane menu exposes [agent health and registered conversation recovery](docs/agent-lifecycle.md).
+Terminals support [nested right/down splits, zoom, rearrangement and guarded termination](docs/panes.md).
+Use [history search and keyboard copy mode](docs/terminal-history.md) to review retained terminal output while the program continues running.
+The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/Herdr sessions and acknowledged per-window navigation.
+
+The paused parity effort and remaining work are recorded in the [implementation checkpoint](docs/parity-progress.md).
+
+[Project categories](docs/categories.md) provide collapsible session groupings,
+manual ordering and live summaries, including hidden projects.
+Manage [Git worktrees](docs/worktrees.md) with **Ctrl+B, Shift+W**, including creation, reattachment, repository grouping and guarded removal on local/SSH hosts.
 **Ctrl+Esc** releases terminal input to workspace controls; **F6** toggles focus.
 Cells mode has **Add project** and **Close project** controls; with controls focused,
 **+** adds or reopens a project and **x** closes it while keeping sessions running.
@@ -68,3 +80,7 @@ own window. See [multiple-window behavior and upgrade notes](docs/app-shelf.md#m
 The default terminal path uses native text cells. The virtual desktop belongs exclusively to app space. `STAR_TERMINAL_RENDERER=kitty-pixels` explicitly selects the older screenshot-based terminal path for diagnosis. Refresh both the host executable and local STAR/KIT frontend when updating the native cell protocol; the Mac helper build is separate from the host build.
 
 Build and verification commands are documented in [CONTRIBUTING.md](CONTRIBUTING.md). The app and presentation-only client share one immutable STAR/KIT revision; standard builds enable native terminal transport and the optional GPU backend. GPU rendering remains selected with `STAR_GRAPHICS_RENDERER=gpu`.
+
+Saved SSH connection profiles and machine management: [Machines](docs/machines.md).
+
+Saved screen previews and safe restart behavior: [Cold-start recovery](docs/cold-start.md).

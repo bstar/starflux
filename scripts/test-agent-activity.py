@@ -36,7 +36,8 @@ while True:
         for key,state in [('i','idle'),('h','idle'),('s','idle'),('a','waiting_for_approval'),('q','needs_input'),('w','working'),('i','idle')]:
             subprocess.run(['tmux','-L','starflux-'+name,'send-keys','-t','p1:0.0',key],check=True)
             assert wait(state)['pid']==pid
-        allowed={'alive','exited','pid','command','agent','agent_pid','state','output_fingerprint'}
+        allowed={'alive','exited','pid','pid_start_ticks','boot_id','command','cwd','agent','agent_pid','agent_start_ticks','state','output_fingerprint'}
         assert set(working)==allowed, 'Inspector exported unexpected fields: '+repr(set(working)-allowed)
+        assert Path(working['cwd']).resolve()==temp.resolve(),'Inspector did not report the fixture working directory'
         print(json.dumps({'passed':True,'working_idle_waiting_detected':True,'same_live_process':True,'conversation_text_not_exported':True}))
     finally:call('stop')

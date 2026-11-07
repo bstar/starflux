@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real cells frontend in a private PTY; no desktop or live agents."""
 import argparse
+import base64
 import fcntl
 import getpass
 import json
@@ -22,7 +23,10 @@ import time
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh', action='store_true')
+parser.add_argument('--plugin-popup', action='store_true')
+parser.add_argument('--plugin-popup-keyboard', action='store_true')
 args = parser.parse_args()
+if args.plugin_popup_keyboard:args.plugin_popup=True
 root = Path(__file__).resolve().parents[1]
 app = root / 'scripts/run-local.sh'
 report = root / 'target/cells-proof'
@@ -36,12 +40,16 @@ with tempfile.TemporaryDirectory(prefix='starflux-cells-') as directory:
     state.mkdir(mode=0o700)
     name = 'cells-' + secrets.token_hex(4)
     fixture = tmp / 'fixture.py'
-    fixture.write_text("""import os,sys,tty
+    fixture.write_text("""import os,select,sys,tty
 from pathlib import Path
 tty.setraw(0)
-os.write(1, '\\x1b[?2004hCELLS_READY café 世界\\r\\n'.encode())
+os.write(1, '\\x1b[?2004hCELLS_READY café 世界\\r\\nhttps://example.invalid/visible-link\\r\\n'.encode())
+os.write(1, '\\x1b]8;id=host;https://example.invalid/hidden-target?q=1;2#osc8\\x1b\\\\HIDDEN_LABEL_界\\x1b]8;;\\x1b\\\\\\r\\n'.encode())
 with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as out:
     while True:
+        cwd=Path(sys.argv[1])/('cwd-'+str(os.getpid()))
+        if cwd.exists():os.chdir(cwd.read_text())
+        if not select.select([0],[],[],.1)[0]:continue
         data=os.read(0,65536)
         if not data: break
         out.write(data)
@@ -54,7 +62,7 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         'KITTY_WINDOW_ID', 'KITTY_PID', 'KITTY_LISTEN_ON', 'WAYLAND_DISPLAY', 'DISPLAY',
         'SSH_CONNECTION', 'SSH_TTY', 'TMUX', 'STY', 'STAR_KIT_TERMINAL_SOCKET',
     )}
-    env.update(XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(tmp / 'data'),
+    env.update(XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(tmp / 'data'), XDG_CONFIG_HOME=str(tmp / 'config'),
                SHELL=str(shell), TERM='xterm-256color' if args.ssh else 'xterm', STAR_TERMINAL_RENDERER='native' if args.ssh else 'kitty-pixels',
                STARFLUX_KITTY=str(tmp / 'kitty-must-not-run'))
     (state / (name + '.json')).write_text(json.dumps(dict(
@@ -99,7 +107,7 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         ssh_config = tmp / 'ssh_config'
         ssh_config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
         remote = tmp / 'remote-starflux'
-        remote.write_text('#!/bin/sh\nexec env ' + shlex.join([k + '=' + env[k] for k in ('PATH', 'XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'SHELL', 'STAR_TERMINAL_RENDERER')]) + ' ' + shlex.quote(str(app)) + ' "$@"\n')
+        remote.write_text('#!/bin/sh\nexec env ' + shlex.join([k + '=' + env[k] for k in ('PATH', 'XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'SHELL', 'STAR_TERMINAL_RENDERER')]) + ' ' + shlex.quote(str(app)) + ' "$@"\n')
         remote.chmod(0o700)
         cli += ['--ssh', 'proof', '--ssh-config', str(ssh_config), '--remote-executable', str(remote)]
 
@@ -164,11 +172,46 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         assert initial['desktop']['windows'] == 0
         backend_pid = initial['panes'][0]['pid']
         assert 'café 世界'.encode() in tty_bytes
+        if args.plugin_popup:
+            exec(compile((root/'scripts/test-plugin-popup-cells.py').read_text(),str(root/'scripts/test-plugin-popup-cells.py'),'exec'),globals())
+            raise SystemExit(0)
+        # The directory and Git header follow live cwd without changing the
+        # saved project launch directory. Exercise repositories and no-repo cwd.
+        repo_a, repo_b = tmp / 'repo a 界', tmp / 'repo b'
+        for repo, branch in [(repo_a, 'branch-a'), (repo_b, 'branch-b')]:
+            subprocess.run(['git', 'init', '-q', '-b', branch, str(repo)], check=True)
+            (repo / 'untracked.txt').write_text(branch)
+        def follow_cwd(pid, directory, branch=None):
+            (tmp / ('cwd-' + str(pid))).write_text(str(directory))
+            wait(lambda: snapshot().get('focused_location', {}).get('directory') == str(directory), 'header directory did not follow cwd')
+            if branch:
+                wait(lambda: (snapshot().get('git') or {}).get('branch') == branch and snapshot()['git']['root'] == str(directory), 'Git did not follow active directory')
+                assert snapshot()['git']['untracked'] == 1
+            else:
+                wait(lambda: (snapshot().get('git') or {}).get('kind') == 'none', 'stale Git repository remained in header')
+        follow_cwd(backend_pid, repo_a, 'branch-a')
+        follow_cwd(backend_pid, tmp)
+        follow_cwd(backend_pid, repo_a, 'branch-a')
+        assert json.loads((state / (name + '.json')).read_text())['directory'] == str(tmp)
         write(b'qnap[]\x03\x0c')
         wait(lambda: b'qnap[]\x03\x0c' in inputs(), 'workspace shortcut or Ctrl+L stole focused terminal input')
         write(b'\x1b[200~PASTED_BYTES\x1b[201~')
         wait(lambda: b'PASTED_BYTES' in inputs(), 'bracketed paste did not reach terminal')
         assert frontend.poll() is None and snapshot()['project_state']['terminals'] == [0]
+        # Reserved prefix escape and unknown sequences preserve exact bytes.
+        write(b'\x02\x02')
+        wait(lambda: inputs().endswith(b'\x02'), 'double prefix did not send literal Ctrl+B')
+        write(b'\x02j')
+        wait(lambda: inputs().endswith(b'\x02j'), 'unknown prefix sequence lost terminal input')
+        before = inputs()
+        write(b'\x02?')
+        wait(lambda:(snapshot().get('context_menu') or {}).get('title')=='Keyboard shortcuts', 'prefix help did not open')
+        count=len(snapshot()['context_menu']['items'])
+        write(b'\x1b[F')
+        wait(lambda:snapshot()['context_menu']['selected']==count-1, 'End did not reach final help command')
+        write(b'\x1b')
+        wait(lambda:not snapshot().get('context_menu'), 'keyboard help did not close')
+        assert inputs()==before, 'help navigation leaked into terminal input'
         # F6 is available even without enhanced keyboard / Ctrl+Escape support.
         write(b'\x1b[17~')
         wait(lambda: snapshot().get('cell_terminal_focus') is False, 'F6 did not release terminal focus')
@@ -187,6 +230,34 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         pointer_offset = len(tty_bytes)
         write(b'\x1b[<35;40;6M')
         wait(lambda: b'\x1b]22;\x1b\\' in tty_bytes[pointer_offset:], 'hand pointer did not reset over terminal text')
+        # Visible terminal links publish regions to the actual host. Hover
+        # feedback is local even over SSH, and right-click/copy stays in the UI.
+        pane=snapshot()['pane_layout']['panes'][0]['rect']
+        link_x,link_y=pane['x']+3,pane['y']+1
+        pointer_offset=len(tty_bytes)
+        write(f'\x1b[<35;{link_x+1};{link_y+1}M'.encode())
+        wait(lambda:b'\x1b]22;pointer\x1b\\' in tty_bytes[pointer_offset:],'visible URL did not emit local hand pointer')
+        before=inputs()
+        write(f'\x1b[<2;{link_x+1};{link_y+1}M\x1b[<2;{link_x+1};{link_y+1}m'.encode())
+        wait(lambda:(snapshot().get('context_menu')or{}).get('title')=='Terminal link','visible URL right-click menu missing')
+        clipboard_offset=len(tty_bytes)
+        write(b'\x1b[B\r')
+        expected_link=base64.b64encode(b'https://example.invalid/visible-link')
+        wait(lambda:expected_link in tty_bytes[clipboard_offset:],'visible URL copy did not reach actual host clipboard protocol')
+        wait(lambda:not snapshot().get('context_menu'),'link copy did not close menu')
+        assert inputs()==before,'terminal link controls leaked input into the program'
+        hidden_x,hidden_y=pane['x']+3,pane['y']+2
+        write(f'\x1b[<35;{pane["x"]+61};{hidden_y+1}M'.encode())
+        pointer_offset=len(tty_bytes)
+        write(f'\x1b[<35;{hidden_x+1};{hidden_y+1}M'.encode())
+        wait(lambda:b'\x1b]22;pointer\x1b\\' in tty_bytes[pointer_offset:],'OSC 8 label did not emit local hand pointer')
+        before=inputs();write(f'\x1b[<2;{hidden_x+1};{hidden_y+1}M\x1b[<2;{hidden_x+1};{hidden_y+1}m'.encode())
+        wait(lambda:(snapshot().get('context_menu')or{}).get('title')=='Terminal link','OSC 8 context menu missing')
+        clipboard_offset=len(tty_bytes);write(b'\x1b[B\r')
+        expected_link=base64.b64encode(b'https://example.invalid/hidden-target?q=1;2#osc8')
+        wait(lambda:expected_link in tty_bytes[clipboard_offset:],'OSC 8 copy did not preserve hidden destination')
+        wait(lambda:not snapshot().get('context_menu'),'OSC 8 copy did not close menu')
+        assert inputs()==before,'OSC 8 controls leaked into program input'
         # Visible project controls, close without killing, and reopen saved sessions.
         assert b'Close' in tty_bytes, 'project close control was not rendered'
         write(b'\x1b[<0;2;2M\x1b[<0;2;2m')
@@ -271,11 +342,26 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         wait(lambda: not snapshot().get('git_open'), 'Git overlay did not close')
         write(b'n')
         wait(lambda: len(snapshot().get('project_state', {}).get('terminals', [])) == 2, 'new tab failed')
+        second_tab = snapshot()['active']
+        wait(lambda: any(p['pane'] == second_tab and (p.get('health') or {}).get('pid') for p in snapshot().get('sessions', [])), 'second terminal did not start')
+        second_pid = next(p['health']['pid'] for p in snapshot()['sessions'] if p['pane'] == second_tab)
+        follow_cwd(second_pid, repo_b, 'branch-b')
+        command('--action', 'terminal:0')
+        wait(lambda: snapshot().get('active') == 0 and (snapshot().get('git') or {}).get('branch') == 'branch-a', 'Git did not follow first tab focus')
+        assert snapshot()['focused_location']['directory'] == str(repo_a)
+        command('--action', 'terminal:' + str(second_tab))
+        wait(lambda: snapshot().get('active') == second_tab and (snapshot().get('git') or {}).get('branch') == 'branch-b', 'Git did not follow second tab focus')
+        assert snapshot()['focused_location']['directory'] == str(repo_b)
         command('--action', 'terminal:split')
         wait(lambda: snapshot().get('project_state', {}).get('split') and len(snapshot()['project_state']['terminals']) == 3, 'split failed')
         terminal_count = 3
         resize(120, 35)
         wait(lambda: snapshot().get('viewport', {}).get('columns') == 120, 'resize was not negotiated')
+        resize(32, 10)
+        wait(lambda:snapshot().get('viewport',{}).get('columns')==32 and snapshot().get('panes'),'32-column terminal did not render')
+        write(b'\x1b')
+        write(b'\x1b[200~MIN32_INPUT\x1b[201~')
+        wait(lambda:b'MIN32_INPUT' in inputs(),'minimum-size cells lost terminal input')
         resize(30, 10)
         wait(lambda: b'Resize to at least' in tty_bytes, 'tiny-terminal fallback did not render')
         resize(80, 24)

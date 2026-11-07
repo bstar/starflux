@@ -228,6 +228,11 @@ fn spawn_worker(name: &str) -> Result<()> {
     Ok(())
 }
 pub fn launch_local(name: &str, launch: Option<Launch>) -> Result<Vec<WindowInfo>> {
+    if launch.is_some()
+        && let Ok(config) = crate::saved(name)
+    {
+        crate::worktrees::mark_app_launch(&config)?;
+    }
     paths(name)?;
     let control = directory()?.join(format!("{name}.control.sock"));
     let mut stream = match UnixStream::connect(&control) {
@@ -1114,6 +1119,7 @@ mod tests {
         );
         events
             .send(DesktopEvent::Windows(vec![WindowInfo {
+                focused: false,
                 id: 7,
                 name: "Synthetic app".into(),
                 app_id: "fake".into(),

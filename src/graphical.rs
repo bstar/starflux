@@ -330,6 +330,7 @@ mod tests {
             space,
             projects: (0..24)
                 .map(|i| shelf::ProjectTab {
+                    failed: 0,
                     id: "sample",
                     name: "Rendering project",
                     host: "local",
@@ -344,6 +345,7 @@ mod tests {
             terminal: 0,
             terminal_font_size: "12pt".into(),
             split: false,
+            plugin_overlay: false,
             agent_name: "Codex",
             agent_state: "working",
             status: "Project session connected / process retained",

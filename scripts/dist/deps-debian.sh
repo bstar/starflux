@@ -11,7 +11,7 @@ apt-get install -y -qq --no-install-recommends \
   libglib2.0-dev libx264-dev liborc-0.4-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-bad gstreamer1.0-libav \
   python3 python3-pip python3-dev ninja-build patchelf squashfs-tools \
-  libevent-dev libncurses-dev bison flex tmux openssh-client pulseaudio-utils dbus dbus-x11 xkb-data
+  libevent-dev libncurses-dev bison flex tmux openssh-client pulseaudio-utils dbus dbus-x11 libnotify-bin xkb-data
 # Lock both the Rust compiler and the source dependencies in the portable build.
 if ! command -v rustup >/dev/null; then
   curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --no-modify-path

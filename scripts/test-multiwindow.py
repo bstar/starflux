@@ -22,7 +22,10 @@ import time
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh',action='store_true',help='Use a private local OpenSSH server for the second frontend')
 parser.add_argument('--scrollback',action='store_true',help='Read pre-attachment plan history while new output arrives')
+parser.add_argument('--narrow',action='store_true',help='Check compact App Space navigation, input and pixel cropping')
 parser.add_argument('--apps',action='store_true',help='Exercise a private GTK app and streamed App Space (requires graphics runtime)')
+parser.add_argument('--plugin-popup',action='store_true',help='Check transient plugin coexistence with the private App Space')
+parser.add_argument('--plugin-popup-keyboard',action='store_true',help='Close the private App Space popup with its keyboard controls')
 parser.add_argument('--video',action='store_true',help='Negotiate H.264 and measure an animated private app over SSH')
 parser.add_argument('--audio',action='store_true',help='Measure continuous PCM delivery alongside animated video, without speaker output')
 parser.add_argument('--slow-video',action='store_true',help='Simulate a frontend that presents 4:4:4 slowly but handles 4:2:0 promptly')
@@ -30,7 +33,9 @@ parser.add_argument('--legacy-audio',action='store_true',help='Check older front
 parser.add_argument('--pointer-latency',action='store_true',help='Measure input to decoded canvas cursor using a private app')
 parser.add_argument('--presentation-delay-ms',type=float,default=0,help='Additional presentation delay for the private cursor consumer')
 args=parser.parse_args()
+if args.plugin_popup_keyboard:args.plugin_popup=True
 assert not args.audio or args.video,'--audio requires --video'
+assert not args.plugin_popup or (args.apps and args.video),'--plugin-popup requires --apps --video'
 assert not args.video or args.apps,'--video requires --apps'
 assert not args.pointer_latency or args.video,'--pointer-latency requires --video'
 root=Path(__file__).resolve().parents[1]
@@ -46,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
     (state/(workspace+'.json')).write_text(json.dumps(config))
     other=workspace+'-other'
     (state/(other+'.json')).write_text(json.dumps({**config,'workspace':other}))
-    env={**os.environ,'XDG_RUNTIME_DIR':str(runtime),'XDG_DATA_HOME':str(tmp/'data'),'SHELL':str(shell),'STAR_TERMINAL_RENDERER':'native'}
+    env={**os.environ,'XDG_RUNTIME_DIR':str(runtime),'XDG_DATA_HOME':str(tmp/'data'),'XDG_CONFIG_HOME':str(tmp/'config'),'SHELL':str(shell),'STAR_TERMINAL_RENDERER':'native'}
     processes=[]
     daemon=None
     ssh_args=None
@@ -82,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
             # This loopback host shares one backend installation. Preserve its
             # tool PATH so SSH cannot select an incompatible system tmux.
             if ssh_args and identity.startswith('v-b'):
-                command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','SHELL','STAR_TERMINAL_RENDERER','PATH')],*command])]
+                command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','SHELL','STAR_TERMINAL_RENDERER','PATH')],*command])]
             self.process=subprocess.Popen(command,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log)
             processes.append(self.process)
             def receive():
@@ -110,7 +115,10 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
                 self.types.add(m['type'])
                 if m['type']=='scene':
                     self.scene=m['scene'];self.send(dict(type='presented',revision=self.scene['revision'],generation=self.scene['viewport']['generation']))
-                if m['type']=='canvas_stream' and m['frame']['stream']=='apps':self.app_frames+=1
+                if m['type']=='canvas_stream':
+                    frame=m['frame']
+                    if frame['stream']=='apps':self.app_frames+=1
+                    self.send(dict(type='canvas_ack',stream=frame['stream'],generation=frame['generation'],sequence=frame['sequence']))
                 if m['type']=='media':
                     media=m['message'];kind=media['kind']
                     if kind in ('audio_open','pcm_open'):
@@ -165,7 +173,10 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
             debug=subprocess.run(['tmux','-L','starflux-'+project,'list-panes','-a','-F','#{pane_pid} #{pane_current_command} #{pane_start_command}'],env=env,capture_output=True,text=True)
             print('Private fixture:',project,debug.stdout,debug.stderr,flush=True)
         for c in clients:print('Private client:',c.identity,'project',c.snapshot().get('active_project'),'terminals',c.snapshot().get('direct_terminals'),'history',c.snapshot().get('history'),flush=True)
-        if args.pointer_latency:print('Decoded cursor frames:',b.cursor_frames[-8:],flush=True)
+        if args.pointer_latency:
+            print('Decoded cursor frames:',b.cursor_frames[-8:],flush=True)
+            print('Private pointer events:',Path(str(keys)+'.pointer').read_text()[-1000:] if Path(str(keys)+'.pointer').exists() else 'none',flush=True)
+            print('Private app geometry:',b.snapshot().get('apps'),flush=True)
         raise AssertionError(label+': '+repr([dict(frontend=c.identity,exit=c.process.poll(),active=c.snapshot().get('active'),tabs=tabs(c),status=c.snapshot().get('status'),stderr=(tmp/(c.identity+'.log')).read_text()) for c in clients])+(' sshd: '+(tmp/'sshd.log').read_text() if daemon else ''))
     def terminal_text(c,pane=0):return next((t['text'] for t in c.snapshot().get('direct_terminals',[]) if t['pane']==pane),'')
     def terminal_size(pane=0):
@@ -204,11 +215,19 @@ class App(Gtk.Application):
    def motion(controller,x,y):
     cursor[0]=x;area.queue_draw()
     with open(sys.argv[1]+'.pointer','a') as f:f.write(str(x)+' '+str(time.monotonic_ns())+'\\n')
-   mouse=Gtk.EventControllerMotion();mouse.connect('motion',motion);area.add_controller(mouse)
+   mouse=Gtk.EventControllerMotion();mouse.connect('motion',motion);mouse.connect('enter',motion);area.add_controller(mouse)
    def animate():phase[0]+=1;area.queue_draw();return True
    area.set_draw_func(draw);GLib.timeout_add(16,animate)
   def key(controller,keyval,keycode,state):
-   with open(sys.argv[1],'a') as f:f.write(str(keyval)+'\\n')
+   with open(sys.argv[1],'a') as f:f.write('FIRST:'+str(keyval)+'\\n')
+   if keyval==106 and not hasattr(self,'second'):
+    self.second=Gtk.ApplicationWindow(application=self,title='Second private window');self.second.set_default_size(320,240)
+    other_entry=Gtk.Entry(placeholder_text='Second window');self.second.set_child(other_entry)
+    def other_key(controller,keyval,keycode,state):
+     with open(sys.argv[1],'a') as f:f.write('SECOND:'+str(keyval)+'\\n')
+     return False
+    other_keys=Gtk.EventControllerKey();other_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);other_keys.connect('key-pressed',other_key);self.second.add_controller(other_keys)
+    self.second.present();other_entry.grab_focus()
    return False
   k=Gtk.EventControllerKey();k.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);k.connect('key-pressed',key);w.add_controller(k)
   w.present();entry.grab_focus()
@@ -219,14 +238,49 @@ App().run([sys.argv[0]])
             wait(lambda:b.snapshot().get('project_state',{}).get('space')=='apps' and any(h['windows'] for h in b.snapshot().get('apps',[])),'SSH App Space maps the private GTK app',timeout=40)
             wait(lambda:b.app_frames>0,'SSH App Space streams actual app pixels',timeout=20)
             worker=b.snapshot()['apps'][0]['worker_pid']
-            b.action('apps:maximize')
             wait(lambda:b.snapshot()['apps'][0].get('selected') is not None,'app window selection')
+            b.action('apps:maximize')
+            wait(lambda:any(rect['width']>=1000 and rect['height']>=700 for rect in b.snapshot()['apps'][0]['layout']),'private app maximizes before cursor/video measurements')
             time.sleep(.2)
             for action in ('down','up'):
                 b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='pointer',action=action,button=0,position=[100,100],modifiers=0))))
             time.sleep(.2)
             b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=1,kind=dict(kind='key',code='char:z',phase='press',modifiers=0))))
             wait(lambda:keys.exists() and '122' in keys.read_text(),'SSH app receives keyboard input')
+            for code,keyval in [('tab','65289'),('f:6','65475')]:
+                b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='key',code=code,phase='press',modifiers=0))))
+                wait(lambda:keyval in keys.read_text(),'captured app receives '+code)
+                assert not b.snapshot().get('panel_focus'),'app key unexpectedly entered workspace navigation'
+            def panel_key(code,modifiers=0):
+                if b.snapshot().get('context_menu') or b.snapshot().get('modal_open'):b.input(dict(kind='key',code=code,modifiers=modifiers))
+                else:
+                    for phase in ['press','release']:b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='key',code=code,phase=phase,modifiers=modifiers))))
+            panel_key('escape',2);wait(lambda:b.snapshot().get('panel_focus')=='apps','App Space did not release to panel navigation')
+            for expected in ['projects','toolbar']:
+                panel_key('tab');wait(lambda:b.snapshot().get('panel_focus')==expected,'App Space panel navigation missed '+expected)
+            panel_key('enter');wait(lambda:bool(b.snapshot().get('context_menu')),'focused App Space workspace controls did not activate')
+            panel_key('escape');wait(lambda:not b.snapshot().get('context_menu'),'App Space controls did not close')
+            panel_key('tab');wait(lambda:b.snapshot().get('panel_focus')=='apps','panel navigation did not return to App Space')
+            panel_key('enter');wait(lambda:not b.snapshot().get('panel_focus'),'App Space did not resume capture')
+            panel_key('char:u');wait(lambda:'117' in keys.read_text(),'app keyboard input did not resume after panel navigation')
+            def api(method,params=None,operation=None):
+                request=dict(version=1,id='app-navigation-proof',method=method,params=params or {})
+                if operation:request['operation_id']=operation
+                command=[str(app),'--api',json.dumps(request)]
+                if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','SHELL','STAR_TERMINAL_RENDERER','PATH')],*command])]
+                process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                wait(lambda:process.poll() is not None,'App Space command API did not finish',timeout=15)
+                stdout,stderr=process.communicate();response=json.loads(stdout);assert response['ok'],(response,stderr.decode());return response['result']
+            lease=next(v['target'] for v in api('frontends.list')['frontends'] if v['frontend']==b.identity)
+            for space in ['terminals','apps']:
+                receipt=api('frontends.command',dict(target=lease,command=dict(kind='select_space',project=workspace,space=space)),secrets.token_hex(16))
+                assert receipt['status']=='applied' and receipt['result']['space']==space,receipt
+                wait(lambda:b.snapshot()['project_state']['space']==space,'acknowledged App Space navigation did not reach the view')
+                assert b.snapshot()['apps'][0]['worker_pid']==worker,'API navigation replaced the app worker'
+            wait(lambda:any(c['kind']=='live_canvas' and c['id']=='apps' and c['interactive'] for c in b.scene['components']),'App Space did not restore its interactive canvas')
+            panel_key('char:v');wait(lambda:'118' in keys.read_text(),'app input did not resume after acknowledged space navigation')
+            if args.plugin_popup:
+                exec(compile((root/'scripts/test-plugin-popup-apps.py').read_text(),str(root/'scripts/test-plugin-popup-apps.py'),'exec'),globals())
             if args.video:
                 began=time.monotonic();initial=b.video_frames
                 while time.monotonic()-began<(8 if args.audio or args.slow_video else 3):
@@ -278,6 +332,36 @@ App().run([sys.argv[0]])
                 assert a.snapshot()['apps'][0]['worker_pid']==worker,'A smaller frontend replaced the app desktop'
                 a.action('view:terminals')
                 wait(lambda:'SHARED_TERMINAL_READY' in terminal_text(a),'smaller frontend returns to terminals')
+            if args.narrow:
+                b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='key',code='char:j',phase='press',modifiers=0))))
+                wait(lambda:len(b.snapshot()['apps'][0]['windows'])==2,'second app window did not open')
+                b.action('apps:tile')
+                def tiled():
+                    layout=b.snapshot()['apps'][0]['layout']
+                    return len(layout)==2 and (layout[0]['x']+layout[0]['width']<=layout[1]['x'] or layout[1]['x']+layout[1]['width']<=layout[0]['x'])
+                wait(tiled,'private app windows did not tile')
+                windows=b.snapshot()['apps'][0]['windows'];index=next(i for i,w in enumerate(windows) if w['name']=='Private App Space proof');first_window=windows[index]['id']
+                rect=b.snapshot()['apps'][0]['layout'][index]
+                for action in ('down','up'):
+                    b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='pointer',action=action,button=0,position=[rect['x']+rect['width']/2,rect['y']+rect['height']/2],modifiers=0))))
+                wait(lambda:b.snapshot()['apps'][0]['selected']==first_window and any(w['id']==first_window and w['focused'] for w in b.snapshot()['apps'][0]['windows']),'mouse-selected app window was not reported as focused')
+                before_frames=b.app_frames
+                b.input(dict(kind='resize',viewport=dict(columns=40,rows=12,width=400,height=240,generation=b.scene['viewport']['generation']+1)))
+                wait(lambda:b.scene['viewport']['width']==400,'compact App Space viewport did not resize')
+                wait(lambda:b.app_frames>before_frames,'compact App Space did not stream')
+                view=next(c for c in b.scene['components'] if c['kind']=='live_canvas' and c['id']=='apps')['view']
+                assert view['source']==[view['target']['width'],view['target']['height']],view
+                assert b.snapshot()['apps'][0]['worker_pid']==worker,'compact resize replaced the app worker'
+                b.action('workspace:menu');wait(lambda:(b.snapshot().get('context_menu') or {}).get('title')=='Workspace menu','compact workspace menu missing')
+                assert {'workspace:apps','launch-app','view:terminals'}<={i['action'] for i in b.snapshot()['context_menu']['items']}
+                b.action('workspace:apps');wait(lambda:(b.snapshot().get('context_menu') or {}).get('title')=='App windows','compact app picker missing')
+                wait(lambda:any(c['kind']=='live_canvas' and c['id']=='apps' and not c['interactive'] for c in b.scene['components']),'app menu was not presented')
+                b.action('menu:dismiss');wait(lambda:not b.snapshot().get('context_menu') and any(c['kind']=='live_canvas' and c['id']=='apps' and c['interactive'] for c in b.scene['components']),'app menu did not close')
+                b.input(dict(kind='embedded',canvas='apps',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='key',code='char:y',phase='press',modifiers=0))))
+                wait(lambda:'FIRST:121' in keys.read_text(),'compact SSH app did not restore input to the mouse-selected window')
+                assert 'SECOND:121' not in keys.read_text(),'menu dismissal routed input to the wrong app window'
+                b.input(dict(kind='resize',viewport=dict(columns=b_columns,rows=b_rows,width=b_columns*10,height=b_rows*20,generation=b.scene['viewport']['generation']+1)))
+                wait(lambda:b.scene['viewport']['columns']==b_columns,'App Space did not restore full viewport')
             b.action('view:terminals')
             wait(lambda:'SHARED_TERMINAL_READY' in terminal_text(b),'return to terminals from App Space')
             assert pid()==first_pid
@@ -388,7 +472,7 @@ App().run([sys.argv[0]])
         assert a.snapshot().get('context_menu') is None
         assert any(c['kind']=='terminal' for c in b.scene['components'])
         b.action('menu:dismiss')
-        b.input(dict(kind='resize',viewport=dict(columns=140,rows=45,width=1400,height=900,generation=2)))
+        b.input(dict(kind='resize',viewport=dict(columns=140,rows=45,width=1400,height=900,generation=b.scene['viewport']['generation']+1)))
         wait(lambda:b.scene['viewport']['columns']==140,'independent viewport resize')
         assert a.scene['viewport']['columns']==100
         a.action('project:new')
@@ -429,7 +513,7 @@ App().run([sys.argv[0]])
         assert pid()==new_pid and not b.snapshot()['project_state']['split']
         inspection=json.loads(subprocess.check_output([str(app),'--workspace',workspace,'--inspect'],env=env))
         assert len(inspection['frontends'])==1,[(v.get('frontend'),v.get('controller_pid')) for v in inspection['frontends']]
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,simultaneous_frontends=2,active_terminal_sizing=True,app_space_streaming=args.apps,h264_video=args.video,audio_video=args.audio,plan_history_scrolling=args.scrollback,split_panes_fill=True,hidden_tabs_do_not_resize=True,project_close_is_window_local=True,shared_input=True,independent_projects=True,independent_menus=True,independent_viewports=True,independent_selection=True,independent_splits=True,independent_fonts=True,concurrent_tab_allocation=True,shared_exit=True,safe_slot_reuse=True,window_scoped_refresh=True,detach_preserves_other_window=True,reattach_preserves_process=True)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,simultaneous_frontends=2,active_terminal_sizing=True,app_space_streaming=args.apps,compact_app_space=args.narrow,h264_video=args.video,audio_video=args.audio,plan_history_scrolling=args.scrollback,split_panes_fill=True,hidden_tabs_do_not_resize=True,project_close_is_window_local=True,shared_input=True,independent_projects=True,independent_menus=True,independent_viewports=True,independent_selection=True,independent_splits=True,independent_fonts=True,concurrent_tab_allocation=True,shared_exit=True,safe_slot_reuse=True,window_scoped_refresh=True,detach_preserves_other_window=True,reattach_preserves_process=True)))
     finally:
         for c in clients:
             try:c.process.stdin.close()
