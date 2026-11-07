@@ -63,6 +63,93 @@ pub fn fresh_agent_command(command: &str) -> String {
     }
 }
 impl Config {
+    pub fn externally_owned(&self, pane: usize) -> bool {
+        (pane == 0 && self.tmux.is_some())
+            || self
+                .herdr
+                .as_ref()
+                .is_some_and(|h| h.panes.keys().any(|id| self.canonical_pane(*id) == pane))
+    }
+    pub fn terminal_identity(&self, pane: usize, health: &Value) -> Result<(u32, u64, uuid::Uuid)> {
+        ensure!(
+            health["alive"] == true,
+            "Terminal is not alive; reconnect or recover it instead"
+        );
+        let pid = health["pid"]
+            .as_u64()
+            .and_then(|p| u32::try_from(p).ok())
+            .context("Terminal process identity is unavailable")?;
+        let start = if self.remote(pane) {
+            health["pid_start_ticks"].as_u64()
+        } else {
+            crate::agent_state::process_start(pid)
+        }
+        .context("Terminal process start time is unavailable")?;
+        let boot = if self.remote(pane) {
+            health["boot_id"]
+                .as_str()
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        } else {
+            crate::agent_state::boot_id()
+        }
+        .context("Host boot identity is unavailable")?;
+        Ok((pid, start, boot))
+    }
+    pub fn terminate_terminal(
+        &self,
+        pane: usize,
+        epoch: Option<&str>,
+        identity: (u32, u64, uuid::Uuid),
+    ) -> Result<Self> {
+        let mut lock = Some(crate::project_sync::transaction(self)?);
+        let mut config: Self = serde_json::from_slice(&fs::read(
+            crate::project_state::data_root()?.join(format!("{}.json", self.workspace)),
+        )?)?;
+        config.validate()?;
+        ensure!(
+            !config.externally_owned(pane),
+            "Imported tmux/Herdr terminals remain owned by their source"
+        );
+        let state = crate::project_state::ProjectState::load(&config)?;
+        ensure!(
+            state.terminal_ids().contains(&pane)
+                && state.terminal_epochs.get(&pane).map(String::as_str) == epoch,
+            "Terminal changed; termination canceled"
+        );
+        let adopted = config.adopted_terminal(pane).is_some();
+        // Remote inspection/termination must not hold the UI's model lock.
+        // The host checks the exact process identity immediately before stop.
+        if !adopted {
+            drop(lock.take());
+        }
+        let health = config.call(pane, &config.request(pane, "inspect"))?;
+        ensure!(
+            config.terminal_identity(pane, &health)? == identity,
+            "Terminal process changed; termination canceled"
+        );
+        let mut request = config.request(pane, if adopted { "stop" } else { "terminate" });
+        request["expected_pid"] = json!(identity.0);
+        request["expected_start_ticks"] = json!(identity.1);
+        request["expected_boot_id"] = json!(identity.2.to_string());
+        config.call(pane, &request)?;
+        if lock.is_none() {
+            lock = Some(crate::project_sync::transaction(self)?);
+        }
+        config = serde_json::from_slice(&fs::read(
+            crate::project_state::data_root()?.join(format!("{}.json", self.workspace)),
+        )?)?;
+        config.validate()?;
+        let mut state = crate::project_state::ProjectState::load(&config)?;
+        if state.terminal_ids().contains(&pane)
+            && state.terminal_epochs.get(&pane).map(String::as_str) == epoch
+        {
+            state.remove_terminal(pane);
+            config.adopted.remove(&pane);
+            state.save(&config)?;
+        }
+        drop(lock);
+        Ok(config)
+    }
     pub fn validate(&self) -> Result<()> {
         if let Some(source) = &self.tmux {
             source.validate()?;
@@ -112,7 +199,7 @@ impl Config {
         }
         request
     }
-    pub fn adopted_terminal(&self, pane: usize) -> Option<&crate::adoption::Terminal> {
+    fn adopted_entry(&self, pane: usize) -> Option<&crate::adoption::Terminal> {
         let terminal = self.adopted.get(&pane)?;
         let path = crate::project_state::data_root()
             .ok()?
@@ -120,8 +207,81 @@ impl Config {
         let state: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
         (state["terminal_epochs"][pane.to_string()] == terminal.epoch).then_some(terminal)
     }
+    pub fn adopted_terminal(&self, pane: usize) -> Option<&crate::adoption::Terminal> {
+        self.adopted_entry(pane)
+            .filter(|terminal| !terminal.retired(self, pane))
+    }
     pub fn remote(&self, pane: usize) -> bool {
         self.host.is_some() && (pane != 0 || self.project_host)
+    }
+    pub fn terminal_history(&self, pane: usize) -> Result<(Vec<u8>, &'static str)> {
+        use std::{
+            io::Seek,
+            time::{Duration, Instant},
+        };
+        let (mut command, source) = if pane == 0
+            && let Some(source) = &self.tmux
+        {
+            (
+                source.command(&[
+                    "capture-pane",
+                    "-p",
+                    "-e",
+                    "-J",
+                    "-t",
+                    &source.session,
+                    "-S",
+                    "-4000",
+                ]),
+                "tmux",
+            )
+        } else if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+            (
+                source.command(&[
+                    "pane",
+                    "read",
+                    &source.panes[&pane].pane_id,
+                    "--source",
+                    "recent-unwrapped",
+                    "--lines",
+                    "4000",
+                    "--format",
+                    "text",
+                    "--raw",
+                ]),
+                "herdr",
+            )
+        } else {
+            (
+                self.command(pane, &self.request(pane, "history"), false),
+                "tmux",
+            )
+        };
+        let mut output = tempfile::tempfile()?;
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(output.try_clone()?)
+            .stderr(Stdio::null())
+            .spawn()?;
+        let start = Instant::now();
+        let limit = 2 * 1024 * 1024;
+        let result = loop {
+            if output.metadata()?.len() > limit || start.elapsed() > Duration::from_secs(12) {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("History capture exceeded its size or time limit");
+            }
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        ensure!(result.success(), "History source is unavailable");
+        ensure!(output.metadata()?.len() <= limit, "History exceeds 2 MiB");
+        output.rewind()?;
+        let mut bytes = Vec::new();
+        output.take(limit + 1).read_to_end(&mut bytes)?;
+        Ok((bytes, source))
     }
     pub fn command(&self, pane: usize, request: &Value, tty: bool) -> Command {
         if pane == 0
@@ -197,6 +357,19 @@ impl Config {
                     fields.get(3).and_then(|v| v.parse::<u32>().ok()) == Some(terminal.pid),
                     "Original terminal session identity changed; it was left running"
                 );
+                if let Some(expected) = request["expected_start_ticks"].as_u64() {
+                    ensure!(
+                        fields.get(19).and_then(|v| v.parse::<u64>().ok()) == Some(expected),
+                        "Original terminal process changed; it was left running"
+                    );
+                }
+                if let Some(expected) = request["expected_boot_id"].as_str() {
+                    ensure!(
+                        crate::agent_state::boot_id()
+                            .is_some_and(|boot| boot.to_string() == expected),
+                        "Host boot changed; original terminal was left running"
+                    );
+                }
                 if unsafe { libc::kill(terminal.pid as libc::pid_t, libc::SIGHUP) } != 0 {
                     let error = std::io::Error::last_os_error();
                     if error.raw_os_error() != Some(libc::ESRCH) {
@@ -225,6 +398,13 @@ impl Config {
         Ok(serde_json::from_slice(&out.stdout)?)
     }
     pub fn ensure(&self, pane: usize, agent_command: Option<&str>) -> Result<()> {
+        if crate::plugin_panes::owner(self, pane)?.is_some() {
+            // Retain an exited plugin's screen/ownership. Reattachment cannot
+            // silently rerun its command or replace it with an ordinary shell.
+            self.call(pane, &self.request(pane, "inspect"))?;
+            return Ok(());
+        }
+        let _worktree = crate::worktrees::ensure_allowed(self)?;
         if pane == 0
             && let Some(source) = &self.tmux
         {
@@ -235,6 +415,11 @@ impl Config {
             source.inspect(pane)?;
             return Ok(());
         }
+        let recovered_boot = self
+            .adopted_entry(pane)
+            .map(|terminal| terminal.retire_after_reboot(self, pane))
+            .transpose()?
+            .unwrap_or(false);
         let mut req = self.request(pane, "ensure");
         req["directory"] = if (pane != 0 || self.project_host) && self.directory.is_some() {
             json!(self.directory)
@@ -248,10 +433,11 @@ impl Config {
             }
             req["argv"] = json!(terminal.argv());
             req["recover_proxy"] = json!(true);
-        } else if let Some(command) = agent_command {
+        } else if let Some(command) = agent_command.filter(|_| !recovered_boot) {
             req["argv"] = json!(shell_words::split(command)?);
         }
         self.call(pane, &req)?;
+        let _ = crate::snapshot_service::ensure();
         Ok(())
     }
     /// Explicit user recovery, scoped to one terminal. Transferred live shells
@@ -273,6 +459,7 @@ impl Config {
             state.terminal_epochs.get(&pane).map(String::as_str) == epoch,
             "Terminal changed; recovery canceled"
         );
+        let _worktree = crate::worktrees::ensure_allowed(&config)?;
         ensure!(
             !config
                 .herdr
@@ -307,10 +494,27 @@ impl Config {
                 state.save(&config)?;
             }
         }
+        if crate::plugin_panes::owner(&config, pane)?.is_some() {
+            let health = config.call(pane, &config.request(pane, "inspect"))?;
+            ensure!(
+                health["alive"] != true,
+                "Plugin pane is still running; close it through Plugins before replacing it"
+            );
+            state.terminal_plugins.remove(&pane);
+            state
+                .terminal_epochs
+                .insert(pane, uuid::Uuid::new_v4().to_string());
+            state.save(&config)?;
+        }
         config.ensure(pane, None)?;
         let mut request = config.request(pane, "recover");
         request["directory"] = json!(config.directory);
         config.call(pane, &request)?;
+        // Explicit recovery requests a shell. A previous resume launch hint
+        // must not restart that agent after a later backend loss or reboot.
+        if state.terminal_commands.remove(&pane).is_some() {
+            state.save(&config)?;
+        }
         starkit::fs::write_private(
             &config_path(&config.workspace)?,
             &serde_json::to_vec_pretty(&config)?,
@@ -447,7 +651,8 @@ impl Config {
         }
 
         let mut request = self.request(pane, "attach");
-        if ensure_shell {
+        if ensure_shell && crate::plugin_panes::owner(self, pane).is_ok_and(|owner| owner.is_none())
+        {
             if let Some(terminal) = self.adopted_terminal(pane) {
                 request["argv"] = json!(terminal.argv());
             }
@@ -621,10 +826,52 @@ pub fn config_path(name: &str) -> Result<PathBuf> {
     );
     Ok(root()?.join(format!("{name}.json")))
 }
+pub fn config_file(path: &std::path::Path) -> bool {
+    path.extension().is_some_and(|s| s == "json")
+        && path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| {
+            !s.is_empty()
+                && s.len() <= 32
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        })
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn history_capture_rejects_oversized_source_output() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("capture");
+        fs::write(
+            &executable,
+            "#!/usr/bin/env python3\nimport sys\nsys.stdout.buffer.write(b'x'*(2*1024*1024+1))\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config:Config=serde_json::from_value(json!({"workspace":"history-limit","host":null,"directory":"/tmp","agent":null,"executable":"starflux"})).unwrap();
+        config.herdr = Some(crate::herdr::Source {
+            session: "private".into(),
+            workspace_id: "w1".into(),
+            order: 0,
+            executable: executable.display().to_string(),
+            panes: [(
+                0,
+                crate::herdr::Pane {
+                    terminal_id: "private".into(),
+                    pane_id: "p1".into(),
+                    tab_id: "t1".into(),
+                    label: "proof".into(),
+                    cwd: "/tmp".into(),
+                    agent: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        assert!(config.terminal_history(0).is_err());
+    }
     #[test]
     fn migration_aliases_retain_private_runtime_permissions() {
         use std::os::unix::fs::{PermissionsExt, symlink};

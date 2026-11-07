@@ -1,12 +1,19 @@
 //! Fixed local endpoint used by the STAR/KIT Kitty watcher; no host commands run here.
+#[path = "../../src/font_frontend.rs"]
+mod font_frontend;
 use anyhow::{Result, ensure};
 use starkit::terminal_graphics::{client, protocol::Input};
 fn event(event: &starkit::crossterm::event::Event) -> Option<Input> {
     match event {
+        starkit::crossterm::event::Event::FocusLost => Some(Input::Notice {
+            message: "window-focus:lost".into(),
+        }),
         starkit::crossterm::event::Event::FocusGained => Some(Input::Notice {
             message: "focus-canvas:terminals".into(),
         }),
-        starkit::crossterm::event::Event::Osc72(text) => Some(Input::Osc72 { text: text.clone() }),
+        starkit::crossterm::event::Event::Osc72(text) => {
+            font_frontend::event(text).or_else(|| Some(Input::Osc72 { text: text.clone() }))
+        }
         _ => None,
     }
 }
@@ -102,5 +109,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
     ensure!(args.len() == 2, "Expected one private terminal socket");
-    client::run_terminal_socket_with_events(std::path::Path::new(&args[1]), event)
+    let _font_output = font_frontend::LocalOutput::start()?;
+    let proxy = font_frontend::Proxy::new(std::path::Path::new(&args[1]))?;
+    client::run_terminal_socket_with_events(&proxy.path, event)
 }

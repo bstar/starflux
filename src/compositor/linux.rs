@@ -82,6 +82,14 @@ fn wallpaper_buffer(wallpaper: Wallpaper, settings: &Settings) -> MemoryRenderBu
         )]),
     )
 }
+
+// Binding an offscreen renderbuffer creates a framebuffer whose Drop queues
+// deletion in Smithay. Damage-free passes skip GlesFrame::finish, so they must
+// explicitly service that queue after dropping the binding as well.
+fn reclaim_render_resources(renderer: &mut GlesRenderer) -> Result<()> {
+    renderer.cleanup_texture_cache()?;
+    Ok(())
+}
 /// Initial/client-requested geometry must fit the recording desktop. Manual
 /// Alt-drags remain free to position a window beyond an edge during a demo.
 fn fit_window_geometry(
@@ -102,6 +110,43 @@ fn fit_window_geometry(
 #[cfg(test)]
 mod geometry_tests {
     use super::*;
+    #[test]
+    #[ignore = "Requires a local render device; creates no windows or apps"]
+    fn idle_offscreen_passes_release_framebuffers_without_a_redraw() {
+        let mut renderer = renderer().unwrap();
+        let size = (32, 24).into();
+        let mut target: GlesRenderbuffer = renderer.create_buffer(Fourcc::Argb8888, size).unwrap();
+        for _ in 0..256 {
+            let framebuffer = renderer.bind(&mut target).unwrap();
+            // Readback binds the actual framebuffer, allowing us to identify it
+            // without relying on GL's choice of object names. No render/finish
+            // runs: this is the resource lifetime of an idle damage pass.
+            let mapping = renderer
+                .copy_framebuffer(&framebuffer, Rectangle::from_size(size), Fourcc::Argb8888)
+                .unwrap();
+            let id = renderer
+                .with_context(|gl| unsafe {
+                    let mut id = 0;
+                    gl.GetIntegerv(0x8CA6, &mut id); // GL_FRAMEBUFFER_BINDING
+                    assert_ne!(id, 0);
+                    id as u32
+                })
+                .unwrap();
+            drop(mapping);
+            drop(framebuffer);
+            assert!(
+                renderer
+                    .with_context(|gl| unsafe { gl.IsFramebuffer(id) != 0 })
+                    .unwrap()
+            );
+            reclaim_render_resources(&mut renderer).unwrap();
+            assert!(
+                !renderer
+                    .with_context(|gl| unsafe { gl.IsFramebuffer(id) != 0 })
+                    .unwrap()
+            );
+        }
+    }
     #[test]
     #[ignore = "Requires a local hardware render device; no windows or apps are created"]
     fn wayland_client_discovers_hardware_gpu_without_a_window() {
@@ -762,6 +807,8 @@ pub(super) fn run(
             if changed {
                 *latest.lock().unwrap() = Some(frame);
             }
+            drop(framebuffer);
+            reclaim_render_resources(&mut state.renderer)?;
             for w in state.space.elements() {
                 w.send_frame(
                     &state.output,
@@ -782,7 +829,7 @@ pub(super) fn run(
                     let _ = events.send(DesktopEvent::Layout(layout));
                 }
             }
-            let windows: Vec<_> = state.space.elements().map(|w| state.info(w)).collect();
+            let mut windows: Vec<_> = state.space.elements().map(|w| state.info(w)).collect();
             let focus = state
                 .seat
                 .get_keyboard()
@@ -803,6 +850,11 @@ pub(super) fn run(
                     let size = window.geometry().size;
                     Some((index, [location.x, location.y, size.w, size.h]))
                 });
+            if let Some((index, _)) = selection
+                && let Some(window) = windows.get_mut(index)
+            {
+                window.focused = true;
+            }
             if selection != last_selection {
                 last_selection = selection;
                 let _ = events.send(DesktopEvent::Selection(selection));
@@ -1003,6 +1055,7 @@ impl State {
                     .unwrap();
                 WindowInfo {
                     id,
+                    focused: false,
                     name: d.title.clone().unwrap_or_else(|| "Application".into()),
                     app_id: d.app_id.clone().unwrap_or_default(),
                 }
@@ -1010,12 +1063,14 @@ impl State {
         } else if let Some(x) = w.x11_surface() {
             WindowInfo {
                 id,
+                focused: false,
                 name: x.title(),
                 app_id: x.class(),
             }
         } else {
             WindowInfo {
                 id,
+                focused: false,
                 name: "Application".into(),
                 app_id: String::new(),
             }

@@ -201,12 +201,19 @@ pub struct Terminal {
     font_size: u16,
     metrics: Option<FontMetrics>,
     selection: Option<((u16, u16), (u16, u16))>,
+    review: Option<crate::terminal_history::History>,
+    review_token: u64,
     mouse_button: Option<u8>,
     clipboard: Option<String>,
     padding: [u16; 2],
     native_previous: Option<starkit::terminal_graphics::terminal_cells::Frame>,
     native_dirty: bool,
+    links: Vec<crate::terminal_links::Link>,
+    link_wraps: Vec<bool>,
+    link_revision: u64,
     native_cell: Option<[u16; 2]>,
+    snapshot_dirty: bool,
+    snapshot_at: std::time::Instant,
 }
 impl Terminal {
     pub fn spawn(argv: &[String], path: PathBuf) -> Result<Self> {
@@ -315,11 +322,18 @@ impl Terminal {
             font_size: crate::project_state::default_terminal_font_size(),
             metrics: None,
             selection: None,
+            review: None,
+            review_token: 0,
             mouse_button: None,
             clipboard: None,
             padding: [PAD; 2],
             native_previous: None,
             native_dirty: true,
+            links: Vec::new(),
+            link_wraps: Vec::new(),
+            link_revision: 0,
+            snapshot_dirty: false,
+            snapshot_at: std::time::Instant::now() - Duration::from_secs(10),
             native_cell: None,
         })
     }
@@ -373,10 +387,11 @@ impl Terminal {
         self.native_dirty = true;
         self.parser.callbacks_mut().palette = Some([theme.fg.clone(), theme.bg.clone()]);
     }
-    pub fn poll(&mut self) -> Result<()> {
+    fn poll_output(&mut self) -> Result<()> {
         for bytes in self.output.try_iter().take(32) {
             self.parser.process(&bytes);
             self.native_dirty = true;
+            self.snapshot_dirty = true;
         }
         self.writer
             .bracketed
@@ -388,16 +403,63 @@ impl Terminal {
         if let Some(text) = self.parser.callbacks_mut().clipboard.take() {
             self.clipboard = Some(text);
         }
+        Ok(())
+    }
+    pub fn poll(&mut self) -> Result<()> {
+        self.poll_output()?;
         if let Some(status) = self.child.0.try_wait()? {
             self.exited = true;
             self.exited_successfully = status.success();
         }
         Ok(())
     }
+    /// Observe a transient supervisor without reaping it first. A zombie still
+    /// reserves its PID, so its verified group can be cleaned before PID reuse.
+    pub fn poll_transient(&mut self, birth: u64) -> Result<()> {
+        self.poll_output()?;
+        if self.exited {
+            return Ok(());
+        }
+        let pid = self.pid.context("Popup process identity unavailable")?;
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        ensure!(
+            result == 0,
+            "Cannot observe popup supervisor: {}",
+            std::io::Error::last_os_error()
+        );
+        if unsafe { info.si_pid() } == pid as i32 {
+            self.stop_transient_group(birth);
+            if let Some(status) = self.child.0.try_wait()? {
+                self.exited = true;
+                self.exited_successfully = status.success();
+            }
+        }
+        Ok(())
+    }
+    pub fn stop_transient_group(&mut self, birth: u64) {
+        if let Some(pid) = self.pid
+            && crate::agent_state::process_start(pid) == Some(birth)
+            && unsafe { libc::getpgid(pid as i32) } == pid as i32
+        {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    }
     pub fn resize(&mut self, width: u16, height: u16) -> Result<()> {
         let cols = (width.saturating_sub(PAD * 2) / self.cell_size()[0]).clamp(2, 512);
         let rows = (height.saturating_sub(PAD * 2) / self.cell_size()[1]).clamp(1, 192);
         if self.parser.screen().size() != (rows, cols) {
+            self.review = None;
+            self.native_dirty = true;
             self.selection = None;
             self.parser.screen_mut().set_size(rows, cols);
             self.master.resize(PtySize {
@@ -425,6 +487,7 @@ impl Terminal {
         let rows = rect.height.clamp(1, 192);
         let cols = rect.width.clamp(2, 512);
         if self.parser.screen().size() != (rows, cols) {
+            self.review = None;
             self.parser.screen_mut().set_size(rows, cols);
             self.master.resize(PtySize {
                 rows,
@@ -447,9 +510,10 @@ impl Terminal {
         focused: bool,
     ) -> Option<starkit::terminal_graphics::terminal_cells::Frame> {
         use starkit::terminal_graphics::terminal_cells::{Frame, Row, Run};
-        let screen = self.parser.screen();
+        let screen = self.display_screen();
         let (row, col) = screen.cursor_position();
         let cursor = (focused
+            && self.review.is_none()
             && !screen.hide_cursor()
             && screen.scrollback() == 0
             && row < rect.height
@@ -479,7 +543,7 @@ impl Terminal {
                 u8::from_str_radix(value.get(1 + i * 2..3 + i * 2).unwrap_or("00"), 16).unwrap_or(0)
             })
         };
-        let screen = self.parser.screen();
+        let screen = self.display_screen();
         let mut rows = Vec::with_capacity(usize::from(rect.height));
         for row in 0..rect.height {
             let mut runs: Vec<Run> = vec![];
@@ -529,6 +593,7 @@ impl Terminal {
         }
         let (row, col) = screen.cursor_position();
         let cursor = (focused
+            && self.review.is_none()
             && !screen.hide_cursor()
             && screen.scrollback() == 0
             && row < rect.height
@@ -546,6 +611,19 @@ impl Terminal {
                 .map(|(row, _)| row.clone())
                 .collect()
         };
+        let wraps = (0..rect.height)
+            .map(|row| screen.row_wrapped(row))
+            .collect::<Vec<_>>();
+        let revision = screen.hyperlink_revision();
+        if complete
+            || !changed.is_empty()
+            || wraps != self.link_wraps
+            || revision != self.link_revision
+        {
+            self.links = crate::terminal_links::scan(self.display_screen());
+            self.link_wraps = wraps;
+            self.link_revision = revision;
+        }
         if !complete
             && changed.is_empty()
             && self.native_previous.as_ref().unwrap().cursor == cursor
@@ -572,6 +650,165 @@ impl Terminal {
     pub fn text(&self) -> String {
         self.parser.screen().contents()
     }
+    pub fn links(&self) -> &[crate::terminal_links::Link] {
+        &self.links
+    }
+    pub fn visible_links(&self) -> Vec<crate::terminal_links::Link> {
+        crate::terminal_links::scan(self.display_screen())
+    }
+    pub fn link_at(&self, point: [f64; 2]) -> Option<String> {
+        if point.iter().any(|v| !v.is_finite())
+            || point[0] < f64::from(self.padding[0])
+            || point[1] < f64::from(self.padding[1])
+        {
+            return None;
+        }
+        let cell = self.cell_size();
+        let x = ((point[0] - f64::from(self.padding[0])) / f64::from(cell[0])) as u16;
+        let y = ((point[1] - f64::from(self.padding[1])) / f64::from(cell[1])) as u16;
+        crate::terminal_links::scan(self.display_screen())
+            .into_iter()
+            .find(|link| link.regions.iter().any(|r| r.contains(x, y)))
+            .map(|l| l.url)
+    }
+    pub fn snapshot_due(&self) -> bool {
+        self.snapshot_dirty && !self.exited && self.snapshot_at.elapsed() >= Duration::from_secs(5)
+    }
+    pub fn snapshot_refresh(&mut self) {
+        self.snapshot_dirty = true;
+        self.snapshot_at = std::time::Instant::now() - Duration::from_secs(5);
+    }
+    pub fn snapshot_capture(
+        &mut self,
+        config: &crate::runtime::Config,
+        pane: usize,
+        epoch: Option<String>,
+        health: &serde_json::Value,
+    ) -> Result<crate::cold_start::Screen> {
+        let offset = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(0);
+        let saved =
+            crate::cold_start::Screen::capture(config, pane, epoch, health, self.parser.screen());
+        self.parser.screen_mut().set_scrollback(offset);
+        saved
+    }
+    pub fn snapshot_attempted(&mut self, accepted: bool) {
+        self.snapshot_dirty = !accepted;
+        self.snapshot_at = std::time::Instant::now();
+    }
+    pub fn review_saved(&mut self, token: u64, saved: &crate::cold_start::Screen) -> Result<()> {
+        if self.review_token != token || self.review.is_none() {
+            return Ok(());
+        }
+        let (rows, columns) = self.parser.screen().size();
+        let mut screen = saved.parse()?;
+        screen.set_size(rows, columns);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64;
+        let age = now.saturating_sub(saved.captured_ms) / 1000;
+        let age = if age < 60 {
+            format!("{age}s ago")
+        } else if age < 3600 {
+            format!("{}m ago", age / 60)
+        } else if age < 86400 {
+            format!("{}h ago", age / 3600)
+        } else {
+            format!("{}d ago", age / 86400)
+        };
+        let source = format!(
+            "Saved screen / read only / {}×{} / {age}",
+            saved.columns, saved.rows
+        );
+        self.review
+            .as_mut()
+            .unwrap()
+            .replace_snapshot(&screen, &source);
+        self.native_dirty = true;
+        Ok(())
+    }
+    fn display_screen(&self) -> &vt100::Screen {
+        self.review
+            .as_ref()
+            .map_or_else(|| self.parser.screen(), |h| &h.screen)
+    }
+    pub fn review(&mut self, search: bool) -> u64 {
+        self.release();
+        self.selection = None;
+        self.review = Some(crate::terminal_history::History::new(
+            self.parser.screen(),
+            search,
+        ));
+        self.native_dirty = true;
+        self.review.as_mut().unwrap().loading = true;
+        self.review_token = crate::runtime::monotonic_ns();
+        self.review_token
+    }
+    pub fn review_loaded(
+        &mut self,
+        token: u64,
+        result: std::result::Result<(Vec<u8>, &str), String>,
+    ) {
+        if self.review_token != token {
+            return;
+        }
+        let Some(history) = self.review.as_mut() else {
+            return;
+        };
+        match result {
+            Ok((bytes, source)) => {
+                let (rows, cols) = history.screen.size();
+                let mut parser = vt100::Parser::new(rows, cols, 4000);
+                let text = String::from_utf8_lossy(&bytes);
+                let text = text.strip_suffix('\n').unwrap_or(&text);
+                for (n, line) in text.split('\n').enumerate() {
+                    if n > 0 {
+                        parser.process(b"\r\n");
+                    }
+                    parser.process(line.as_bytes());
+                }
+                history.replace_snapshot(parser.screen(), source);
+            }
+            Err(error) => {
+                history.loading = false;
+                history.source = format!("Attached screen only: {error}");
+            }
+        }
+        self.native_dirty = true;
+    }
+    pub fn review_status(&self) -> Option<crate::terminal_history::Status<'_>> {
+        self.review.as_ref().map(|h| h.status())
+    }
+    pub fn review_hint(&self) -> Option<String> {
+        self.review.as_ref().map(|h| h.hint())
+    }
+    pub fn review_key(&mut self, code: &str, modifiers: u8) -> bool {
+        let Some(history) = self.review.as_mut() else {
+            return false;
+        };
+        match history.key(code, modifiers) {
+            crate::terminal_history::Outcome::Stay => {}
+            crate::terminal_history::Outcome::Exit => {
+                self.review = None;
+                self.mouse_button = None;
+            }
+            crate::terminal_history::Outcome::Copy(text) => {
+                self.clipboard = Some(text);
+                self.review = None;
+                self.mouse_button = None;
+            }
+        }
+        self.native_dirty = true;
+        true
+    }
+    pub fn review_text(&mut self, text: &str) -> bool {
+        let Some(history) = self.review.as_mut() else {
+            return false;
+        };
+        history.text_input(text);
+        self.native_dirty = true;
+        true
+    }
     pub fn release(&mut self) {
         if self.mouse_button.take().is_some()
             && self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
@@ -582,7 +819,41 @@ impl Terminal {
     pub fn take_clipboard(&mut self) -> Option<String> {
         self.clipboard.take()
     }
+    pub fn scroll_page(&mut self, direction: i8) {
+        if direction == 0 {
+            self.review = None;
+        } else if self.review.is_some() {
+            self.review_key(if direction < 0 { "pageup" } else { "pagedown" }, 0);
+            return;
+        }
+        let screen = self.parser.screen();
+        let offset = screen.scrollback();
+        let page = usize::from(screen.size().0.saturating_sub(1).max(1));
+        self.parser.screen_mut().set_scrollback(match direction {
+            -1 => offset.saturating_add(page),
+            1 => offset.saturating_sub(page),
+            _ => 0,
+        });
+        self.selection = None;
+        self.native_dirty = true;
+    }
+    pub fn key_raw(&mut self, code: &str, modifiers: u8) -> Result<()> {
+        self.selection = None;
+        self.parser.screen_mut().set_scrollback(0);
+        self.native_dirty = true;
+        self.writer.send(key_bytes(
+            code,
+            modifiers,
+            self.parser.screen().application_cursor(),
+        ))
+    }
+    pub fn paste_raw(&mut self, text: &str) -> Result<()> {
+        self.writer.paste(text)
+    }
     pub fn key(&mut self, code: &str, modifiers: u8) -> Result<()> {
+        if self.review_key(code, modifiers) {
+            return Ok(());
+        }
         self.native_dirty = true;
         if modifiers & 3 == 3 && code.eq_ignore_ascii_case("char:c") {
             self.copy_selection();
@@ -596,7 +867,10 @@ impl Terminal {
             self.parser.screen().application_cursor(),
         ))
     }
-    pub fn paste(&self, text: &str) -> Result<()> {
+    pub fn paste(&mut self, text: &str) -> Result<()> {
+        if self.review_text(text) {
+            return Ok(());
+        }
         self.writer.paste(text)
     }
     pub fn pointer(
@@ -616,6 +890,23 @@ impl Terminal {
         let y = ((point[1] - f64::from(self.padding[1])).max(0.) / f64::from(self.cell_size()[1]))
             as u16
             + 1;
+        if let Some(history) = self.review.as_mut() {
+            if action == "down" && button == 0 {
+                self.mouse_button = Some(0);
+            }
+            if action != "move" || self.mouse_button.is_some() {
+                if let Some(text) =
+                    history.pointer(action, button, y.saturating_sub(1), x.saturating_sub(1))
+                {
+                    self.clipboard = Some(text);
+                }
+                self.native_dirty = true;
+            }
+            if action == "up" {
+                self.mouse_button = None;
+            }
+            return Ok(());
+        }
         if screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None || modifiers & 1 != 0 {
             if action.starts_with("scroll_") {
                 self.selection = None;
@@ -728,6 +1019,9 @@ impl Terminal {
         }
     }
     fn selected(&self, row: u16, col: u16) -> bool {
+        if let Some(history) = &self.review {
+            return history.selected(row, col);
+        }
         self.selection.is_some_and(|(a, b)| {
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             a != b && (row, col) >= a && (row, col) <= b
@@ -741,7 +1035,7 @@ impl Terminal {
         theme: &crate::appearance::Appearance,
     ) {
         use starkit::ratatui::style::{Color, Modifier, Style};
-        let screen = self.parser.screen();
+        let screen = self.display_screen();
         let (rows, cols) = screen.size();
         for row in 0..rows.min(rect.height) {
             for col in 0..cols.min(rect.width) {
@@ -798,7 +1092,7 @@ impl Terminal {
         theme: &crate::appearance::Appearance,
         surfaces: &mut Vec<Surface>,
     ) {
-        let screen = self.parser.screen();
+        let screen = self.display_screen();
         let (rows, cols) = screen.size();
         let mut surface = self.surface(rect.width, rect.height, &theme.bg);
         for row in 0..rows {
@@ -833,8 +1127,8 @@ impl Terminal {
                     }
                     col += 1;
                 }
-                let x = PAD + start * self.cell_size()[0];
-                let y = PAD + row * self.cell_size()[1];
+                let x = self.padding[0] + start * self.cell_size()[0];
+                let y = self.padding[1] + row * self.cell_size()[1];
                 let r = R::new(
                     x,
                     y,
@@ -867,7 +1161,11 @@ impl Terminal {
                     });
                 }
                 if style.4 {
-                    surface.fill(R::new(r.x, r.y + r.height - 2, r.width, 1), &fg, 0);
+                    surface.fill(
+                        R::new(r.x, r.y + r.height.saturating_sub(2), r.width, 1),
+                        &fg,
+                        0,
+                    );
                 }
             }
             // Bound each native surface even for adversarial alternating cell styles.
@@ -876,10 +1174,10 @@ impl Terminal {
                 surface = self.surface(rect.width, rect.height, "transparent");
             }
         }
-        if !screen.hide_cursor() && screen.scrollback() == 0 {
+        if self.review.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
             let (row, col) = screen.cursor_position();
-            let x = PAD + col * self.cell_size()[0];
-            let y = PAD + row * self.cell_size()[1];
+            let x = self.padding[0] + col * self.cell_size()[0];
+            let y = self.padding[1] + row * self.cell_size()[1];
             if x + self.cell_size()[0] <= rect.width && y + self.cell_size()[1] <= rect.height {
                 surface.nodes.push(Primitive::Border {
                     rect: R::new(x, y, self.cell_size()[0], self.cell_size()[1]),
@@ -918,7 +1216,7 @@ fn color(value: vt100::Color, default: &str, theme: &crate::appearance::Appearan
         }
     }
 }
-fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8> {
+pub(super) fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8> {
     let shift = modifiers & 1 != 0;
     let alt = modifiers & 4 != 0;
     let control = modifiers & 2 != 0;
@@ -1177,5 +1475,121 @@ mod tests {
         assert_eq!(p.callbacks().bytes, b"\x1b[1;6R");
         assert!(p.screen().contents().contains("hello"));
         assert!(!p.screen().contents().contains("MENU"));
+    }
+    #[test]
+    fn keyboard_history_pages_preserve_live_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal =
+            Terminal::spawn(&["cat".into()], temp.path().join("history.sock")).unwrap();
+        terminal.parser = vt100::Parser::new_with_callbacks(4, 40, 100, Replies::default());
+        for n in 0..20 {
+            terminal
+                .parser
+                .process(format!("history {n}\r\n").as_bytes());
+        }
+        assert!(terminal.parser.screen().contents().contains("history 19"));
+        terminal.scroll_page(-1);
+        assert_eq!(terminal.parser.screen().scrollback(), 3);
+        assert!(!terminal.parser.screen().contents().contains("history 19"));
+        terminal.scroll_page(-1);
+        assert_eq!(terminal.parser.screen().scrollback(), 6);
+        terminal.scroll_page(1);
+        assert_eq!(terminal.parser.screen().scrollback(), 3);
+        terminal.scroll_page(0);
+        assert_eq!(terminal.parser.screen().scrollback(), 0);
+        assert!(terminal.parser.screen().contents().contains("history 19"));
+    }
+    #[test]
+    fn history_capture_preserves_query_and_ignores_canceled_or_stale_requests() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal =
+            Terminal::spawn(&["cat".into()], temp.path().join("review.sock")).unwrap();
+        let old = terminal.review(true);
+        terminal.review_text("old");
+        terminal.review_key("enter", 0);
+        terminal.review_key("escape", 0);
+        terminal.review_loaded(old, Ok((b"old\n".to_vec(), "tmux")));
+        assert!(
+            terminal.review_status().is_none(),
+            "late capture resurrected canceled review"
+        );
+        let new = terminal.review(true);
+        terminal.review_text("NEW");
+        terminal.review_key("enter", 0);
+        terminal.review_loaded(old, Ok((b"old\n".to_vec(), "tmux")));
+        assert!(terminal.review_status().unwrap().loading);
+        terminal.review_loaded(new, Ok((b"old\nNEW\n".to_vec(), "tmux")));
+        let status = terminal.review_status().unwrap();
+        assert!(!status.loading);
+        assert_eq!(status.matches, 1);
+        assert_eq!(status.query, "NEW");
+        terminal.review_key("enter", 0);
+        assert_eq!(terminal.take_clipboard().as_deref(), Some("NEW"));
+        let new = terminal.review(false);
+        terminal.resize(200, 100).unwrap();
+        terminal.review_loaded(new, Ok((b"NEW\n".to_vec(), "tmux")));
+        assert!(
+            terminal.review_status().is_none(),
+            "resized view accepted old geometry"
+        );
+    }
+}
+
+#[cfg(test)]
+mod osc8_cache_tests {
+    use super::*;
+    #[test]
+    fn frozen_history_retains_its_hidden_target_during_live_updates() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut terminal = Terminal::spawn(
+            &["sleep".into(), "5".into()],
+            directory.path().join("history"),
+        )
+        .unwrap();
+        terminal.resize(400, 200).unwrap();
+        let old = b"\x1b]8;;sf-issue:frozen\x1b\\label\x1b]8;;\x1b\\";
+        terminal.parser.process(old);
+        let token = terminal.review(false);
+        terminal
+            .parser
+            .process(b"\x1b[H\x1b]8;;sf-issue:live\x1b\\label\x1b]8;;\x1b\\");
+        assert_eq!(terminal.visible_links()[0].url, "sf-issue:frozen");
+        terminal.review_loaded(token, Ok((old.to_vec(), "tmux")));
+        assert_eq!(terminal.visible_links()[0].url, "sf-issue:frozen");
+        terminal.review_key("escape", 0);
+        assert_eq!(terminal.visible_links()[0].url, "sf-issue:live");
+    }
+    #[test]
+    fn hyperlink_only_repaint_refreshes_regions_without_resending_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut terminal =
+            Terminal::spawn(&["sleep".into(), "5".into()], directory.path().join("pty")).unwrap();
+        let rect = starkit::terminal_graphics::protocol::Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 3,
+        };
+        terminal.resize_native(rect, [0, 0], [10, 20]).unwrap();
+        let theme = crate::appearance::Appearance::load("kanagawa").unwrap();
+        for uri in ["sf-issue:first", "sf-issue:second"] {
+            terminal
+                .parser
+                .process(format!("\x1b[H\x1b]8;;{uri}\x1b\\label\x1b]8;;\x1b\\").as_bytes());
+            terminal.native_dirty = true;
+            let frame = terminal.native_frame("test".into(), 1, rect, &theme, true);
+            if uri.ends_with("second") {
+                assert!(frame.is_none());
+            }
+            assert_eq!(terminal.links()[0].url, uri);
+        }
+        terminal.parser.process(b"\x1b[Hlabel");
+        terminal.native_dirty = true;
+        assert!(
+            terminal
+                .native_frame("test".into(), 1, rect, &theme, true)
+                .is_none()
+        );
+        assert!(terminal.links().is_empty());
     }
 }

@@ -69,6 +69,8 @@ pub enum DesktopCommand {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WindowInfo {
     pub id: u64,
+    #[serde(default)]
+    pub focused: bool,
     pub name: String,
     pub app_id: String,
 }
@@ -160,6 +162,25 @@ impl PointerModifiers {
 #[cfg(test)]
 mod pointer_tests {
     use super::*;
+    #[test]
+    fn window_focus_metadata_preserves_older_worker_and_client_shapes() {
+        let old = serde_json::json!({"id":7,"name":"App","app_id":"fixture"});
+        let mut window: WindowInfo = serde_json::from_value(old).unwrap();
+        assert!(!window.focused);
+        window.focused = true;
+        #[derive(serde::Deserialize)]
+        struct LegacyWindow {
+            id: u64,
+            name: String,
+            app_id: String,
+        }
+        let legacy: LegacyWindow =
+            serde_json::from_value(serde_json::to_value(window).unwrap()).unwrap();
+        assert_eq!(
+            (legacy.id, legacy.name.as_str(), legacy.app_id.as_str()),
+            (7, "App", "fixture")
+        );
+    }
     #[test]
     fn motion_bursts_do_not_repeat_modifier_barriers() {
         let mut filter = PointerModifiers::default();

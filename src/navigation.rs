@@ -24,6 +24,8 @@ struct Recent {
 }
 #[derive(Serialize, Deserialize)]
 struct SessionOrder {
+    #[serde(default)]
+    categories: crate::categories::Catalog,
     manual_order: Vec<String>,
     recent: bool,
     high_first: bool,
@@ -62,6 +64,7 @@ pub struct Navigation {
     pub audio_muted: bool,
     pub manual_order: Vec<String>,
     pub closed_projects: Vec<String>,
+    pub collapsed_categories: BTreeSet<String>,
     history: BTreeMap<String, Recent>,
     #[serde(skip)]
     pub dirty: bool,
@@ -78,6 +81,7 @@ impl Default for Navigation {
             audio_muted: false,
             manual_order: vec![],
             closed_projects: vec![],
+            collapsed_categories: BTreeSet::new(),
             history: BTreeMap::new(),
             dirty: false,
             priorities: BTreeMap::new(),
@@ -101,16 +105,21 @@ impl Navigation {
         };
         let order: SessionOrder = serde_json::from_slice(&bytes)?;
         self.manual_order = order.manual_order;
-        self.recent = order.recent;
+        self.recent = false;
         self.high_first = order.high_first;
         Ok(())
     }
     pub fn save_session_order(&self, config: &Config) -> Result<()> {
         let path = crate::session_catalog::order_path(config)?;
         let _lock = crate::project_sync::Transaction::acquire(path.with_extension("lock"))?;
-        let previous = fs::read(&path)
+        let previous_document = fs::read(&path)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<SessionOrder>(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<SessionOrder>(&bytes).ok());
+        let categories = previous_document
+            .as_ref()
+            .map(|v| v.categories.clone())
+            .unwrap_or_default();
+        let previous = previous_document
             .map(|v| v.manual_order)
             .unwrap_or_default();
         let present = crate::project_state::catalog(config)
@@ -118,6 +127,7 @@ impl Navigation {
             .map(|p| p.workspace)
             .collect::<BTreeSet<_>>();
         let order = SessionOrder {
+            categories,
             manual_order: merge_visible_order(&previous, &self.manual_order, &present),
             recent: self.recent,
             high_first: self.high_first,

@@ -53,7 +53,12 @@ pub fn event(event: &Event) -> Option<Input> {
             }
             None
         }
-        Event::Osc72(text) => Some(Input::Osc72 { text: text.clone() }),
+        Event::Osc72(text) => {
+            crate::font_frontend::event(text).or_else(|| Some(Input::Osc72 { text: text.clone() }))
+        }
+        Event::FocusLost => Some(Input::Notice {
+            message: "window-focus:lost".into(),
+        }),
         Event::FocusGained => Some(Input::Notice {
             message: "focus-canvas:terminals".into(),
         }),
@@ -81,6 +86,7 @@ fn preference(mode: Mode) -> PresentationPreference {
     }
 }
 pub fn run(launch: Launch, mode: Mode) -> Result<()> {
+    let _font_output = crate::font_frontend::LocalOutput::start()?;
     REQUIRE_GRAPHICAL.store(mode == Mode::Graphical, Ordering::Relaxed);
     client::run_with_preference(
         launch,

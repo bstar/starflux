@@ -47,11 +47,11 @@ impl Source {
             "-p",
             "-t",
             &self.session,
-            "#{pane_pid}\t#{pane_current_command}\t#{pane_dead}",
+            "#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{pane_current_path}",
         ])?;
         let text = String::from_utf8_lossy(&bytes);
         let fields = text.trim_end().split('\t').collect::<Vec<_>>();
-        ensure!(fields.len() == 3, "Invalid tmux source status");
+        ensure!(fields.len() == 4, "Invalid tmux source status");
         let agent = match fields[1] {
             "codex" => Some("codex"),
             "claude" | "claude-code" => Some("claude"),
@@ -66,7 +66,7 @@ impl Source {
             ]))
         });
         Ok(
-            json!({"alive":fields[2]=="0","pid":fields[0].parse::<u32>().ok(),"command":fields[1],"agent":agent,"state":observation.as_ref().map(|v|v.0.as_str()).unwrap_or("idle"),"output_fingerprint":observation.map(|v|v.1),"source":"tmux","source_preserved":true}),
+            json!({"alive":fields[2]=="0","pid":fields[0].parse::<u32>().ok(),"command":fields[1],"cwd":fields[3],"agent":agent,"state":observation.as_ref().map(|v|v.0.as_str()).unwrap_or("idle"),"output_fingerprint":observation.map(|v|v.1),"source":"tmux","source_preserved":true}),
         )
     }
     pub fn attach_argv(&self) -> Vec<String> {
@@ -78,6 +78,8 @@ impl Source {
             "-u".into(),
             "-S".into(),
             self.socket.to_string_lossy().into_owned(),
+            "-T".into(),
+            "hyperlinks".into(),
             "attach-session".into(),
             "-t".into(),
             self.session.clone(),

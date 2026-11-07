@@ -17,6 +17,7 @@ pub(super) struct Ui {
     focus: usize,
     controls: Vec<Control>,
     tab_offset: usize,
+    drag_origin: Option<[u16; 2]>,
     drag_project: Option<String>,
     pointer_pane: Option<usize>,
     hover: Option<[u16; 2]>,
@@ -29,6 +30,7 @@ impl Default for Ui {
             focus: 0,
             controls: vec![],
             tab_offset: 0,
+            drag_origin: None,
             drag_project: None,
             pointer_pane: None,
             hover: None,
@@ -43,8 +45,8 @@ struct Layout {
 }
 impl Layout {
     fn new(v: Viewport, sidebar: bool) -> Self {
-        let small = v.columns < 60 || v.rows < 16;
-        let side = if !small && (v.columns >= 100 || sidebar) {
+        let small = v.columns < 32 || v.rows < 10;
+        let side = if !small && (v.columns >= 100 || (sidebar && v.columns >= 60)) {
             25
         } else {
             0
@@ -114,16 +116,31 @@ fn pixels(v: Viewport, r: Rect) -> PixelRect {
     PixelRect::new(x as u16, y as u16, (right - x) as u16, (bottom - y) as u16)
 }
 fn menu_rect(menu: &crate::shelf::ContextMenu, v: Viewport) -> Rect {
+    if matches!(menu.title.as_str(), "Category agent" | "Plugins") {
+        return Rect {
+            x: 2.min(v.columns.saturating_sub(1)),
+            y: 2.min(v.rows.saturating_sub(1)),
+            width: v.columns.saturating_sub(4).max(1),
+            height: v.rows.saturating_sub(4).max(1),
+        };
+    }
     let label_width = menu
         .items
         .iter()
-        .map(|item| starkit::ratatui::text::Line::from(item.label.as_str()).width())
+        .map(|item| {
+            starkit::ratatui::text::Line::from(format!("{}  {}", item.label, item.hint)).width()
+        })
         .max()
         .unwrap_or(0);
-    let width = (label_width as u16 + 4)
+    let width = label_width
+        .saturating_add(4)
         .max(22)
-        .min(v.columns.saturating_sub(2));
-    let height = (menu.items.len() as u16 + 2).min(v.rows.saturating_sub(2));
+        .min(usize::from(v.columns.saturating_sub(2))) as u16;
+    let height = menu
+        .items
+        .len()
+        .saturating_add(2)
+        .min(usize::from(v.rows.saturating_sub(2))) as u16;
     Rect {
         x: menu.position[0].min(v.columns.saturating_sub(width + 1)),
         y: menu.position[1].min(v.rows.saturating_sub(height + 1)),
@@ -158,18 +175,45 @@ impl Workspace {
             .canvas
         }
     }
+    pub(super) fn cell_pane_geometry(&self) -> crate::panes::Layout {
+        let layout = Layout::new(self.viewport, self.cell_ui.sidebar);
+        if layout.small {
+            return Default::default();
+        }
+        let c = layout.canvas;
+        self.state
+            .layout_tree()
+            .map(|t| {
+                t.layout(
+                    crate::panes::Area {
+                        x: c.x,
+                        y: c.y,
+                        width: c.width,
+                        height: c.height,
+                    },
+                    1,
+                    [8, 3],
+                    self.state.selected(),
+                )
+            })
+            .unwrap_or_default()
+    }
     pub(super) fn cell_panes(&self) -> Vec<(usize, Rect)> {
-        let ids: Vec<_> = self
-            .state
-            .visible()
-            .iter()
-            .map(|id| self.config.canonical_pane(*id))
-            .collect();
-        Layout::new(self.viewport, self.cell_ui.sidebar).panes(
-            &ids,
-            self.config.canonical_pane(self.state.selected()),
-            self.state.split_ratio,
-        )
+        self.cell_pane_geometry()
+            .panes
+            .into_iter()
+            .map(|(id, r)| {
+                (
+                    self.config.canonical_pane(id),
+                    Rect {
+                        x: r.x,
+                        y: r.y,
+                        width: r.width,
+                        height: r.height,
+                    },
+                )
+            })
+            .collect()
     }
     pub(super) fn cell_pane_at(&self, x: u16, y: u16) -> Option<usize> {
         self.cell_panes()
@@ -191,6 +235,17 @@ impl Workspace {
             .collect()
     }
     fn cell_button(&mut self, b: &mut Buffer, r: Rect, label: &str, action: String, active: bool) {
+        if r.x >= b.area.width || r.y >= b.area.height {
+            return;
+        }
+        let r = Rect {
+            width: r.width.min(b.area.width - r.x),
+            height: r.height.min(b.area.height - r.y),
+            ..r
+        };
+        if r.width == 0 || r.height == 0 {
+            return;
+        }
         let focused = (!self.cell_ui.terminal_focus
             && self.cell_ui.focus == self.cell_ui.controls.len())
             || self.cell_ui.hover.is_some_and(|[x, y]| contains(r, x, y));
@@ -203,6 +258,7 @@ impl Workspace {
     }
     pub(super) fn draw_cells(&mut self, v: Viewport) -> Scene {
         self.viewport = v;
+        self.choose_session_row(0);
         let layout = Layout::new(v, self.cell_ui.sidebar);
         let canvas = pixels(v, layout.canvas);
         self.settings.width = u32::from(canvas.width).max(1);
@@ -218,6 +274,7 @@ impl Workspace {
         let muted = base.fg(color(&self.appearance.muted));
         let mut b = Buffer::empty(CellRect::new(0, 0, v.columns, v.rows));
         b.set_style(b.area, base);
+        let focused_config = self.focused_config();
         put(
             &mut b,
             0,
@@ -229,8 +286,8 @@ impl Workspace {
                     .label
                     .as_deref()
                     .unwrap_or(&self.config.workspace),
-                self.config.host.as_deref().unwrap_or("local"),
-                self.config.directory.as_deref().unwrap_or("")
+                focused_config.host.as_deref().unwrap_or("local"),
+                focused_config.directory.as_deref().unwrap_or("")
             ),
             accent,
         );
@@ -240,12 +297,13 @@ impl Workspace {
                 0,
                 v.rows / 2,
                 v.columns,
-                "Resize to at least 60 columns x 16 rows. Sessions remain running.",
+                "Resize to at least 32 columns x 10 rows. Sessions remain running.",
                 accent,
             );
         } else {
             let mut buttons = vec![
                 ("Projects", "cells:sidebar"),
+                ("More", "workspace:menu"),
                 ("Close project", "project:close"),
                 ("+Tab", "terminal:new"),
                 (
@@ -257,6 +315,7 @@ impl Workspace {
                 ("File", "file:deliver"),
                 ("Refresh", "ui:refresh"),
                 ("Sessions", "sessions:open"),
+                ("Inbox", "attention:inbox"),
                 ("Tab menu", "cells:tab-menu"),
                 ("Project menu", "cells:project-menu"),
                 ("Order", "projects:sort:mode"),
@@ -384,41 +443,35 @@ impl Workspace {
             }
             if layout.sidebar.width > 0 {
                 self.project_page_size = usize::from(layout.sidebar.height.saturating_sub(2));
-                self.project_offset = self.project_offset.min(
-                    self.projects
-                        .len()
-                        .saturating_sub(self.project_page_size.max(1)),
-                );
-                let title = format!(
-                    "{} / {}",
-                    if self.navigation.recent {
-                        "Activity"
-                    } else {
-                        "Manual"
+                let rows = self.category_rows();
+                self.project_offset = self
+                    .project_offset
+                    .min(rows.len().saturating_sub(self.project_page_size.max(1)));
+                self.cell_button(
+                    &mut b,
+                    Rect {
+                        x: 0,
+                        y: 4,
+                        width: 24,
+                        height: 1,
                     },
-                    self.projects.len()
+                    "Categories",
+                    "categories:global".into(),
+                    false,
                 );
-                put(&mut b, 0, 4, 24, &title, muted);
-                for n in 0..self.project_page_size {
-                    let Some(project) = self.projects.get(self.project_offset + n) else {
-                        break;
-                    };
-                    let a = self.project_activity(project);
-                    let mark = if a.questions > 0 {
-                        "?"
-                    } else if a.working > 0 {
-                        "*"
-                    } else if a.waiting > 0 {
-                        "!"
+                for (n, row) in rows
+                    .iter()
+                    .skip(self.project_offset)
+                    .take(self.project_page_size)
+                    .enumerate()
+                {
+                    let action = if let Some(id) = row.id.strip_prefix("category-end:") {
+                        format!("categories:append:{id}")
+                    } else if let Some(id) = row.id.strip_prefix("category:") {
+                        format!("categories:toggle:{id}")
                     } else {
-                        " "
+                        format!("project:{}", row.id)
                     };
-                    let label = format!(
-                        "{mark} {}",
-                        project.label.as_deref().unwrap_or(&project.workspace)
-                    );
-                    let action = format!("project:{}", project.workspace);
-                    let active = project.workspace == self.config.workspace;
                     self.cell_button(
                         &mut b,
                         Rect {
@@ -427,23 +480,24 @@ impl Workspace {
                             width: layout.sidebar.width,
                             height: 1,
                         },
-                        &label,
-                        action.clone(),
-                        active,
+                        &row.name,
+                        action,
+                        row.id == self.config.workspace,
                     );
-                    let project_id = action.strip_prefix("project:").unwrap();
-                    self.cell_button(
-                        &mut b,
-                        Rect {
-                            x: 22,
-                            y: 5 + n as u16,
-                            width: 2,
-                            height: 1,
-                        },
-                        "x",
-                        format!("close-project:{project_id}"),
-                        false,
-                    );
+                    if let Some(id) = row.id.strip_prefix("category:") {
+                        self.cell_button(
+                            &mut b,
+                            Rect {
+                                x: 22,
+                                y: 5 + n as u16,
+                                width: 2,
+                                height: 1,
+                            },
+                            "…",
+                            format!("categories:details:{id}"),
+                            false,
+                        );
+                    }
                 }
                 self.cell_button(
                     &mut b,
@@ -464,10 +518,22 @@ impl Workspace {
                 self.project_page_size = 0;
             }
             let panes = self.cell_panes();
-            if panes.len() == 2 {
-                let x = panes[0].1.x + panes[0].1.width;
-                for y in layout.canvas.y..layout.canvas.y + layout.canvas.height {
-                    put(&mut b, x, y, 1, "│", muted);
+            for divider in self.cell_pane_geometry().dividers {
+                let r = divider.rect;
+                match divider.axis {
+                    crate::panes::Axis::Right => {
+                        for y in r.y..r.y + r.height {
+                            put(&mut b, r.x, y, 1, "│", muted);
+                        }
+                    }
+                    crate::panes::Axis::Down => put(
+                        &mut b,
+                        r.x,
+                        r.y,
+                        r.width,
+                        &"─".repeat(usize::from(r.width)),
+                        muted,
+                    ),
                 }
             }
             if panes.is_empty() {
@@ -485,6 +551,11 @@ impl Workspace {
             .cell_ui
             .focus
             .min(self.cell_ui.controls.len().saturating_sub(1));
+        let keyboard_status = self
+            .keyboard
+            .pending_hint()
+            .or_else(|| self.panel_hint())
+            .or_else(|| self.terminal_review_hint());
         let summary = self
             .git_status()
             .map(|s| s.summary())
@@ -494,16 +565,19 @@ impl Workspace {
             0,
             v.rows.saturating_sub(2),
             v.columns,
-            &format!("{} | {summary}", self.status),
+            &format!(
+                "{} | {summary}",
+                keyboard_status.as_deref().unwrap_or(&self.status)
+            ),
             muted,
         );
         let hint = if self.cell_ui.terminal_focus {
-            "Ctrl+Esc / F6: controls | mouse: focus/select | sessions persist on exit"
+            "F1: shortcuts | Ctrl+B: prefix | Ctrl+Esc / F6: controls | sessions persist"
         } else {
-            "Tab/Enter: controls  +: add project  x: close project  Esc/F6: terminal"
+            "Tab/Shift+Tab: panels  Arrows: navigate  Enter/F6: type"
         };
         put(&mut b, 0, v.rows.saturating_sub(1), v.columns, hint, accent);
-        if self.context_menu.is_some() && !layout.small {
+        if (self.context_menu.is_some() || self.popup.is_some()) && !layout.small {
             for (pane, rect) in self.cell_panes() {
                 if let Some(terminal) = self.terminals.get(&(self.config.workspace.clone(), pane)) {
                     terminal.paint_cells(&mut b, rect, &self.appearance);
@@ -513,6 +587,7 @@ impl Workspace {
         if self.cells_overlay() && !layout.small {
             self.draw_cell_overlay(&mut b, base, accent);
         }
+        self.popup_cells(&mut b);
         let mut scene = Scene::from_buffer(&b, v, 0);
         scene.background = self.appearance.bg.clone();
         scene.foreground = self.appearance.fg.clone();
@@ -550,6 +625,10 @@ impl Workspace {
         }
         self.cell_ui.controls.clear();
         if let Some(model) = self.session_model() {
+            if area.width < 60 || area.height < 16 {
+                self.draw_compact_cell_sessions(b, base, accent, &model);
+                return;
+            }
             if !model.external {
                 self.cell_button(
                     b,
@@ -597,7 +676,14 @@ impl Workspace {
                 1,
                 2,
                 area.width.saturating_sub(2),
-                &format!("Search: {}│", model.query),
+                &format!(
+                    "Search: {}",
+                    crate::responsive::edit_window(
+                        &model.query,
+                        model.cursor,
+                        usize::from(area.width.saturating_sub(12))
+                    )
+                ),
                 accent,
             );
             let rows = usize::from(area.height.saturating_sub(9) / 2);
@@ -706,6 +792,22 @@ impl Workspace {
         }
         if let Some(modal) = &self.modal {
             let title = match &modal.kind {
+                Prompt::CategoryAgentSetup(_, _, _) => "Category agent / executable and charter",
+                Prompt::CategoryAgentMessage(_) => "Category conversation",
+                Prompt::CategoryAgentSetting(_, _, _, _) => "Category provider setting",
+                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve category task",
+                Prompt::Category(_, _, _) => "Category",
+                Prompt::PluginLink => "Open link with plugin",
+                Prompt::LinkPlugin(_) => "Link plugin / initially disabled",
+                Prompt::InstallPlugin(_) => "Install plugin / initially disabled",
+                Prompt::UpdatePlugin(_, _, _) => "Update plugin / review required",
+                Prompt::UninstallPlugin(_, _) => "Uninstall managed plugin",
+                Prompt::AttentionSearch => "Search attention inbox",
+                Prompt::NotificationRetention(_) => "Notification retention",
+                Prompt::Machine(_) => "Saved SSH machine",
+                Prompt::MachineProject(_) => "Add project on SSH machine",
+                Prompt::CreateWorktree(_) => "Create & open Git worktree",
+                Prompt::RemoveWorktree(_, _) => "Remove Git worktree / retain branch",
                 Prompt::Sessions(_) => "Sessions",
                 Prompt::NewSession => "Create session",
                 Prompt::DeleteSession(_) => {
@@ -716,39 +818,61 @@ impl Workspace {
                 Prompt::RenameProject(_) => "Rename project",
                 Prompt::RenameTab(_) => "Rename terminal tab",
                 Prompt::RecoverTerminal(_, _, _) => "Recover terminal to a shell",
+                Prompt::TerminateTerminal(_, _, _, _) => "Terminate terminal",
                 Prompt::RenameAgent(_) => "Rename agent",
                 Prompt::Launch | Prompt::RunCommand => "App view unavailable",
             };
             put(b, 1, 1, area.width.saturating_sub(2), title, accent);
-            for (i, (label, field)) in modal.fields.iter().enumerate() {
-                let y = 3 + i as u16 * 3;
-                put(b, 1, y, area.width.saturating_sub(2), label, base);
-                let focused = i == modal.selected;
-                // Slice by character boundary and keep the edit cursor visible.
-                let before = &field.text()[..field.cursor()];
-                let tail: String = before
-                    .chars()
-                    .rev()
-                    .take(usize::from(area.width.saturating_sub(5)))
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                let value = if focused {
-                    format!("{tail}│{}", &field.text()[field.cursor()..])
-                } else {
-                    field.text().to_owned()
-                };
+            let capacity = usize::from(area.height.saturating_sub(7) / 3).max(1);
+            let range =
+                crate::responsive::field_range(modal.fields.len(), modal.selected, capacity);
+            let fields = modal
+                .fields
+                .iter()
+                .enumerate()
+                .skip(range.start)
+                .take(range.len())
+                .map(|(i, (label, field))| {
+                    (i, label.clone(), field.text().to_owned(), field.cursor())
+                })
+                .collect::<Vec<_>>();
+            let selected = modal.selected;
+            let error = modal.error.clone();
+            if range.len() < modal.fields.len() {
                 put(
                     b,
+                    1,
                     2,
-                    y + 1,
-                    area.width.saturating_sub(4),
-                    &value,
-                    if focused { accent } else { base },
+                    area.width.saturating_sub(2),
+                    &format!("Field {} / {} · Tab next", selected + 1, modal.fields.len()),
+                    accent,
                 );
             }
-            let error = modal.error.clone();
+            for (row, (i, label, text, cursor)) in fields.into_iter().enumerate() {
+                let y = 3 + row as u16 * 3;
+                put(b, 1, y, area.width.saturating_sub(2), &label, base);
+                let value = if i == selected {
+                    crate::responsive::edit_window(
+                        &text,
+                        cursor,
+                        usize::from(area.width.saturating_sub(4)),
+                    )
+                } else {
+                    text
+                };
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: 2,
+                        y: y + 1,
+                        width: area.width.saturating_sub(4),
+                        height: 1,
+                    },
+                    &value,
+                    format!("modal:field:{i}"),
+                    i == selected,
+                );
+            }
             put(
                 b,
                 1,
@@ -799,15 +923,18 @@ impl Workspace {
                 .style(base.bg(color(&self.appearance.panel)))
                 .border_style(base.fg(color(&self.appearance.border)))
                 .render(area, b);
-            for (i, item) in menu
+            let capacity = usize::from(r.height.saturating_sub(2));
+            for (row_index, (i, item)) in menu
                 .items
                 .iter()
                 .enumerate()
-                .take(usize::from(r.height.saturating_sub(2)))
+                .skip(menu.offset(capacity))
+                .take(capacity)
+                .enumerate()
             {
                 let rect = Rect {
                     x: r.x + 1,
-                    y: r.y + 1 + i as u16,
+                    y: r.y + 1 + row_index as u16,
                     width: r.width.saturating_sub(2),
                     height: 1,
                 };
@@ -823,7 +950,7 @@ impl Workspace {
                     rect.x + 1,
                     rect.y,
                     rect.width.saturating_sub(2),
-                    &item.label,
+                    &format!("{}  {}", item.label, item.hint),
                     style,
                 );
                 self.cell_ui.controls.push(Control {
@@ -832,6 +959,62 @@ impl Workspace {
                 });
             }
         } else if self.git_open {
+            if area.height < 16 {
+                put(
+                    b,
+                    1,
+                    0,
+                    area.width.saturating_sub(2),
+                    "Working tree",
+                    accent,
+                );
+                let lines = crate::responsive::git_lines(
+                    self.git_status(),
+                    usize::from(area.width.saturating_sub(2)),
+                );
+                let rows = usize::from(area.height.saturating_sub(5)).max(1);
+                for (i, line) in lines
+                    .iter()
+                    .skip(self.git_scroll.min(lines.len().saturating_sub(rows)))
+                    .take(rows)
+                    .enumerate()
+                {
+                    put(b, 1, 3 + i as u16, area.width.saturating_sub(2), line, base);
+                }
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: 1,
+                        y: area.height.saturating_sub(2),
+                        width: 10,
+                        height: 1,
+                    },
+                    "[Refresh]",
+                    "git:refresh".into(),
+                    false,
+                );
+                self.cell_button(
+                    b,
+                    Rect {
+                        x: 13,
+                        y: area.height.saturating_sub(2),
+                        width: 10,
+                        height: 1,
+                    },
+                    "[Close]",
+                    "git:close".into(),
+                    false,
+                );
+                put(
+                    b,
+                    1,
+                    area.height.saturating_sub(1),
+                    area.width.saturating_sub(2),
+                    "↑↓ / PgUp PgDn · Esc",
+                    accent,
+                );
+                return;
+            }
             put(
                 b,
                 1,
@@ -908,9 +1091,136 @@ impl Workspace {
             );
         }
     }
+    fn draw_compact_cell_sessions(
+        &mut self,
+        b: &mut Buffer,
+        base: Style,
+        accent: Style,
+        m: &crate::shelf::SessionPicker,
+    ) {
+        let a = b.area;
+        put(
+            b,
+            1,
+            0,
+            a.width.saturating_sub(10),
+            if m.external {
+                "Import session"
+            } else {
+                "Sessions"
+            },
+            accent,
+        );
+        self.cell_button(
+            b,
+            Rect {
+                x: a.width.saturating_sub(9),
+                y: 0,
+                width: 8,
+                height: 1,
+            },
+            "[Close]",
+            "modal:cancel".into(),
+            false,
+        );
+        put(
+            b,
+            1,
+            1,
+            a.width.saturating_sub(2),
+            &format!(
+                "Search: {}",
+                crate::responsive::edit_window(
+                    &m.query,
+                    m.cursor,
+                    usize::from(a.width.saturating_sub(10))
+                )
+            ),
+            accent,
+        );
+        for (position, (index, name, _)) in m
+            .rows
+            .iter()
+            .enumerate()
+            .skip(m.offset)
+            .take(crate::responsive::session_rows(a.width, a.height, true))
+        {
+            self.cell_button(
+                b,
+                Rect {
+                    x: 1,
+                    y: 3 + (position - m.offset) as u16,
+                    width: a.width.saturating_sub(2),
+                    height: 1,
+                },
+                name,
+                format!("sessions:row:{index}"),
+                position == m.selected,
+            );
+        }
+        let actions = [
+            ("[+]", "sessions:new", 1, 3),
+            (
+                if m.external { "[Sav]" } else { "[Imp]" },
+                if m.external {
+                    "sessions:open"
+                } else {
+                    "sessions:import"
+                },
+                5,
+                5,
+            ),
+            ("[Del]", "sessions:delete", 11, 5),
+            ("[Def]", "sessions:default", 17, 5),
+            (
+                if m.external { "[Imp]" } else { "[Open]" },
+                "sessions:choose",
+                23,
+                6,
+            ),
+        ];
+        for (label, action, x, width) in actions {
+            if !m.external || !matches!(action, "sessions:delete" | "sessions:default") {
+                self.cell_button(
+                    b,
+                    Rect {
+                        x,
+                        y: a.height.saturating_sub(3),
+                        width,
+                        height: 1,
+                    },
+                    label,
+                    action.into(),
+                    action == "sessions:default" && m.selected_default,
+                );
+            }
+        }
+        put(
+            b,
+            1,
+            a.height.saturating_sub(2),
+            a.width.saturating_sub(2),
+            &m.status,
+            base,
+        );
+        put(
+            b,
+            1,
+            a.height.saturating_sub(1),
+            a.width.saturating_sub(2),
+            "↑↓ Enter · Ctrl+N/I/D · Del · Esc",
+            accent,
+        );
+    }
     fn cell_activate(&mut self, action: &str) -> Result<()> {
         match action {
-            "cells:sidebar" => self.cell_ui.sidebar = !self.cell_ui.sidebar,
+            "cells:sidebar" => {
+                if self.viewport.columns < 60 {
+                    self.compact_action("workspace:projects")?;
+                } else {
+                    self.cell_ui.sidebar = !self.cell_ui.sidebar;
+                }
+            }
             "cells:tab-menu" => {
                 let target = format!("terminal:{}", self.state.terminal);
                 let anchor = self
@@ -953,13 +1263,19 @@ impl Workspace {
                 }
             }
             "cells:split:left" | "cells:split:right" => {
-                self.state.split_ratio = (self.state.split_ratio
+                let current = self
+                    .state
+                    .unzoomed_tree()
+                    .map(|t| t.root_ratio())
+                    .unwrap_or(self.state.split_ratio);
+                let ratio = (current
                     + if action.ends_with("left") {
                         -0.05
                     } else {
                         0.05
                     })
-                .clamp(0.2, 0.8);
+                .clamp(0.1, 0.9);
+                self.state.resize_pane(&[], (ratio * 10000.) as u16);
                 self.save();
             }
             _ => self.action(action)?,
@@ -967,12 +1283,7 @@ impl Workspace {
         Ok(())
     }
     fn cell_reorder(&mut self, id: &str, gap: usize) -> Result<()> {
-        if !self.navigation.recent && self.navigation.reorder(id, gap) {
-            self.navigation.save_session_order(&self.config)?;
-            self.navigation.save(&self.navigation_scope)?;
-            self.sort_projects(false);
-        }
-        Ok(())
+        self.category_drop(id, gap)
     }
     pub(super) fn cells_input(&mut self, input: Input) -> Result<()> {
         match input {
@@ -1027,7 +1338,9 @@ impl Workspace {
                     }
                     return Ok(());
                 }
-                if (code == "escape" && modifiers & 2 != 0) || matches!(code.as_str(), "f6" | "f:6")
+                if (code == "escape" && modifiers & 2 != 0)
+                    || (matches!(code.as_str(), "f6" | "f:6")
+                        && !self.keyboard.direct_disabled(&code, modifiers))
                 {
                     self.cell_ui.terminal_focus = if code == "escape" {
                         false
@@ -1099,7 +1412,7 @@ impl Workspace {
                                 .unwrap_or(&self.config.workspace)
                                 .to_owned();
                             if let Some(index) =
-                                self.projects.iter().position(|p| p.workspace == id)
+                                self.category_rows().iter().position(|r| r.id == id)
                             {
                                 self.cell_reorder(
                                     &id,
@@ -1132,10 +1445,13 @@ impl Workspace {
                 self.cell_ui.hover = Some([x, y]);
                 if let Some(menu) = &mut self.context_menu {
                     if action == "move" {
-                        menu.selected = hit
+                        let selected = hit
                             .as_ref()
                             .and_then(|c| c.action.strip_prefix("menu:item:"))
                             .and_then(|n| n.parse().ok());
+                        if selected.is_some() {
+                            menu.selected = selected;
+                        }
                     } else if action == "down" {
                         if button == 0
                             && let Some(control) =
@@ -1145,7 +1461,25 @@ impl Workspace {
                         } else if !contains(menu_rect(menu, self.viewport), x, y) {
                             self.context_menu = None;
                         }
+                    } else if action == "scroll_up" || action == "scroll_down" {
+                        self.menu_key(if action == "scroll_up" {
+                            "pageup"
+                        } else {
+                            "pagedown"
+                        })?;
                     }
+                    return Ok(());
+                }
+                let sidebar = Layout::new(self.viewport, self.cell_ui.sidebar).sidebar;
+                if action == "down"
+                    && button == 1
+                    && hit.is_none()
+                    && sidebar.width > 0
+                    && x < sidebar.width
+                    && y >= 4
+                    && y < self.viewport.rows.saturating_sub(2)
+                {
+                    self.open_context_menu(Some("categories:background"), [x, y]);
                     return Ok(());
                 }
                 if action == "down"
@@ -1161,21 +1495,70 @@ impl Workspace {
                             .position(|c| c.action == control.action)
                             .unwrap_or(0);
                         self.cell_ui.terminal_focus = false;
-                        self.cell_ui.drag_project =
-                            control.action.strip_prefix("project:").map(str::to_owned);
-                        self.cell_activate(&control.action)?;
+                        self.cell_ui.drag_origin = Some([x, y]);
+                        self.cell_ui.drag_project = control
+                            .action
+                            .strip_prefix("project:")
+                            .map(str::to_owned)
+                            .or_else(|| {
+                                control
+                                    .action
+                                    .strip_prefix("categories:toggle:")
+                                    .filter(|id| *id != crate::categories::UNASSIGNED)
+                                    .map(|id| format!("category:{id}"))
+                            });
+                        if !self
+                            .cell_ui
+                            .drag_project
+                            .as_ref()
+                            .is_some_and(|id| id.starts_with("category:"))
+                        {
+                            self.cell_activate(&control.action)?;
+                        }
                     }
                     return Ok(());
                 }
                 if action == "up"
                     && let Some(id) = self.cell_ui.drag_project.take()
                 {
-                    if let Some(target) =
-                        hit.and_then(|c| c.action.strip_prefix("project:").map(str::to_owned))
-                        && let Some(index) =
-                            self.projects.iter().position(|p| p.workspace == target)
+                    let moved =
+                        self.cell_ui.drag_origin.take().is_some_and(|start| {
+                            start[0].abs_diff(x) > 1 || start[1].abs_diff(y) > 0
+                        });
+                    if !moved {
+                        if let Some(id) = id.strip_prefix("category:") {
+                            self.category_action(&format!("categories:toggle:{id}"))?;
+                        }
+                        return Ok(());
+                    }
+                    if let Some(target) = hit.and_then(|c| {
+                        c.action
+                            .strip_prefix("project:")
+                            .map(str::to_owned)
+                            .or_else(|| {
+                                c.action
+                                    .strip_prefix("categories:toggle:")
+                                    .map(|id| format!("category:{id}"))
+                                    .or_else(|| {
+                                        c.action
+                                            .strip_prefix("categories:append:")
+                                            .map(|id| format!("category-end:{id}"))
+                                    })
+                            })
+                    }) && let Some(index) =
+                        self.category_rows().iter().position(|r| r.id == target)
                     {
                         self.cell_reorder(&id, index)?;
+                    } else {
+                        let layout = Layout::new(self.viewport, self.cell_ui.sidebar);
+                        let rows = self.category_rows();
+                        let end = 5 + rows.len().saturating_sub(self.project_offset) as u16;
+                        if x < layout.sidebar.width
+                            && y >= end
+                            && y < self.viewport.rows.saturating_sub(3)
+                        {
+                            self.category_drop(&id, rows.len())?;
+                        }
                     }
                     return Ok(());
                 }
@@ -1198,6 +1581,15 @@ impl Workspace {
                 }
                 let panes = self.cell_panes();
                 let pane = self.cell_pane_at(x, y);
+                if self.pane_divider_input(
+                    &action,
+                    button,
+                    [f64::from(x), f64::from(y)],
+                    self.cell_pane_geometry(),
+                ) {
+                    return Ok(());
+                }
+
                 if action == "down"
                     && let Some(id) = pane
                 {
@@ -1208,25 +1600,6 @@ impl Workspace {
                     self.state.select_terminal(id);
                     self.cell_ui.pointer_pane = Some(id);
                     self.cell_ui.terminal_focus = true;
-                }
-                if action == "down"
-                    && pane.is_none()
-                    && panes.len() == 2
-                    && contains(layout.canvas, x, y)
-                {
-                    self.drag_split = true;
-                    return Ok(());
-                }
-                if self.drag_split {
-                    if action == "up" {
-                        self.drag_split = false;
-                        self.save();
-                    } else {
-                        self.state.split_ratio = (f64::from(x.saturating_sub(layout.canvas.x))
-                            / f64::from(layout.canvas.width.max(1)))
-                        .clamp(0.2, 0.8);
-                    }
-                    return Ok(());
                 }
                 if let Some((id, rect)) = self
                     .cell_ui

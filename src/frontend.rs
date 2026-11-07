@@ -128,10 +128,18 @@ pub fn active(workspace: &str) -> Result<Vec<View>> {
 pub fn action(view: &View, action: &str) -> Result<()> {
     let directory = root()?.join(format!("{}.actions", view.id));
     fs::create_dir_all(&directory)?;
-    starkit::fs::write_private(
-        &directory.join(format!("{}.json", uuid::Uuid::new_v4())),
-        &serde_json::to_vec(action)?,
-    )
+    let name = format!(
+        "{:020}-{}.json",
+        crate::runtime::monotonic_ns(),
+        uuid::Uuid::new_v4()
+    );
+    let bytes = serde_json::to_vec(action)?;
+    ensure!(bytes.len() <= 8192, "Workspace action exceeds 8 KiB");
+    // Publish only complete commands, including when updating an older reader
+    // which scans every file inside its actions directory.
+    let staging = root()?.join("action-staging").join(&name);
+    starkit::fs::write_private(&staging, &bytes)?;
+    fs::rename(&staging, directory.join(name)).context("Publish workspace action")
 }
 pub fn snapshot(view: &View) -> Result<serde_json::Value> {
     serde_json::from_slice(&fs::read(root()?.join(format!("{}.state.json", view.id)))?)

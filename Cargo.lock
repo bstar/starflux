@@ -3472,6 +3472,7 @@ dependencies = [
  "base64",
  "clap",
  "crossbeam-channel",
+ "flate2",
  "gio",
  "gio-unix",
  "gstreamer",
@@ -3498,8 +3499,11 @@ name = "starflux-terminal-client"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "crossbeam-channel",
+ "serde_json",
  "starkit",
+ "tempfile",
 ]
 
 [[package]]
@@ -4221,10 +4225,9 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 [[package]]
 name = "vt100"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "054ff75fb8fa83e609e685106df4faeffdf3a735d3c74ebce97ec557d5d36fd9"
 dependencies = [
  "itoa",
+ "memchr",
  "unicode-width",
  "vte",
 ]

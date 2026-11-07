@@ -9,6 +9,7 @@ readme = "README.md"
 
 [workspace]
 members = ["terminal-client"]
+exclude = ["vendor/vt100"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -32,12 +33,13 @@ base64 = "0.22"
 percent-encoding = "2"
 sha2 = "0.10"
 png = "0.17"
+flate2 = "1"
 gst = { package = "gstreamer", version = "0.25", features = ["v1_24"] }
 gst_app = { package = "gstreamer-app", version = "0.25", features = ["v1_24"] }
 uuid = { version = "1", features = ["v4"] }
-gio = "0.22"
+gio = { version = "0.22", features = ["v2_66"] }
 gio-unix = "0.22"
-vt100 = "0.16.2"
+vt100 = { version = "0.16.2", path = "vendor/vt100" }
 portable-pty = "0.9"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"

@@ -7,6 +7,7 @@ arch=('x86_64')
 url='https://github.com/bstar/starflux'
 license=('MIT')
 depends=('glibc' 'gcc-libs' 'ffmpeg' 'alsa-lib' 'alsa-plugins' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad' 'gst-plugins-ugly' 'gst-libav' 'glib2' 'wayland' 'libxkbcommon' 'libdrm' 'mesa' 'libglvnd' 'libpulse' 'tmux' 'python' 'openssh' 'xorg-xwayland' 'dbus' 'kitty')
+optdepends=('libnotify: local desktop notification delivery')
 makedepends=('rust>=1.98' 'git' 'clang' 'pkgconf')
 options=('!lto' '!debug')
 source=("starflux-${pkgver}.tar.gz")

@@ -18,9 +18,17 @@ pub struct Terminal {
     pub pid: u32,
     pub epoch: String,
     pub proxy: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_boot_id: Option<String>,
 }
 impl Terminal {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.owner_boot_id
+                .as_deref()
+                .is_none_or(|id| uuid::Uuid::parse_str(id).is_ok()),
+            "Invalid transferred terminal boot identity"
+        );
         ensure!(
             self.broker.is_absolute() && self.proxy.is_absolute(),
             "Transferred PTY paths must be absolute"
@@ -45,6 +53,70 @@ impl Terminal {
             "Invalid transferred terminal server"
         );
         Ok(())
+    }
+    fn recovery_path(&self, config: &crate::runtime::Config, pane: usize) -> Result<PathBuf> {
+        Ok(crate::project_state::data_root()?
+            .parent()
+            .context("No recovery directory")?
+            .join("terminal-recovery")
+            .join(&config.workspace)
+            .join(format!("p{pane}.json")))
+    }
+    fn fingerprint(&self) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
+    }
+    pub fn retired(&self, config: &crate::runtime::Config, pane: usize) -> bool {
+        let Ok(path) = self.recovery_path(config, pane) else {
+            return false;
+        };
+        let Ok(record) = crate::plugin_store::read::<Value>(&path, 8192) else {
+            return false;
+        };
+        record["version"] == 1 && self.fingerprint().is_ok_and(|id| record["terminal"] == id)
+    }
+    /// Reboot proof is required: a missing socket alone can be a temporary broker failure.
+    /// Keep a durable receipt because a new shell will replace the old screen's boot metadata.
+    pub fn retire_after_reboot(
+        &self,
+        config: &crate::runtime::Config,
+        pane: usize,
+    ) -> Result<bool> {
+        if self.retired(config, pane) {
+            return Ok(true);
+        }
+        let Some(current) = crate::agent_state::boot_id() else {
+            return Ok(false);
+        };
+        let owner = self
+            .owner_boot_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .or_else(|| {
+                crate::cold_start::load(&config.workspace, pane, false)
+                    .ok()
+                    .filter(|s| {
+                        s.pid == Some(self.pid) && s.epoch.as_deref() == Some(self.epoch.as_str())
+                    })
+                    .and_then(|s| {
+                        s.observer_boot_id
+                            .and_then(|id| uuid::Uuid::parse_str(&id).ok())
+                    })
+            });
+        let Some(owner) = owner.filter(|owner| *owner != current) else {
+            return Ok(false);
+        };
+        let path = self.recovery_path(config, pane)?;
+        starkit::terminal_graphics::session::private_root(
+            path.parent().context("No recovery directory")?,
+        )?;
+        crate::automation::persist(
+            &path,
+            &serde_json::to_vec(
+                &json!({"version":1,"terminal":self.fingerprint()?,"owner_boot":owner.to_string(),"recovered_boot":current.to_string()}),
+            )?,
+        )?;
+        Ok(true)
     }
     pub fn inspect(&self) -> Result<Value> {
         let mut socket = UnixStream::connect(&self.broker)
@@ -90,6 +162,16 @@ impl Terminal {
     pub fn observe(&self, pane: usize) -> Result<Value> {
         let mut health = self.inspect()?;
         health["bridge_connected"] = json!(self.bridge_alive(pane)?);
+        // The retained broker may predate directory reporting. Read the original
+        // foreground agent or shell, never the tmux presentation proxy.
+        if health["alive"] == true {
+            let pid = health["agent_pid"].as_u64().unwrap_or(u64::from(self.pid));
+            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                .or_else(|_| std::fs::read_link(format!("/proc/{}/cwd", self.pid)));
+            if let Ok(cwd) = cwd {
+                health["cwd"] = json!(cwd);
+            }
+        }
         // Retained owners can predate current footer detection. Observe the
         // live screen here instead of trusting their cached interpretation.
         if health["alive"] == true && matches!(health["agent"].as_str(), Some("codex" | "claude")) {

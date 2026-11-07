@@ -1,7 +1,35 @@
+#[path = "attention_ui.rs"]
+mod attention_ui;
+#[path = "category_agent_ui.rs"]
+mod category_agent_ui;
+#[path = "category_ui.rs"]
+mod category_ui;
 #[path = "cells.rs"]
 mod cells;
+#[path = "compact_ui.rs"]
+mod compact_ui;
+#[path = "focus_ui.rs"]
+mod focus_ui;
+#[path = "font_ui.rs"]
+mod font_ui;
+#[path = "frontend_ui.rs"]
+mod frontend_ui;
+#[path = "keyboard_ui.rs"]
+mod keyboard_ui;
+#[path = "machine_ui.rs"]
+mod machine_ui;
+#[path = "pane_ui.rs"]
+mod pane_ui;
+#[path = "plugin_popup_ui.rs"]
+mod plugin_popup_ui;
+#[path = "plugin_ui.rs"]
+mod plugin_ui;
 #[path = "session_ui.rs"]
 mod session_ui;
+#[path = "terminal_link_ui.rs"]
+mod terminal_link_ui;
+#[path = "worktree_ui.rs"]
+mod worktree_ui;
 use crate::{
     app_desktop::{Client as AppClient, Request as AppRequest},
     compositor::{Desktop, DesktopCommand, DesktopEvent, Input as DesktopInput, WindowInfo},
@@ -36,6 +64,21 @@ use std::{
 };
 #[derive(Debug)]
 enum Event {
+    CategoryAgentBadges(BTreeMap<String, String>),
+    CategoryAgent(Instant, String, std::result::Result<Value, String>),
+    Plugins(Instant, String, std::result::Result<Value, String>),
+    MachineChecked(
+        crate::machines::Machine,
+        Instant,
+        std::result::Result<Value, String>,
+    ),
+    Worktrees(
+        Box<Config>,
+        Instant,
+        std::result::Result<crate::worktrees::Catalog, String>,
+    ),
+    WorktreeOpened(String, Instant, std::result::Result<Box<Config>, String>),
+    WorktreeRemoved(Instant, std::result::Result<Value, String>),
     SessionEntries(
         Instant,
         std::result::Result<Vec<crate::session_catalog::Entry>, String>,
@@ -43,14 +86,42 @@ enum Event {
     SessionImported(Instant, std::result::Result<Box<Config>, String>),
     SessionDeleted(std::result::Result<(), String>),
     Ready(Box<Config>, usize),
+    PluginPaneOpened(
+        u64,
+        Box<std::result::Result<crate::plugin_panes::Record, String>>,
+    ),
+    EnsureFailed(String, usize, String, Arc<AtomicBool>),
     Recovered(Box<Config>, usize),
+    Terminated(Box<Config>, usize, Option<String>),
+    TerminalHistory(
+        String,
+        usize,
+        Option<String>,
+        u64,
+        std::result::Result<(Vec<u8>, &'static str), String>,
+    ),
+    SavedScreen(
+        String,
+        usize,
+        Option<String>,
+        u64,
+        std::result::Result<crate::cold_start::Screen, String>,
+    ),
     Applications(
         String,
         Instant,
         std::result::Result<Vec<crate::applications::Application>, String>,
     ),
-    Git(String, String, Box<crate::git::Status>),
-    Activity(BTreeMap<String, crate::activity::Activity>),
+    Git(String, Box<crate::git::Status>),
+    Activity(
+        BTreeMap<String, crate::activity::Activity>,
+        crate::notifications::Scan,
+    ),
+    AttentionInbox(
+        Instant,
+        std::result::Result<crate::notifications::Inbox, String>,
+    ),
+    AttentionUpdated(std::result::Result<Value, String>),
     Selected(u64, String),
     Health(String, usize, Value, Arc<AtomicBool>),
     Status(String),
@@ -74,9 +145,26 @@ struct AppHost {
     windows: Vec<WindowInfo>,
     layout: Vec<WindowLayout>,
     selected: Option<u64>,
+    focus_known: bool,
 }
 #[derive(Clone)]
 enum Prompt {
+    CategoryAgentSetup(String, u64, crate::category_agent::Profile),
+    CategoryAgentMessage(String),
+    CategoryAgentSetting(String, u64, crate::category_agent::Profile, bool),
+    CategoryAgentApprove(String, String, String, Option<Value>),
+    Category(Option<String>, u64, Option<String>),
+    LinkPlugin(String),
+    PluginLink,
+    InstallPlugin(String),
+    UpdatePlugin(String, String, String),
+    UninstallPlugin(String, String),
+    AttentionSearch,
+    NotificationRetention(crate::notifications::Settings),
+    Machine(Option<crate::machines::Machine>),
+    MachineProject(crate::machines::Machine),
+    CreateWorktree(Config),
+    RemoveWorktree(Config, Value),
     Sessions(bool),
     NewSession,
     DeleteSession(String),
@@ -88,6 +176,7 @@ enum Prompt {
     RenameTab(usize),
     RenameAgent(usize),
     RecoverTerminal(String, usize, Option<String>),
+    TerminateTerminal(String, usize, Option<String>, (u32, u64, uuid::Uuid)),
 }
 struct Catalog {
     source: String,
@@ -127,6 +216,43 @@ struct ProjectDrag {
     scrolled_at: Instant,
 }
 pub struct Workspace {
+    attention_query: crate::notifications::Query,
+    attention_items: Vec<crate::notifications::Item>,
+    attention_total: usize,
+    attention_token: Option<Instant>,
+    attention_loading: bool,
+    notification_focused: bool,
+    notification_focus: crate::notifications::FocusWriter,
+    panel_focus: Option<focus_ui::Panel>,
+    panel_keys: BTreeSet<String>,
+    screen_writer: crate::cold_start::Writer,
+    notification_started_ms: u64,
+    notification_error: Option<String>,
+    notification_settings: Option<crate::notifications::Settings>,
+    coordinator: Option<category_agent_ui::Coordinator>,
+    coordinator_badges: BTreeMap<String, String>,
+    coordinator_badges_at: Instant,
+    coordinator_badges_pending: bool,
+    category_menu_revision: u64,
+    category_cursor: usize,
+    category_catalog: crate::categories::Catalog,
+    category_projects: Vec<Config>,
+    popup: Option<plugin_popup_ui::Popup>,
+    plugin_token: Option<Instant>,
+    plugin_data: Value,
+    plugin_generation: u64,
+    plugin_view: String,
+    terminal_link: Option<terminal_link_ui::Target>,
+    terminal_link_choices: Vec<terminal_link_ui::Target>,
+    link_pointer_capture: bool,
+    machine_profile: Option<crate::machines::Machine>,
+    machine_checks: BTreeMap<String, Value>,
+    machine_pending: BTreeMap<String, Instant>,
+    worktree_token: Option<Instant>,
+    worktree_catalog: Option<(Config, crate::worktrees::Catalog)>,
+    attention_seen: BTreeSet<String>,
+    attention_unread: usize,
+    keyboard: crate::keyboard::Keyboard,
     cells: bool,
     require_graphical: bool,
     cell_ui: cells::Ui,
@@ -159,6 +285,8 @@ pub struct Workspace {
     health: BTreeMap<(String, usize), Value>,
     registered: BTreeSet<(String, usize)>,
     session_monitors: BTreeMap<(String, usize), Arc<AtomicBool>>,
+    session_capture: BTreeMap<(String, usize), Arc<AtomicBool>>,
+    session_sources: BTreeMap<(String, usize), String>,
     session_epochs: BTreeMap<(String, usize), Option<String>>,
     launched: BTreeMap<(String, usize), Instant>,
     windows: Vec<WindowInfo>,
@@ -182,8 +310,10 @@ pub struct Workspace {
     terminal_fps: u32,
     native_terminal_cells: bool,
     native_layout_key: String,
+    fonts: font_ui::Fonts,
     native_font_points: Option<u32>,
     initial_native_font_points: Option<u32>,
+    app_keyboard_released: bool,
     app_pointer_modifiers: crate::compositor::PointerModifiers,
     pointer_hiding: bool,
     cursor_policy_sent: Option<bool>,
@@ -192,6 +322,7 @@ pub struct Workspace {
     effects: Vec<ServerMessage>,
     quit: bool,
     last_inspect: Instant,
+    sessions_retry_at: Instant,
     started: Instant,
     receiving: Option<(usize, Vec<u8>)>,
     receiving_remote: bool,
@@ -209,7 +340,7 @@ pub struct Workspace {
     drop_target: Option<(Config, Option<(String, u64)>)>,
     modal: Option<Modal>,
     context_menu: Option<crate::shelf::ContextMenu>,
-    drag_split: bool,
+    pane_drag: Option<crate::panes::Divider>,
     text_gesture: crate::selection::Gesture,
     selection_target: Option<(String, usize)>,
     selection_serial: u64,
@@ -220,7 +351,7 @@ pub struct Workspace {
     wave_phase: u16,
     last_typing: Instant,
     reduced_motion: bool,
-    git: BTreeMap<String, (String, crate::git::Status, Instant)>,
+    git: BTreeMap<String, (crate::git::Status, Instant)>,
     git_pending: BTreeSet<String>,
     git_open: bool,
     git_scroll: usize,
@@ -335,6 +466,43 @@ impl Workspace {
         // Presentation is negotiated before starting any graphical service.
         let desktop = None;
         let mut s = Self {
+            attention_query: crate::notifications::load_query(&controller_id).unwrap_or_default(),
+            attention_items: Vec::new(),
+            attention_total: 0,
+            attention_token: None,
+            attention_loading: false,
+            notification_focused: false,
+            notification_focus: crate::notifications::FocusWriter::new(),
+            panel_focus: None,
+            panel_keys: BTreeSet::new(),
+            screen_writer: crate::cold_start::Writer::new(),
+            notification_started_ms: crate::notifications::now_ms(),
+            notification_error: None,
+            notification_settings: None,
+            coordinator: None,
+            coordinator_badges: BTreeMap::new(),
+            coordinator_badges_at: Instant::now() - Duration::from_secs(3),
+            coordinator_badges_pending: false,
+            category_menu_revision: 0,
+            category_cursor: 0,
+            category_catalog: crate::categories::Catalog::default(),
+            category_projects: Vec::new(),
+            popup: None,
+            plugin_token: None,
+            plugin_data: json!({}),
+            plugin_generation: 0,
+            plugin_view: String::new(),
+            terminal_link: None,
+            terminal_link_choices: Vec::new(),
+            link_pointer_capture: false,
+            machine_profile: None,
+            machine_checks: BTreeMap::new(),
+            machine_pending: BTreeMap::new(),
+            worktree_token: None,
+            worktree_catalog: None,
+            attention_seen: BTreeSet::new(),
+            attention_unread: 0,
+            keyboard: Default::default(),
             cells: false,
             require_graphical: false,
             cell_ui: cells::Ui::default(),
@@ -367,6 +535,8 @@ impl Workspace {
             health: BTreeMap::new(),
             registered: BTreeSet::new(),
             session_monitors: BTreeMap::new(),
+            session_capture: BTreeMap::new(),
+            session_sources: BTreeMap::new(),
             session_epochs: BTreeMap::new(),
             launched: BTreeMap::new(),
             windows: vec![],
@@ -390,8 +560,10 @@ impl Workspace {
             terminal_fps,
             native_terminal_cells: false,
             native_layout_key: String::new(),
+            fonts: Default::default(),
             native_font_points: None,
             initial_native_font_points: None,
+            app_keyboard_released: true,
             app_pointer_modifiers: Default::default(),
             pointer_hiding: false,
             cursor_policy_sent: None,
@@ -400,6 +572,7 @@ impl Workspace {
             effects: vec![],
             quit: false,
             last_inspect: Instant::now(),
+            sessions_retry_at: Instant::now(),
             started: Instant::now(),
             receiving: None,
             receiving_remote: false,
@@ -417,7 +590,7 @@ impl Workspace {
             drop_target: None,
             modal: None,
             context_menu: None,
-            drag_split: false,
+            pane_drag: None,
             text_gesture: Default::default(),
             selection_target: None,
             selection_serial: 0,
@@ -433,7 +606,15 @@ impl Workspace {
             git_open: false,
             git_scroll: 0,
         };
+        s.reload_categories();
+        s.load_keyboard();
         s.ensure_sessions();
+        if let Err(e) = crate::plugin_runner::ensure() {
+            s.note(format!("Plugin workflows: {e:#}"));
+        }
+        if let Err(e) = crate::snapshot_service::ensure() {
+            s.note(format!("Background snapshots: {e:#}"));
+        }
         Ok(s)
     }
     fn require_graphical(&mut self) {
@@ -457,6 +638,16 @@ impl Workspace {
         }
     }
     fn save(&mut self) {
+        self.notification_focus.publish(
+            &self.controller_id,
+            &self.config,
+            self.state.selected(),
+            self.state
+                .terminal_epochs
+                .get(&self.state.selected())
+                .cloned(),
+            self.notification_focused && self.state.space != Space::Apps,
+        );
         if let Err(error) = crate::session_catalog::remember(&self.config) {
             self.note(format!("Save session: {error:#}"));
         }
@@ -552,27 +743,16 @@ impl Workspace {
         }
     }
     fn font_label(&self) -> String {
-        #[cfg(feature = "lossless-canvas")]
-        if self.desktop.is_none() {
-            return self.native_font_points.map_or_else(
-                || "Kitty".into(),
-                |size| {
-                    if size % 1000 == 0 {
-                        format!("{}pt", size / 1000)
-                    } else {
-                        format!("{:.1}pt", f64::from(size) / 1000.)
-                    }
-                },
-            );
+        let family = self.fonts.family.as_deref().unwrap_or("Monospace");
+        let mut label: String = family.chars().take(17).collect();
+        if family.chars().count() > 17 {
+            label.push('…');
         }
-        let size = self.font_pixels();
-        if (size - size.round()).abs() < 0.01 {
-            format!("{size:.0}px")
-        } else {
-            format!("{size:.1}px")
-        }
+        label
     }
     fn release(&mut self) {
+        self.app_keyboard_released = true;
+        self.keyboard.cancel();
         self.app_pointer_modifiers.reset();
         self.text_gesture.cancel();
         self.selection_target = None;
@@ -585,15 +765,28 @@ impl Workspace {
                 input: DesktopInput::Release,
             });
         }
-        self.drag_split = false;
+        self.pane_drag = None;
     }
     fn refresh_activity(&mut self) {
         if !self.activity_pending && self.activity_at.elapsed() >= Duration::from_secs(2) {
             self.activity_pending = true;
-            let projects = self.projects.clone();
+            let started_ms = self.notification_started_ms;
+            self.notification_focus.publish(
+                &self.controller_id,
+                &self.config,
+                self.state.selected(),
+                self.state
+                    .terminal_epochs
+                    .get(&self.state.selected())
+                    .cloned(),
+                self.notification_focused && self.state.space != Space::Apps,
+            );
+            let projects = self.category_projects.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Activity(crate::activity::inspect(&projects)));
+                let activity = crate::activity::inspect(&projects);
+                let unread = crate::notifications::scan(started_ms);
+                let _ = tx.send(Event::Activity(activity, unread));
             });
         }
         if !self.reduced_motion
@@ -610,6 +803,7 @@ impl Workspace {
         }
     }
     fn project_order_input(&mut self, input: &Input) -> bool {
+        let category_rows = self.category_rows();
         if matches!(input, Input::CancelPointer)
             || matches!(input, Input::Key { code, .. } if code == "escape")
         {
@@ -648,9 +842,17 @@ impl Workspace {
                     .iter()
                     .rev()
                     .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
-                    .and_then(|h| h.action.strip_prefix("project:"))
-                    .filter(|id| self.projects.iter().any(|p| p.workspace == *id))
-                    .map(str::to_owned)
+                    .and_then(|h| {
+                        h.action
+                            .strip_prefix("project:")
+                            .map(str::to_owned)
+                            .or_else(|| {
+                                h.action
+                                    .strip_prefix("categories:toggle:")
+                                    .filter(|id| *id != crate::categories::UNASSIGNED)
+                                    .map(|id| format!("category:{id}"))
+                            })
+                    })
             {
                 self.release();
                 self.project_drag = Some(ProjectDrag {
@@ -678,7 +880,13 @@ impl Workspace {
         .sidebar
         .width;
         let rows = self.project_page_size.max(1);
-        let bottom = 122 + rows as u32 * 34;
+        let bottom = 122
+            + category_rows
+                .iter()
+                .skip(self.project_offset)
+                .take(rows)
+                .map(|r| u32::from(crate::categories::row_height(&r.id)))
+                .sum::<u32>();
         if drag.moved
             && point[0] < u32::from(width)
             && drag.scrolled_at.elapsed() >= Duration::from_millis(120)
@@ -691,75 +899,61 @@ impl Workspace {
                 self.project_offset = self.project_offset.saturating_sub(1);
             } else if point[1] >= bottom.saturating_sub(14) || action == "scroll_down" {
                 self.project_offset =
-                    (self.project_offset + 1).min(self.projects.len().saturating_sub(rows));
+                    (self.project_offset + 1).min(category_rows.len().saturating_sub(rows));
             }
             drag.scrolled_at = Instant::now();
         }
-        drag.gap = (point[0] < u32::from(width) && point[1] >= 110 && point[1] <= bottom + 12)
-            .then(|| {
-                (self.project_offset + ((point[1].saturating_sub(122) + 17) / 34) as usize)
-                    .min(self.projects.len())
-            });
+        drag.gap = (point[0] < u32::from(width)
+            && point[1] >= 110
+            && point[1] < self.viewport.height.saturating_sub(66))
+        .then(|| {
+            crate::categories::drop_index_sized(
+                self.project_offset,
+                point[1],
+                &category_rows
+                    .iter()
+                    .map(|r| (r.project.is_none(), crate::categories::row_height(&r.id)))
+                    .collect::<Vec<_>>(),
+            )
+        });
         if action == "up" {
             let drag = self.project_drag.take().unwrap();
             if drag.moved {
-                if let Some(gap) = drag.gap {
-                    self.navigation.reconcile(&self.projects);
-                    if self.navigation.reorder(&drag.id, gap) {
-                        self.navigation.sort(&mut self.projects);
-                        if let Err(error) = self.navigation.save_session_order(&self.config) {
-                            self.note(format!("Could not save session project order: {error:#}"));
-                        }
-                        if let Err(error) = self.navigation.save(&self.navigation_scope) {
-                            self.note(format!("Could not save project order: {error:#}"));
-                        }
-                        self.navigation_saved_at = Instant::now();
-                    }
+                if let Some(gap) = drag.gap
+                    && let Err(error) = self.category_drop(&drag.id, gap)
+                {
+                    self.note(format!("Move project/category: {error:#}"));
                 }
-            } else if let Err(error) = self.switch_project(&drag.id) {
+            } else if let Err(error) = if let Some(id) = drag.id.strip_prefix("category:") {
+                self.category_action(&format!("categories:toggle:{id}"))
+                    .map(|_| ())
+            } else {
+                self.switch_project(&drag.id)
+            } {
                 self.note(format!("{error:#}"));
             }
         }
         true
     }
     fn sort_projects(&mut self, reset_scroll: bool) {
+        let old = self.category_rows();
+        let anchor = old.get(self.project_offset).map(|r| r.id.clone());
+        self.reload_categories();
+        self.navigation.recent = false;
         self.navigation.filter_open(&mut self.projects);
         if self.project_drag.is_some() {
             return;
         }
-        let page = self.project_page_size.max(1);
-        let selected_visible = self
-            .projects
-            .iter()
-            .position(|p| p.workspace == self.config.workspace)
-            .is_some_and(|i| i >= self.project_offset && i < self.project_offset + page);
-        let anchor = self
-            .projects
-            .get(self.project_offset)
-            .map(|p| p.workspace.clone());
         self.navigation.sort(&mut self.projects);
+        let rows = self.category_rows();
+        let page = self.project_page_size.max(1);
         if reset_scroll {
             self.project_offset = 0;
-        } else if selected_visible {
-            if let Some(i) = self
-                .projects
-                .iter()
-                .position(|p| p.workspace == self.config.workspace)
-            {
-                if i < self.project_offset {
-                    self.project_offset = i;
-                } else if i >= self.project_offset + page {
-                    self.project_offset = i + 1 - page;
-                }
-            }
-        } else if let Some(i) =
-            anchor.and_then(|a| self.projects.iter().position(|p| p.workspace == a))
-        {
+        } else if let Some(i) = anchor.and_then(|id| rows.iter().position(|r| r.id == id)) {
             self.project_offset = i;
         }
-        self.project_offset = self
-            .project_offset
-            .min(self.projects.len().saturating_sub(page));
+        self.project_offset = self.project_offset.min(rows.len().saturating_sub(page));
+        self.category_cursor = self.category_cursor.min(rows.len().saturating_sub(1));
     }
     fn project_activity(&self, project: &Config) -> crate::activity::Activity {
         let mut result = if self.activity_at.elapsed() < Duration::from_secs(8) {
@@ -787,7 +981,13 @@ impl Workspace {
             }) {
                 if let Some(health) = self.health.get(&(project.workspace.clone(), pane)) {
                     any = true;
-                    if health["alive"] == true && health["agent"].as_str().is_some() {
+                    native.available = true;
+                    if (health["alive"] == true && health["agent"].as_str().is_some())
+                        || matches!(
+                            health["state"].as_str(),
+                            Some("failed" | "backend_unavailable")
+                        )
+                    {
                         native.observe(health["state"].as_str().unwrap_or("unknown"));
                     }
                 }
@@ -897,20 +1097,12 @@ impl Workspace {
     }
     fn ensure_sessions(&mut self) {
         let agents = self.state.agent_ids();
-        let panes: Vec<usize> = if self.config.herdr.is_some() {
-            self.state
-                .visible()
-                .into_iter()
-                .chain(agents.iter().copied())
-                .map(|pane| self.config.canonical_pane(pane))
-                .collect()
-        } else {
-            agents
-                .iter()
-                .copied()
-                .chain(self.state.terminals.clone())
-                .collect()
-        };
+        let panes: Vec<usize> = self
+            .state
+            .terminal_ids()
+            .into_iter()
+            .map(|pane| self.config.canonical_pane(pane))
+            .collect();
         for pane in panes {
             let key = (self.config.workspace.clone(), pane);
             if !self.registered.insert(key.clone()) {
@@ -919,24 +1111,49 @@ impl Workspace {
             let stopped = Arc::new(AtomicBool::new(false));
             let epoch = self.state.terminal_epochs.get(&pane).cloned();
             self.session_epochs.insert(key.clone(), epoch.clone());
+            let capture = Arc::new(AtomicBool::new(
+                !self.terminals.contains_key(&key) && self.state.save_terminal_screens,
+            ));
+            self.session_capture.insert(key.clone(), capture.clone());
+            self.session_sources.insert(
+                key.clone(),
+                crate::snapshot_service::endpoint(&self.config).unwrap_or_default(),
+            );
             self.session_monitors.insert(key, stopped.clone());
-            let command = agents
-                .iter()
-                .find(|id| self.config.canonical_pane(**id) == pane)
-                .and_then(|id| self.config.agent.as_ref().map(|_| self.agent_command(*id)));
+            let command = self
+                .state
+                .terminal_commands
+                .get(&pane)
+                .cloned()
+                .or_else(|| {
+                    agents
+                        .iter()
+                        .find(|id| self.config.canonical_pane(**id) == pane)
+                        .and_then(|id| self.config.agent.as_ref().map(|_| self.agent_command(*id)))
+                });
             let config = self.config.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
                 let ensured = (|| -> Result<bool> {
                     let _transaction = crate::project_sync::transaction(&config)?;
-                    let state = ProjectState::load(&config)?;
+                    let mut state = ProjectState::load(&config)?;
                     if stopped.load(Ordering::Acquire)
                         || !state.terminal_ids().contains(&pane)
                         || state.terminal_epochs.get(&pane).cloned() != epoch
                     {
                         return Ok(false);
                     }
-                    config.ensure(pane, command.as_deref())?;
+                    let pending = state.terminal_launch_pending.contains(&pane);
+                    let launch = pending
+                        && command.is_some()
+                        && crate::cold_start::consume_launch(&config, pane, epoch.as_deref())?;
+                    // Saved commands are conversation references, not authority
+                    // to restart an agent after its backend or host is gone.
+                    if pending {
+                        state.terminal_launch_pending.retain(|id| *id != pane);
+                        state.save(&config)?;
+                    }
+                    config.ensure(pane, launch.then_some(command.as_deref()).flatten())?;
                     Ok(true)
                 })();
                 match ensured {
@@ -945,20 +1162,42 @@ impl Workspace {
                     }
                     Ok(false) => return,
                     Err(e) => {
-                        let _ = tx.send(Event::Error(format!(
-                            "{} / session {}: {e:#}",
-                            config.workspace,
-                            pane + 1
-                        )));
+                        let _ = tx.send(Event::EnsureFailed(
+                            config.workspace.clone(),
+                            pane,
+                            format!("{e:#}"),
+                            stopped,
+                        ));
                         return;
                     }
                 }
+                let mut captured_at = Instant::now() - Duration::from_secs(10);
+                let mut source_identity: Option<(String, u32, u64)> = None;
                 while !stopped.load(Ordering::Acquire) {
-                    let mut value = config
-                        .call(pane, &config.request(pane, "inspect"))
-                        .unwrap_or_else(
-                            |e| json!({"state":"disconnected","error":format!("{e:#}")}),
-                        );
+                    let mut permit = (capture.load(Ordering::Acquire)
+                        && captured_at.elapsed() >= Duration::from_secs(5)
+                        && ProjectState::load(&config).is_ok_and(|s| {
+                            s.save_terminal_screens
+                                && s.terminal_ids().contains(&pane)
+                                && s.terminal_epochs.get(&pane) == epoch.as_ref()
+                        }))
+                    .then(crate::backend_snapshot::Permit::acquire)
+                    .flatten();
+                    let capture_started = crate::runtime::monotonic_ns();
+                    let inspected = if permit.is_some() {
+                        captured_at = Instant::now();
+                        crate::backend_snapshot::inspect(&config, pane).or_else(|e| {
+                            drop(permit.take());
+                            let mut health = config.call(pane, &config.request(pane, "inspect"))?;
+                            health["snapshot_error"] = json!(format!("{e:#}"));
+                            Ok::<_, anyhow::Error>(health)
+                        })
+                    } else {
+                        config.call(pane, &config.request(pane, "inspect"))
+                    };
+                    let mut value = inspected.unwrap_or_else(
+                        |e| json!({"state":"disconnected","error":format!("{e:#}")}),
+                    );
                     if stopped.load(Ordering::Acquire) {
                         break;
                     }
@@ -1007,6 +1246,49 @@ impl Workspace {
                             value["reaped"] = json!(true);
                             closed = true;
                         }
+                    }
+                    if config.herdr.is_some() && value["alive"] == true {
+                        if let (Some(id), Some(pid), Some(start)) = (
+                            value["terminal_id"].as_str(),
+                            value["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
+                            value["pid_start_ticks"].as_u64(),
+                        ) {
+                            source_identity = Some((id.into(), pid, start));
+                        } else if let Some((id, pid, start)) = &source_identity
+                            && value["terminal_id"].as_str() == Some(id.as_str())
+                            && crate::agent_state::process_start(*pid) == Some(*start)
+                        {
+                            value["pid"] = json!(pid);
+                            value["pid_start_ticks"] = json!(start);
+                        }
+                    }
+                    crate::agent_state::enrich(&config, pane, &mut value);
+                    if permit.is_some() {
+                        let saved = crate::backend_snapshot::take(
+                            &config,
+                            pane,
+                            epoch.clone(),
+                            &mut value,
+                            capture_started,
+                        )
+                        .and_then(|screen| {
+                            if let Some(screen) = screen {
+                                crate::cold_start::save(&config, &screen)?;
+                            }
+                            Ok(())
+                        });
+                        if let Err(e) = saved {
+                            value["snapshot_error"] = json!(format!("{e:#}"));
+                        }
+                    }
+                    drop(permit);
+                    if let Err(e) = crate::agent_state::observe_attention(
+                        &config,
+                        pane,
+                        epoch.as_deref(),
+                        &value,
+                    ) {
+                        value["attention_error"] = json!(format!("{e:#}"));
                     }
                     if tx
                         .send(Event::Health(
@@ -1145,6 +1427,7 @@ impl Workspace {
                     windows: vec![],
                     layout: vec![],
                     selected: None,
+                    focus_known: false,
                 },
             );
         }
@@ -1247,50 +1530,22 @@ impl Workspace {
         self.layout();
     }
     fn visible_panes(&self) -> Vec<(usize, PixelRect)> {
+        if !self.cells && (self.viewport.width < 320 || self.viewport.height < 240) {
+            return vec![];
+        }
         if self.cells {
             return self.cell_visible_panes();
         }
-        let ids = self
-            .state
-            .visible()
+        self.native_pane_geometry()
+            .panes
             .into_iter()
-            .map(|id| self.config.canonical_pane(id))
-            .collect::<Vec<_>>();
-        if ids.len() == 2 && self.settings.width > 24 {
-            let gap = 12u16;
-            let left =
-                ((f64::from(self.settings.width) - f64::from(gap)) * self.state.split_ratio) as u16;
-            vec![
+            .map(|(id, r)| {
                 (
-                    ids[0],
-                    PixelRect::new(0, 0, left, self.settings.height as u16),
-                ),
-                (
-                    ids[1],
-                    PixelRect::new(
-                        left + gap,
-                        0,
-                        self.settings.width as u16 - left - gap,
-                        self.settings.height as u16,
-                    ),
-                ),
-            ]
-        } else {
-            ids.into_iter()
-                .take(1)
-                .map(|id| {
-                    (
-                        id,
-                        PixelRect::new(
-                            0,
-                            0,
-                            self.settings.width as u16,
-                            self.settings.height as u16,
-                        ),
-                    )
-                })
-                .collect()
-        }
+                    self.config.canonical_pane(id),
+                    PixelRect::new(r.x, r.y, r.width, r.height),
+                )
+            })
+            .collect()
     }
     fn layout(&mut self) {
         let panes = self.visible_panes();
@@ -1398,6 +1653,10 @@ impl Workspace {
         Ok(())
     }
     fn switch_project(&mut self, id: &str) -> Result<()> {
+        self.navigation
+            .collapsed_categories
+            .remove(self.category_catalog.category(id));
+        self.navigation.dirty = true;
         if id == self.config.workspace {
             return Ok(());
         }
@@ -1427,9 +1686,9 @@ impl Workspace {
             self.state.space = Space::Terminals;
         }
         if let Some(index) = self
-            .projects
+            .category_rows()
             .iter()
-            .position(|p| p.workspace == self.config.workspace)
+            .position(|r| r.id == self.config.workspace)
         {
             let size = self.project_page_size.max(1);
             if index < self.project_offset || index >= self.project_offset + size {
@@ -1850,19 +2109,13 @@ impl Workspace {
         self.navigation
             .touch(&self.config.workspace, crate::navigation::now());
         if self.state.space == Space::Apps {
-            if let Some(host) = self.active_app.as_ref().and_then(|k| self.app_hosts.get(k))
-                && let Err(e) = host.client.send(AppRequest::Input {
-                    input: DesktopInput::Paste {
-                        text,
-                        mime: "text/plain;charset=utf-8".into(),
-                    },
-                })
-            {
-                self.note(e.to_string())
-            }
+            self.desktop_input(DesktopInput::Paste {
+                text,
+                mime: "text/plain;charset=utf-8".into(),
+            });
             return;
         }
-        if let Some(terminal) = self.terminals.get(&(
+        if let Some(terminal) = self.terminals.get_mut(&(
             self.config.workspace.clone(),
             self.config.canonical_pane(self.state.selected()),
         )) {
@@ -1882,8 +2135,48 @@ impl Workspace {
     }
     fn desktop_input(&mut self, input: DesktopInput) {
         if self.state.space == Space::Apps {
+            if self.app_keyboard_released
+                && matches!(
+                    &input,
+                    DesktopInput::NamedKey { pressed: true, .. }
+                        | DesktopInput::Key { pressed: true, .. }
+                        | DesktopInput::Paste { .. }
+                )
+            {
+                let focused = self
+                    .active_app
+                    .as_ref()
+                    .and_then(|k| self.app_hosts.get(k))
+                    .and_then(|h| {
+                        if h.windows.len() > 1 && !h.focus_known {
+                            return Some(Err(anyhow::anyhow!(
+                                "Click or select an app window to resume keyboard input"
+                            )));
+                        }
+                        h.selected
+                            .map(|window| h.client.send(AppRequest::Focus { window }))
+                    });
+                match focused {
+                    Some(Ok(())) => self.app_keyboard_released = false,
+                    Some(Err(e)) => {
+                        self.note(format!("App focus: {e:#}"));
+                        return;
+                    }
+                    None => {}
+                }
+            }
             if !self.app_pointer_modifiers.forward(&input) {
                 return;
+            }
+            if matches!(&input, DesktopInput::Button { pressed: true, .. }) {
+                self.app_keyboard_released = false;
+                if let Some(host) = self
+                    .active_app
+                    .as_ref()
+                    .and_then(|k| self.app_hosts.get_mut(k))
+                {
+                    host.focus_known = host.windows.len() == 1;
+                }
             }
             if let Some(host) = self.active_app.as_ref().and_then(|k| self.app_hosts.get(k))
                 && let Err(e) = host.client.send(AppRequest::Input { input })
@@ -1933,18 +2226,21 @@ impl Workspace {
             && self.modal.is_none()
         {
             let panes = self.visible_panes();
-            let separator = self.state.space == Space::Terminals
-                && self.state.split
-                && panes.len() == 2
-                && position[0] >= f64::from(panes[0].1.width)
-                && position[0] < f64::from(panes[0].1.width + 12);
-            if !self.drag_split && !(action == "down" && separator) {
+            let separator = self
+                .native_pane_geometry()
+                .dividers
+                .iter()
+                .any(|d| d.rect.contains(*position));
+            if self.pane_drag.is_none() && !(action == "down" && separator) {
                 if action == "down" && *button == 0 && *modifiers == 0 {
                     self.selection_serial = self.selection_serial.wrapping_add(1);
                     self.selection_target = panes
                         .iter()
                         .find(|(_, r)| {
-                            position[0] >= f64::from(r.x) && position[0] < f64::from(r.x + r.width)
+                            position[0] >= f64::from(r.x)
+                                && position[0] < f64::from(r.x + r.width)
+                                && position[1] >= f64::from(r.y)
+                                && position[1] < f64::from(r.y + r.height)
                         })
                         .map(|(pane, _)| (self.config.workspace.clone(), *pane));
                     if let Some((project, pane)) = &self.selection_target {
@@ -2000,33 +2296,16 @@ impl Workspace {
                 position,
                 modifiers,
             } => {
-                if self.state.space == Space::Terminals && self.state.split {
-                    let panes = self.visible_panes();
-                    if panes.len() == 2 {
-                        let left = panes[0].1;
-                        if action == "down"
-                            && position[0] >= f64::from(left.width)
-                            && position[0] < f64::from(left.width + 12)
-                        {
-                            self.drag_split = true;
-                            return;
-                        }
-                        if self.drag_split {
-                            if action == "up" {
-                                self.drag_split = false
-                            } else {
-                                self.state.split_ratio =
-                                    (position[0] / f64::from(self.settings.width)).clamp(0.2, 0.8);
-                                self.layout();
-                            }
-                            return;
-                        }
-                    }
+                if self.pane_divider_input(&action, button, position, self.native_pane_geometry()) {
+                    return;
                 }
                 if action == "down"
                     && self.state.space != Space::Apps
                     && let Some((pane, _)) = self.visible_panes().into_iter().find(|(_, r)| {
-                        position[0] >= f64::from(r.x) && position[0] < f64::from(r.x + r.width)
+                        position[0] >= f64::from(r.x)
+                            && position[0] < f64::from(r.x + r.width)
+                            && position[1] >= f64::from(r.y)
+                            && position[1] < f64::from(r.y + r.height)
                     })
                 {
                     if self.state.space == Space::Terminals {
@@ -2090,30 +2369,21 @@ impl Workspace {
         } = &kind
         {
             let panes = self.visible_panes();
-            if self.state.space == Space::Terminals && self.state.split && panes.len() == 2 {
-                let left = panes[0].1;
-                if action == "down"
-                    && position[0] >= f64::from(left.width)
-                    && position[0] < f64::from(left.width + 12)
-                {
-                    self.drag_split = true;
-                    return;
-                }
-                if self.drag_split {
-                    if action == "up" {
-                        self.drag_split = false;
-                        self.save();
-                    } else {
-                        self.state.split_ratio =
-                            (position[0] / f64::from(self.settings.width)).clamp(0.2, 0.8);
-                    }
-                    return;
-                }
+            let button = if let EmbeddedKind::Pointer { button, .. } = &kind {
+                *button
+            } else {
+                0
+            };
+            if self.pane_divider_input(action, button, *position, self.native_pane_geometry()) {
+                return;
             }
             if action == "down"
                 && self.state.space == Space::Terminals
                 && let Some((pane, _)) = panes.iter().find(|(_, r)| {
-                    position[0] >= f64::from(r.x) && position[0] < f64::from(r.x + r.width)
+                    position[0] >= f64::from(r.x)
+                        && position[0] < f64::from(r.x + r.width)
+                        && position[1] >= f64::from(r.y)
+                        && position[1] < f64::from(r.y + r.height)
                 })
             {
                 self.state.select_terminal(*pane);
@@ -2122,7 +2392,7 @@ impl Workspace {
         let pane = if let EmbeddedKind::Pointer {
             action, position, ..
         } = &kind
-            && action.starts_with("scroll_")
+            && (action.starts_with("scroll_") || (action == "move" && !self.text_gesture.active()))
         {
             self.visible_panes()
                 .into_iter()
@@ -2174,7 +2444,7 @@ impl Workspace {
             }
             EmbeddedKind::ReleaseAll => {
                 terminal.release();
-                self.drag_split = false;
+                self.pane_drag = None;
                 Ok(())
             }
             _ => Ok(()),
@@ -2199,6 +2469,147 @@ impl Workspace {
                 .to_string()
         });
         let fields = match &kind {
+            Prompt::CategoryAgentSetup(_, _, profile) => vec![
+                field(
+                    "Executable (blank uses the provider CLI)",
+                    profile
+                        .executable
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+                field(
+                    "Category charter / alignment objectives",
+                    profile.charter.clone(),
+                ),
+            ],
+            Prompt::CategoryAgentMessage(_) => {
+                vec![field("Message to the category coordinator", String::new())]
+            }
+            Prompt::CategoryAgentSetting(_, _, p, effort) => vec![field(
+                if *effort {
+                    "Exact provider effort"
+                } else {
+                    "Exact provider model ID"
+                },
+                if *effort {
+                    p.effort.clone()
+                } else {
+                    p.model.clone()
+                }
+                .unwrap_or_default(),
+            )],
+            Prompt::CategoryAgentApprove(_, _, _, target) => vec![field(
+                if target.is_some() {
+                    "Type SEND to approve the exact task and selected conversation"
+                } else {
+                    "Type VERIFIED after checking the task's acceptance criteria"
+                },
+                String::new(),
+            )],
+
+            Prompt::Category(id, _, _) => vec![field(
+                "Category name",
+                id.as_ref()
+                    .and_then(|id| self.category_catalog.groups.iter().find(|g| g.id == *id))
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default(),
+            )],
+            Prompt::InstallPlugin(_) => vec![
+                field("GitHub owner/repository or Git URL", String::new()),
+                field(
+                    "Version / tag / branch / commit (blank: HEAD)",
+                    String::new(),
+                ),
+                field(
+                    "Package subdirectory (blank: repository root)",
+                    String::new(),
+                ),
+            ],
+            Prompt::UpdatePlugin(_, _, reference) => {
+                vec![field("Version / tag / branch / commit", reference.clone())]
+            }
+            Prompt::UninstallPlugin(_, _) => vec![field(
+                "Type UNINSTALL to remove managed versions; logs/settings remain",
+                String::new(),
+            )],
+            Prompt::PluginLink => vec![field("URL to open with a plugin", String::new())],
+            Prompt::LinkPlugin(_) => {
+                vec![field("Plugin directory on this controller", String::new())]
+            }
+            Prompt::AttentionSearch => vec![field(
+                "Search project, session, host, source or conversation",
+                self.attention_query.search.clone(),
+            )],
+            Prompt::NotificationRetention(s) => vec![
+                field(
+                    "Retention days (0: no age expiry)",
+                    s.retention_days.to_string(),
+                ),
+                field(
+                    "Maximum items per project (10–50000)",
+                    s.max_items_per_project.to_string(),
+                ),
+            ],
+            Prompt::Machine(machine) => vec![
+                field(
+                    "Machine label",
+                    machine
+                        .as_ref()
+                        .map(|m| m.label.clone())
+                        .unwrap_or_default(),
+                ),
+                field(
+                    "SSH target / alias",
+                    machine
+                        .as_ref()
+                        .map(|m| m.target.clone())
+                        .or_else(|| self.config.host.clone())
+                        .unwrap_or_default(),
+                ),
+                field(
+                    "OpenSSH config file (blank: default)",
+                    machine
+                        .as_ref()
+                        .map(|m| m.ssh_config.clone())
+                        .unwrap_or_else(|| self.config.ssh_config.clone())
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+                field(
+                    "Remote STAR/FLUX executable",
+                    machine
+                        .as_ref()
+                        .map(|m| m.remote_executable.clone())
+                        .unwrap_or_else(crate::runtime::default_desktop_helper),
+                ),
+                field(
+                    "Remote workspace (blank: remote default)",
+                    machine
+                        .as_ref()
+                        .and_then(|m| m.workspace.clone())
+                        .unwrap_or_default(),
+                ),
+            ],
+            Prompt::MachineProject(_) => vec![
+                field("New project identity", String::new()),
+                field("Directory on SSH host", "~".into()),
+            ],
+            Prompt::CreateWorktree(_) => vec![
+                field("New branch", String::new()),
+                field(
+                    "Worktree path on project host (blank: sibling directory)",
+                    String::new(),
+                ),
+                field("Base commit / branch", "HEAD".into()),
+            ],
+            Prompt::RemoveWorktree(_, target) => vec![field(
+                &format!(
+                    "Clean / no running programs. Type REMOVE: {}",
+                    target["path"].as_str().unwrap_or("")
+                ),
+                String::new(),
+            )],
             Prompt::Sessions(_) => vec![field("Search sessions", String::new())],
             Prompt::NewSession => vec![
                 field("Session name", String::new()),
@@ -2210,6 +2621,14 @@ impl Workspace {
             )],
             Prompt::RecoverTerminal(_, _, _) => vec![field(
                 "Stops this pane's program. Type RECOVER to return to a shell",
+                String::new(),
+            )],
+            Prompt::TerminateTerminal(_, pane, _, _) => vec![field(
+                &format!(
+                    "Type TERMINATE to stop {} (pane {}) in all windows",
+                    self.terminal_label(*pane),
+                    pane + 1
+                ),
                 String::new(),
             )],
             Prompt::Deliver => vec![field("File path on this workspace host", String::new())],
@@ -2357,6 +2776,8 @@ impl Workspace {
         ensure!(!command.trim().is_empty(), "Enter an application command");
         let args = shell_words::split(&command)?;
         ensure!(!args.is_empty(), "Enter an application command");
+        let base = crate::saved(&config.workspace).unwrap_or_else(|_| config.clone());
+        crate::worktrees::mark_app_launch(&base)?;
         let key = self.connect_app(config.clone())?;
         self.app_hosts[&key].client.send(AppRequest::Launch {
             launch: Launch {
@@ -2393,6 +2814,198 @@ impl Workspace {
             .collect();
         let result = (|| -> Result<()> {
             match &modal.kind {
+                Prompt::CategoryAgentSetup(category, revision, previous) => {
+                    let mut profile = previous.clone();
+                    profile.executable =
+                        (!values[0].is_empty()).then(|| std::path::PathBuf::from(&values[0]));
+                    profile.charter = values[1].clone();
+                    let category = category.clone();
+                    let revision = *revision;
+                    self.coordinator_render();
+                    self.coordinator_request(move |c, g| {
+                        ensure!(g == category, "Category changed while editing settings");
+                        crate::category_agent::configure(c, g, revision, profile).map(|_| ())
+                    });
+                }
+                Prompt::CategoryAgentMessage(category) => {
+                    ensure!(!values[0].is_empty(), "Write a category message first");
+                    let message = values[0].clone();
+                    let category = category.clone();
+                    self.coordinator_render();
+                    self.coordinator_request(move |c, g| {
+                        ensure!(g == category, "Category changed");
+                        crate::category_agent_runtime::start(c, g, "chat", &message).map(|_| ())
+                    });
+                }
+                Prompt::CategoryAgentSetting(category, revision, previous, effort) => {
+                    ensure!(!values[0].is_empty(), "Enter an explicit provider setting");
+                    let mut profile = previous.clone();
+                    if *effort {
+                        profile.effort = Some(values[0].clone());
+                    } else {
+                        profile.model = Some(values[0].clone());
+                        profile.effort = None;
+                    }
+                    let category = category.clone();
+                    let revision = *revision;
+                    self.coordinator_render();
+                    self.coordinator_request(move |c, g| {
+                        ensure!(g == category, "Category changed");
+                        crate::category_agent::configure(c, g, revision, profile).map(|_| ())
+                    });
+                }
+                Prompt::CategoryAgentApprove(category, review, proposal, target) => {
+                    ensure!(
+                        values[0] == if target.is_some() { "SEND" } else { "VERIFIED" },
+                        "Confirmation did not match"
+                    );
+                    let (category, review, proposal, target) = (
+                        category.clone(),
+                        review.clone(),
+                        proposal.clone(),
+                        target.clone(),
+                    );
+                    self.coordinator_render();
+                    self.coordinator_request(move |c, g| {
+                        ensure!(g == category, "Category changed");
+                        if let Some(target) = target {
+                            crate::category_agent_runtime::approve(
+                                c,
+                                g,
+                                &review,
+                                &proposal,
+                                &target["target"],
+                                target["conversation"]
+                                    .as_str()
+                                    .context("Missing conversation")?,
+                            )
+                            .map(|_| ())
+                        } else {
+                            crate::category_agent_runtime::proposal_update(
+                                c, g, &review, &proposal, "verified",
+                            )
+                            .map(|_| ())
+                        }
+                    });
+                }
+
+                Prompt::Category(id, revision, project) => {
+                    let name = values[0].clone();
+                    self.category_catalog =
+                        crate::categories::Catalog::edit(&self.config, *revision, |c| {
+                            c.name(id.as_deref(), &name)?;
+                            if let Some(project) = project {
+                                let id = c.groups.last().context("Missing category")?.id.clone();
+                                c.assign(project, &id)?;
+                            }
+                            Ok(())
+                        })?;
+                    self.reload_categories();
+                }
+                Prompt::InstallPlugin(revision) => {
+                    let repository = values[0].clone();
+                    let reference = values[1].clone();
+                    let directory = values[2].clone();
+                    let revision = revision.clone();
+                    self.plugin_request("list".into(), move || {
+                        crate::plugin_packages::install(
+                            &repository,
+                            &reference,
+                            &directory,
+                            &revision,
+                        )
+                    });
+                    self.plugin_loading("Fetching and inspecting Git source / installed disabled…");
+                }
+                Prompt::UpdatePlugin(plugin, revision, _) => {
+                    let plugin = plugin.clone();
+                    let reference = values[0].clone();
+                    let revision = revision.clone();
+                    self.plugin_request(format!("plugin:{plugin}"), move || {
+                        crate::plugin_packages::update(&plugin, Some(&reference), &revision)
+                    });
+                    self.plugin_loading("Fetching version / existing jobs keep their files…");
+                }
+                Prompt::UninstallPlugin(plugin, revision) => {
+                    ensure!(
+                        values[0] == "UNINSTALL",
+                        "Type UNINSTALL to remove this managed package"
+                    );
+                    let plugin = plugin.clone();
+                    let revision = revision.clone();
+                    self.plugin_request("list".into(), move || {
+                        crate::plugin_packages::uninstall(&plugin, &revision)
+                    });
+                }
+                Prompt::PluginLink => {
+                    let url = values[0].clone();
+                    let project = crate::plugins::project(&self.config);
+                    self.plugin_request("links".into(), move || {
+                        let mut result = crate::plugin_links::resolve(&url, 0, 16)?;
+                        result["project"] = json!(project);
+                        Ok(result)
+                    });
+                }
+                Prompt::LinkPlugin(revision) => {
+                    let path = values[0].clone();
+                    let revision = revision.clone();
+                    self.plugin_request("list".into(), move || {
+                        crate::plugins::link(&path, &revision).map(|_| json!({}))
+                    });
+                }
+                Prompt::AttentionSearch => {
+                    self.attention_query.search = values[0].clone();
+                    self.attention_query.offset = 0;
+                    self.attention_load(false)?;
+                }
+                Prompt::NotificationRetention(settings) => {
+                    let mut s = settings.clone();
+                    s.retention_days = values[0]
+                        .parse()
+                        .context("Enter retention days as a whole number")?;
+                    s.max_items_per_project = values[1]
+                        .parse()
+                        .context("Enter an item limit as a whole number")?;
+                    crate::notifications::save(s, &settings.revision)?;
+                    self.attention_action("attention:settings")?;
+                }
+                Prompt::Machine(old) => {
+                    let machine = crate::machines::save(crate::machines::Save {
+                        id: old.as_ref().map(|m| m.id.clone()),
+                        expected_revision: old.as_ref().map(|m| m.revision.clone()),
+                        label: values[0].clone(),
+                        target: values[1].clone(),
+                        ssh_config: (!values[2].is_empty()).then(|| PathBuf::from(&values[2])),
+                        remote_executable: values[3].clone(),
+                        workspace: (!values[4].is_empty()).then(|| values[4].clone()),
+                        enabled: old.as_ref().is_none_or(|m| m.enabled),
+                    })?;
+                    self.machine_details(machine);
+                    self.note("Machine saved / choose Test connection to verify SSH setup".into());
+                }
+                Prompt::MachineProject(machine) => {
+                    let config = crate::machines::create_project(
+                        machine,
+                        &values[0],
+                        &values[1],
+                        self.config.collection.clone(),
+                        &self.config.theme,
+                    )?;
+                    self.reopen_project(config)?;
+                }
+                Prompt::CreateWorktree(config) => self.create_worktree(
+                    config.clone(),
+                    values[0].clone(),
+                    values[1].clone(),
+                    values[2].clone(),
+                ),
+                Prompt::RemoveWorktree(config, target) => {
+                    ensure!(
+                        values[0] == "REMOVE",
+                        "Type REMOVE to remove the clean worktree"
+                    );
+                    self.remove_worktree(config.clone(), target.clone());
+                }
                 Prompt::Sessions(_) => anyhow::bail!("Choose a session from the list"),
                 Prompt::NewSession => {
                     let config =
@@ -2405,6 +3018,33 @@ impl Workspace {
                         "Type DELETE to stop owned programs and delete this session"
                     );
                     self.delete_session(id)?;
+                }
+                Prompt::TerminateTerminal(project, pane, epoch, identity) => {
+                    ensure!(
+                        values[0] == "TERMINATE",
+                        "Type TERMINATE to stop this terminal"
+                    );
+                    ensure!(
+                        project == &self.config.workspace
+                            && self.state.terminal_epochs.get(pane) == epoch.as_ref(),
+                        "Terminal changed; reopen its menu"
+                    );
+                    let (config, pane, epoch, identity, tx) = (
+                        self.config.clone(),
+                        *pane,
+                        epoch.clone(),
+                        *identity,
+                        self.tx.clone(),
+                    );
+                    self.release();
+                    self.note("Terminating terminal…".into());
+                    std::thread::spawn(move || {
+                        let result = config.terminate_terminal(pane, epoch.as_deref(), identity);
+                        let _ = tx.send(match result {
+                            Ok(config) => Event::Terminated(Box::new(config), pane, epoch),
+                            Err(e) => Event::Error(format!("Terminate terminal: {e:#}")),
+                        });
+                    });
                 }
                 Prompt::RecoverTerminal(project, pane, epoch) => {
                     ensure!(
@@ -2594,6 +3234,14 @@ impl Workspace {
         }
         if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
             match code.as_str() {
+                "home" => {
+                    self.choose_session_row(-isize::MAX);
+                    return Ok(());
+                }
+                "end" => {
+                    self.choose_session_row(isize::MAX);
+                    return Ok(());
+                }
                 "up" | "pageup" => {
                     self.choose_session_row(if code == "up" { -1 } else { -8 });
                     return Ok(());
@@ -2678,6 +3326,13 @@ impl Workspace {
             return self.accept_prompt();
         }
         let modal = self.modal.as_mut().unwrap();
+        if matches!(code.as_str(), "pageup" | "pagedown") {
+            modal.selected = modal
+                .selected
+                .saturating_add_signed(if code == "pageup" { -1 } else { 1 })
+                .min(modal.fields.len().saturating_sub(1));
+            return Ok(());
+        }
         if code == "tab" || code == "enter" {
             if modal.selected + 1 == modal.fields.len()
                 && let Some(catalog) = modal.catalog.as_mut()
@@ -2737,34 +3392,51 @@ impl Workspace {
         }
         Ok(())
     }
+    fn focused_config(&self) -> Config {
+        let pane = self.config.canonical_pane(self.state.selected());
+        let mut config = self.config.clone();
+        if !config.remote(pane) {
+            config.host = None;
+        }
+        config.directory = self
+            .health
+            .get(&(config.workspace.clone(), pane))
+            .and_then(|health| health["cwd"].as_str())
+            .filter(|cwd| !cwd.is_empty())
+            .or_else(|| {
+                config
+                    .herdr
+                    .as_ref()?
+                    .panes
+                    .get(&pane)
+                    .map(|p| p.cwd.as_str())
+            })
+            .map(str::to_owned)
+            .or(config.directory);
+        config
+    }
     fn git_location(&self) -> String {
-        format!(
-            "{}:{}",
-            self.config.host.as_deref().unwrap_or("local"),
-            self.config.directory.as_deref().unwrap_or(".")
-        )
+        let config = self.focused_config();
+        serde_json::to_string(&(&config.host, &config.ssh_config, &config.directory)).unwrap()
     }
     fn git_status(&self) -> Option<&crate::git::Status> {
-        self.git
-            .get(&self.config.workspace)
-            .filter(|(location, _, _)| location == &self.git_location())
-            .map(|(_, status, _)| status)
+        self.git.get(&self.git_location()).map(|(status, _)| status)
     }
     fn refresh_git(&mut self, force: bool) {
-        let id = self.config.workspace.clone();
         let location = self.git_location();
-        if self.git_pending.contains(&id) {
+        if self.git_pending.contains(&location) {
             return;
         }
         if !force
-            && self.git.get(&id).is_some_and(|(l, _, time)| {
-                l == &location && time.elapsed() < Duration::from_secs(3)
-            })
+            && self
+                .git
+                .get(&location)
+                .is_some_and(|(_, time)| time.elapsed() < Duration::from_secs(3))
         {
             return;
         }
-        self.git_pending.insert(id.clone());
-        let config = self.config.clone();
+        self.git_pending.insert(location.clone());
+        let config = self.focused_config();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let status = crate::git::read(&config).unwrap_or_else(|e| crate::git::Status {
@@ -2772,7 +3444,7 @@ impl Workspace {
                 error: format!("{e:#}"),
                 ..Default::default()
             });
-            let _ = tx.send(Event::Git(id, location, Box::new(status)));
+            let _ = tx.send(Event::Git(location, Box::new(status)));
         });
     }
     fn terminal_label(&self, id: usize) -> String {
@@ -2803,6 +3475,37 @@ impl Workspace {
             })
     }
     fn open_context_menu(&mut self, target: Option<&str>, point: [u16; 2]) {
+        if target
+            .is_some_and(|t| t == "categories:background" || t.starts_with("categories:append:"))
+            || (target.is_none()
+                && !self.cells
+                && point[0]
+                    < crate::shelf::Layout::new(
+                        self.viewport.width as u16,
+                        self.viewport.height as u16,
+                        self.state.space,
+                    )
+                    .sidebar
+                    .width)
+        {
+            let _ = self.category_action("categories:global");
+            if let Some(menu) = &mut self.context_menu {
+                menu.position = point;
+            }
+            return;
+        }
+
+        if let Some(id) = target.and_then(|t| {
+            t.strip_prefix("categories:toggle:")
+                .or_else(|| t.strip_prefix("categories:details:"))
+        }) {
+            let _ = self.category_action(&format!("categories:details:{id}"));
+            if let Some(menu) = &mut self.context_menu {
+                menu.position = point;
+            }
+            return;
+        }
+
         use crate::shelf::{ContextMenu, MenuItem};
         let item = |label: &str, hint: &str, action: String| MenuItem {
             label: label.into(),
@@ -2820,6 +3523,9 @@ impl Workspace {
                 format!("PROJECT / {}", project.host.as_deref().unwrap_or("local")),
                 vec![
                     item("Rename project…", "", format!("rename-project:{id}")),
+                    item("Machines…", "", "machines:list".into()),
+                    item("Plugins…", "", "plugins:list".into()),
+                    item("Git worktrees…", "", format!("worktrees:project:{id}")),
                     item(
                         "Open terminals",
                         "",
@@ -2843,6 +3549,56 @@ impl Workspace {
                     item("Rename tab…", "", format!("rename-tab:{id}")),
                     item("Focus tab", "", format!("terminal:{id}")),
                     item(
+                        "Search terminal history",
+                        "",
+                        format!("pane-target:{id}:search-history"),
+                    ),
+                    item(
+                        "Select / copy history",
+                        "",
+                        format!("pane-target:{id}:copy-mode"),
+                    ),
+                    item(
+                        "View saved screen",
+                        "Read only",
+                        format!("pane-target:{id}:saved-current"),
+                    ),
+                    item(
+                        "View previous process screen",
+                        "Read only",
+                        format!("pane-target:{id}:saved-previous"),
+                    ),
+                    item(
+                        if self.state.save_terminal_screens {
+                            "Pause screen saving and clear previews"
+                        } else {
+                            "Resume screen saving"
+                        },
+                        "Project",
+                        if self.state.save_terminal_screens {
+                            "screen-saving:off"
+                        } else {
+                            "screen-saving:on"
+                        }
+                        .into(),
+                    ),
+                    item("Split right", "", format!("pane-target:{id}:split-right")),
+                    item("Split down", "", format!("pane-target:{id}:split-down")),
+                    item(
+                        if self.state.pane_zoom {
+                            "Restore pane layout"
+                        } else {
+                            "Zoom pane"
+                        },
+                        "",
+                        format!("pane-target:{id}:zoom"),
+                    ),
+                    item(
+                        "Swap with next pane",
+                        "",
+                        format!("pane-target:{id}:swap-next"),
+                    ),
+                    item(
                         if self.state.split {
                             "Unsplit terminals"
                         } else {
@@ -2852,6 +3608,11 @@ impl Workspace {
                         format!("split-tab:{id}"),
                     ),
                     item("New terminal tab", "+", "terminal:new".into()),
+                    item(
+                        "Agent status / conversation",
+                        "",
+                        format!("agent-status:{id}"),
+                    ),
                     item(
                         "Reconnect pane",
                         "Keep program",
@@ -2864,13 +3625,39 @@ impl Workspace {
                     ),
                 ]
                 .into_iter()
-                .chain(self.state.split.then(|| {
+                .filter(|i| {
+                    self.desktop.is_none()
+                        || !(i.action.ends_with(":search-history")
+                            || i.action.ends_with(":copy-mode"))
+                            && !i.action.ends_with(":saved-current")
+                            && !i.action.ends_with(":saved-previous")
+                })
+                .chain((!self.config.externally_owned(id)).then(|| {
                     item(
-                        "Close split pane (keep tab)",
-                        "",
-                        format!("close-pane:{id}"),
+                        "Terminate terminal…",
+                        "Stop terminal",
+                        format!("terminate-terminal:{id}"),
                     )
                 }))
+                .chain(
+                    (self
+                        .state
+                        .plugin_overlay
+                        .as_ref()
+                        .is_some_and(|o| o.pane == id)
+                        || self.state.split
+                            && self
+                                .state
+                                .unzoomed_tree()
+                                .is_some_and(|t| t.ids().contains(&id)))
+                    .then(|| {
+                        item(
+                            "Close split pane (keep tab)",
+                            "",
+                            format!("close-pane:{id}"),
+                        )
+                    }),
+                )
                 .chain(
                     self.health
                         .get(&(
@@ -2895,6 +3682,30 @@ impl Workspace {
         };
         self.release();
         let mut items = items;
+        items.push(item(
+            "Move project to category…",
+            "",
+            format!(
+                "categories:move:{}",
+                target
+                    .and_then(|t| t.strip_prefix("project:"))
+                    .unwrap_or(&self.config.workspace)
+            ),
+        ));
+        items.push(item("Categories…", "", "categories:manage".into()));
+        items.push(item("Attention inbox", "", "attention:inbox".into()));
+        let help_hint = self
+            .keyboard
+            .help()
+            .into_iter()
+            .find(|(_, _, a)| a == "help")
+            .map(|(_, hint, _)| hint)
+            .unwrap_or_default();
+        items.push(item(
+            "Keyboard shortcuts",
+            &help_hint,
+            "keyboard:help".into(),
+        ));
         if self.app_view_available
             && let Some(id) = target.and_then(|t| t.strip_prefix("project:"))
         {
@@ -2912,10 +3723,25 @@ impl Workspace {
         });
     }
     fn menu_key(&mut self, code: &str) -> Result<()> {
+        if code == "char:/"
+            && self
+                .context_menu
+                .as_ref()
+                .is_some_and(|m| m.title == "Attention inbox")
+        {
+            self.open_prompt(Prompt::AttentionSearch);
+            return Ok(());
+        }
         let Some(menu) = &mut self.context_menu else {
             return Ok(());
         };
         let len = menu.items.len();
+        if len == 0 {
+            if code == "escape" {
+                self.context_menu = None;
+            }
+            return Ok(());
+        }
         match code {
             "escape" => self.context_menu = None,
             "down" | "tab" => menu.selected = Some(menu.selected.map_or(0, |i| (i + 1) % len)),
@@ -2924,6 +3750,8 @@ impl Workspace {
             }
             "home" => menu.selected = Some(0),
             "end" => menu.selected = Some(len - 1),
+            "pageup" => menu.selected = Some(menu.selected.unwrap_or(0).saturating_sub(8)),
+            "pagedown" => menu.selected = Some((menu.selected.unwrap_or(0) + 8).min(len - 1)),
             "enter" => {
                 if let Some(i) = menu.selected {
                     self.action(&format!("menu:item:{i}"))?;
@@ -2961,6 +3789,20 @@ impl Workspace {
         Ok(())
     }
     fn action(&mut self, action: &str) -> Result<()> {
+        if let Some(id) = action.strip_prefix("popup:close:") {
+            self.close_popup(id)?;
+            return Ok(());
+        }
+        if self.popup.is_some() {
+            return Err(crate::automation::fault(
+                "frontend_busy",
+                "Close the plugin popup before changing this window",
+            ));
+        }
+
+        if self.terminal_link_action(action)? {
+            return Ok(());
+        }
         let _transaction = if matches!(action, "terminal:new" | "terminal:split" | "agent:new") {
             Some(crate::project_sync::transaction(&self.config)?)
         } else {
@@ -3004,6 +3846,188 @@ impl Workspace {
         Ok(())
     }
     fn action_inner(&mut self, action: &str) -> Result<()> {
+        if matches!(action, "screen-saving:off" | "screen-saving:on") {
+            let enabled = action.ends_with(":on");
+            let _lock = crate::project_sync::transaction(&self.config)?;
+            self.sync_project()?;
+            self.state.save_terminal_screens = enabled;
+            self.state.save(&self.config)?;
+            self.context_menu = None;
+            if enabled {
+                for ((project, _), terminal) in &mut self.terminals {
+                    if project == &self.config.workspace {
+                        terminal.snapshot_refresh();
+                    }
+                }
+                self.note("Screen saving enabled for this project".into());
+                if let Err(e) = crate::snapshot_service::ensure() {
+                    self.note(format!("Background snapshots: {e:#}"));
+                }
+            } else {
+                let config = self.config.clone();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let result = (|| -> Result<bool> {
+                        let _lock = crate::project_sync::transaction(&config)?;
+                        if ProjectState::load(&config)?.save_terminal_screens {
+                            return Ok(false);
+                        }
+                        for pane in 0..32 {
+                            crate::cold_start::clear(&config.workspace, pane)?;
+                        }
+                        Ok(true)
+                    })();
+                    let _ = tx.send(match result {
+                        Ok(true) => Event::Status("Saved previews cleared".into()),
+                        Ok(false) => return,
+                        Err(e) => Event::Error(format!("Clear saved screens: {e:#}")),
+                    });
+                });
+            }
+            return Ok(());
+        }
+        if self.compact_action(action)? {
+            return Ok(());
+        }
+        if self.category_action(action)? {
+            return Ok(());
+        }
+        if self.plugin_action(action)? {
+            return Ok(());
+        }
+        if self.machine_action(action)? {
+            return Ok(());
+        }
+        if self.coordinator_action(action)? {
+            return Ok(());
+        }
+        if self.font_action(action)? {
+            return Ok(());
+        }
+        if self.worktree_action(action)? {
+            return Ok(());
+        }
+        if self.pane_action(action)? {
+            return Ok(());
+        }
+        if self.attention_action(action)? {
+            return Ok(());
+        }
+        if let Some(id) = action.strip_prefix("agent-status:") {
+            let pane = id.parse::<usize>()?;
+            ensure!(
+                self.state.terminal_ids().contains(&pane),
+                "Terminal no longer exists"
+            );
+            let value = self
+                .health
+                .get(&(
+                    self.config.workspace.clone(),
+                    self.config.canonical_pane(pane),
+                ))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let mut items = Vec::new();
+            for (label, key) in [
+                ("Terminal", "terminal"),
+                ("Transport", "transport"),
+                ("Agent process", "agent_process"),
+                ("Agent backend", "agent_backend"),
+                ("Lifecycle", "lifecycle"),
+                ("Observation", "source"),
+                ("Confidence", "confidence"),
+            ] {
+                items.push(crate::shelf::MenuItem {
+                    label: format!(
+                        "{label}: {}",
+                        value["health"][key].as_str().unwrap_or("unknown")
+                    ),
+                    hint: String::new(),
+                    action: "menu:panel".into(),
+                });
+            }
+            if let Ok(record) =
+                serde_json::from_value::<crate::agent_state::Record>(value["agent_record"].clone())
+            {
+                for label in [
+                    format!("Integration: {}", record.report.source),
+                    format!("Event sequence: {}", record.report.sequence),
+                ] {
+                    items.push(crate::shelf::MenuItem {
+                        label,
+                        hint: String::new(),
+                        action: "menu:panel".into(),
+                    });
+                }
+                if let Some(id) = record.report.conversation_id {
+                    items.push(crate::shelf::MenuItem {
+                        label: format!("Conversation: {id}"),
+                        hint: String::new(),
+                        action: "menu:panel".into(),
+                    });
+                }
+                if record.report.resume_argv.is_some() {
+                    items.push(crate::shelf::MenuItem {
+                        label: "Resume saved conversation in new tab".into(),
+                        hint: String::new(),
+                        action: format!("agent-resume:{pane}:{}", record.report.run_id),
+                    });
+                }
+                items.push(crate::shelf::MenuItem {
+                    label: format!(
+                        "Report: {}",
+                        if value["health"]["report_stale"] == true {
+                            "stale"
+                        } else {
+                            "current"
+                        }
+                    ),
+                    hint: String::new(),
+                    action: "menu:panel".into(),
+                });
+            }
+            self.release();
+            self.context_menu = Some(crate::shelf::ContextMenu {
+                position: [16, 16],
+                title: "Agent status".into(),
+                subtitle: "Process health and saved identity".into(),
+                items,
+                selected: Some(0),
+            });
+            return Ok(());
+        }
+        if let Some(target) = action.strip_prefix("agent-resume:") {
+            let (pane, run) = target.split_once(':').context("Invalid resume target")?;
+            let pane = pane.parse::<usize>()?;
+            let _lock = crate::project_sync::transaction(&self.config)?;
+            let argv = crate::agent_state::resume_argv(&self.config, pane, run)?;
+            self.sync_project()?;
+            let mut state = self.state.clone();
+            let id = state.add_terminal()?;
+            ensure!(
+                self.config.remote(pane) == self.config.remote(id),
+                "This legacy pane uses a different host; resume its conversation on the original host"
+            );
+            state.terminal_commands.insert(id, shell_words::join(argv));
+            state.terminal_launch_pending.push(id);
+            state
+                .terminal_labels
+                .insert(id, "Resumed conversation".into());
+            state.save(&self.config)?;
+            self.context_menu = None;
+            self.release();
+            self.state = state;
+            self.ensure_sessions();
+            self.layout();
+            self.save();
+            self.note(
+                "Resuming the registered conversation in a new tab / original pane retained".into(),
+            );
+            return Ok(());
+        }
+        if let Some(action) = action.strip_prefix("keyboard:") {
+            return self.keyboard_action(action);
+        }
         if self.session_action(action)? {
             return Ok(());
         }
@@ -3031,6 +4055,16 @@ impl Workspace {
                 .as_ref()
                 .and_then(|m| m.items.get(index.parse::<usize>().ok()?))
                 .map(|item| item.action.clone());
+            if next.as_deref() == Some("menu:panel") {
+                return Ok(());
+            }
+            // Link actions validate the originating menu before replacing it.
+            if let Some(next) = next
+                .as_deref()
+                .filter(|a| a.starts_with("terminal-link:") || a.starts_with("terminal-links:"))
+            {
+                return self.action(next);
+            }
             self.context_menu = None;
             if let Some(next) = next {
                 self.action(&next)?;
@@ -3143,6 +4177,32 @@ impl Workspace {
             self.action(&format!("terminal:{id}"))?;
             return self.action("terminal:restart");
         }
+        if let Some(id) = action.strip_prefix("terminate-terminal:") {
+            let id = id.parse::<usize>()?;
+            ensure!(
+                self.state.terminal_ids().contains(&id),
+                "Terminal no longer exists"
+            );
+            ensure!(
+                !self.config.externally_owned(id),
+                "This terminal remains owned by its source; transfer it first"
+            );
+            let health = self
+                .health
+                .get(&(
+                    self.config.workspace.clone(),
+                    self.config.canonical_pane(id),
+                ))
+                .context("Wait for terminal health before terminating it")?;
+            let identity = self.config.terminal_identity(id, health)?;
+            self.open_prompt(Prompt::TerminateTerminal(
+                self.config.workspace.clone(),
+                id,
+                self.state.terminal_epochs.get(&id).cloned(),
+                identity,
+            ));
+            return Ok(());
+        }
         if let Some(id) = action.strip_prefix("recover-terminal:") {
             let id = id.parse::<usize>()?;
             ensure!(
@@ -3207,21 +4267,7 @@ impl Workspace {
             | "projects:sort:direction"
             | "projects:sort:manual"
             | "projects:sort:activity" => {
-                self.project_drag = None;
-                if action == "projects:sort:manual" {
-                    self.navigation.recent = false;
-                } else if action == "projects:sort:activity" {
-                    self.navigation.recent = true;
-                } else if action == "projects:sort:mode" {
-                    self.navigation.recent = !self.navigation.recent;
-                } else {
-                    self.navigation.high_first = !self.navigation.high_first;
-                    self.navigation.recent = true;
-                }
-                self.sort_projects(true);
-                self.navigation.save_session_order(&self.config)?;
-                self.navigation.save(&self.navigation_scope)?;
-                self.navigation_saved_at = Instant::now();
+                self.category_action("categories:manage")?;
             }
             "git:details" => {
                 self.release();
@@ -3235,10 +4281,35 @@ impl Workspace {
             "git:refresh" => self.refresh_git(true),
             "git:scroll:up" => self.git_scroll = self.git_scroll.saturating_sub(3),
             "git:scroll:down" => {
-                let rows = crate::shelf::git_rows(self.viewport.height as u16);
-                let max = self
-                    .git_status()
-                    .map_or(0, |s| s.files.len().saturating_sub(rows));
+                let compact = (self.cells && self.viewport.rows < 16)
+                    || (!self.cells && (self.viewport.width < 600 || self.viewport.height < 400));
+                let (rows, count) = if compact {
+                    let columns = if self.cells {
+                        self.viewport.columns.saturating_sub(2)
+                    } else {
+                        (self.viewport.width as u16).saturating_sub(36) / 7
+                    };
+                    let rows = if self.cells {
+                        usize::from(self.viewport.rows.saturating_sub(5))
+                    } else {
+                        usize::from((self.viewport.height as u16).saturating_sub(88) / 22)
+                    }
+                    .max(1);
+                    (
+                        rows,
+                        crate::responsive::git_lines(self.git_status(), usize::from(columns)).len(),
+                    )
+                } else {
+                    (
+                        if self.cells {
+                            usize::from(self.viewport.rows.saturating_sub(12))
+                        } else {
+                            crate::shelf::git_rows(self.viewport.height as u16)
+                        },
+                        self.git_status().map_or(0, |s| s.files.len()),
+                    )
+                };
+                let max = count.saturating_sub(rows);
                 self.git_scroll = (self.git_scroll + 3).min(max);
             }
             "theme:next" => self.cycle_theme()?,
@@ -3250,7 +4321,7 @@ impl Workspace {
             }
             "projects:scroll:down" => {
                 self.project_offset = (self.project_offset + 3).min(
-                    self.projects
+                    self.category_rows()
                         .len()
                         .saturating_sub(self.project_page_size.max(1)),
                 );
@@ -3262,7 +4333,7 @@ impl Workspace {
             }
             "project:page:right" => {
                 self.project_offset = (self.project_offset + self.project_page_size.max(1)).min(
-                    self.projects
+                    self.category_rows()
                         .len()
                         .saturating_sub(self.project_page_size.max(1)),
                 );
@@ -3347,22 +4418,12 @@ impl Workspace {
                 self.save()
             }
             "terminal:close-pane" => {
-                if self.state.split {
-                    self.release();
-                    if let Some(other) = self
-                        .state
-                        .visible()
-                        .iter()
-                        .find(|id| **id != self.state.terminal)
-                    {
-                        self.state.select_terminal(*other);
-                    }
-                    self.state.split = false;
-                    self.state.split_panes = None;
-                    self.layout();
-                    self.save();
-                    self.note("Pane closed / terminal still available in its tab".into());
-                }
+                self.release();
+                self.state.close_pane();
+                self.cell_ui.terminal_focus = true;
+                self.layout();
+                self.save();
+                self.note("Pane closed / terminal still available in its tab".into());
             }
             "launch-app" => {
                 if self.state.space != Space::Apps {
@@ -3491,6 +4552,7 @@ impl Workspace {
                             "App window no longer exists"
                         );
                         host.selected = Some(id);
+                        host.focus_known = true;
                         host.client.send(AppRequest::Focus { window: id })?;
                         self.active_app = Some(key.into());
                         self.set_space(Space::Apps);
@@ -3507,6 +4569,29 @@ impl Workspace {
             return self.draw_cells(v);
         }
         self.viewport = v;
+        self.choose_session_row(0);
+        if v.width < 320 || v.height < 240 {
+            self.view = None;
+            let surface =
+                crate::shelf::minimum_surface(v.width as u16, v.height as u16, &self.appearance);
+            self.chrome_hits = surface.hits.clone();
+            let buffer = starkit::ratatui::buffer::Buffer::empty(
+                starkit::ratatui::layout::Rect::new(0, 0, v.columns, v.rows),
+            );
+            let mut scene = Scene::from_buffer(&buffer, v, 0);
+            scene.spans.clear();
+            scene.background = self.appearance.bg.clone();
+            scene.components.push(Component::Surface {
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: v.columns,
+                    height: v.rows,
+                },
+                surface,
+            });
+            return scene;
+        }
         let layout = crate::shelf::Layout::new(v.width as u16, v.height as u16, self.state.space);
         let content = layout.canvas;
         let direct = self.desktop.is_none() && self.state.space != Space::Apps;
@@ -3529,6 +4614,9 @@ impl Workspace {
             || self.settings.height != height
             || self.settings.fps != fps
         {
+            // A static app may reuse its pixel buffer. Its cropped frame still
+            // needs resubmitting when this presentation's dimensions change.
+            self.last_frame = None;
             self.settings.width = width;
             self.settings.height = height;
             self.settings.fps = fps;
@@ -3543,8 +4631,9 @@ impl Workspace {
                 });
             }
         }
-        let host = self.config.host.as_deref().unwrap_or("local");
-        let directory = self.config.directory.clone().unwrap_or_else(|| {
+        let focused_config = self.focused_config();
+        let host = focused_config.host.as_deref().unwrap_or("local");
+        let directory = focused_config.directory.clone().unwrap_or_else(|| {
             std::env::current_dir()
                 .unwrap_or_default()
                 .display()
@@ -3580,16 +4669,24 @@ impl Workspace {
         } else {
             raw_agent_state
         };
-        let page_size = crate::shelf::project_rows(v.height as u16);
+        let page_size = crate::categories::sidebar_capacity(
+            v.height as u16,
+            self.project_offset,
+            &self
+                .category_rows()
+                .iter()
+                .map(|r| r.id.as_str())
+                .collect::<Vec<_>>(),
+        );
         if page_size != self.project_page_size {
             self.project_page_size = page_size;
             self.project_offset = self
                 .project_offset
-                .min(self.projects.len().saturating_sub(page_size));
+                .min(self.category_rows().len().saturating_sub(page_size));
             if let Some(index) = self
-                .projects
+                .category_rows()
                 .iter()
-                .position(|p| p.workspace == self.config.workspace)
+                .position(|r| r.id == self.config.workspace)
             {
                 if index < self.project_offset {
                     self.project_offset = index;
@@ -3598,17 +4695,29 @@ impl Workspace {
                 }
             }
         }
-        let projects = self
-            .projects
+        let category_rows = self.category_rows();
+        let projects = category_rows
             .iter()
-            .map(|c| crate::shelf::ProjectTab {
-                id: &c.workspace,
-                name: c.label.as_deref().unwrap_or(&c.workspace),
-                host: c.host.as_deref().unwrap_or("local"),
-                working: self.project_activity(c).working,
-                waiting: self.project_activity(c).waiting,
-                running: self.project_activity(c).running,
-                questions: self.project_activity(c).questions,
+            .map(|r| {
+                let mut a = r
+                    .project
+                    .as_ref()
+                    .map(|c| self.project_activity(c))
+                    .unwrap_or_default();
+                if r.project.is_none() {
+                    a.failed = r.attention;
+                    a.working = r.working;
+                }
+                crate::shelf::ProjectTab {
+                    failed: a.failed,
+                    id: &r.id,
+                    name: &r.name,
+                    host: &r.detail,
+                    working: a.working,
+                    waiting: a.waiting,
+                    running: a.running,
+                    questions: a.questions,
+                }
             })
             .collect();
         let active_app = &self.active_app;
@@ -3657,6 +4766,23 @@ impl Workspace {
                 }
             }),
             title: match &m.kind {
+                Prompt::CategoryAgentSetup(_, _, _) => "Category agent / executable and charter",
+                Prompt::CategoryAgentMessage(_) => "Category conversation",
+                Prompt::CategoryAgentSetting(_, _, _, _) => "Category provider setting",
+                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve category task",
+
+                Prompt::Category(_, _, _) => "Category",
+                Prompt::PluginLink => "Open link with plugin",
+                Prompt::LinkPlugin(_) => "Link plugin / initially disabled",
+                Prompt::InstallPlugin(_) => "Install plugin / initially disabled",
+                Prompt::UpdatePlugin(_, _, _) => "Update plugin / review required",
+                Prompt::UninstallPlugin(_, _) => "Uninstall managed plugin",
+                Prompt::AttentionSearch => "Search attention inbox",
+                Prompt::NotificationRetention(_) => "Notification retention",
+                Prompt::Machine(_) => "Saved SSH machine",
+                Prompt::MachineProject(_) => "Add project on SSH machine",
+                Prompt::CreateWorktree(_) => "Create & open Git worktree",
+                Prompt::RemoveWorktree(_, _) => "Remove Git worktree / retain branch",
                 Prompt::Sessions(external) => {
                     if *external {
                         "Import an existing session"
@@ -3671,6 +4797,7 @@ impl Workspace {
                 Prompt::RenameTab(_) => "Rename terminal tab",
                 Prompt::RenameAgent(_) => "Rename agent",
                 Prompt::RecoverTerminal(_, _, _) => "Recover terminal to a shell",
+                Prompt::TerminateTerminal(_, _, _, _) => "Terminate terminal",
                 Prompt::Project => "Add / reopen project",
                 Prompt::Launch => "Launch app in this project",
                 Prompt::RunCommand => "Set the project app command",
@@ -3693,6 +4820,11 @@ impl Workspace {
             .as_ref()
             .and_then(|key| self.app_hosts.get(key))
             .is_some_and(|h| h.client.connected.load(Ordering::Acquire));
+        let keyboard_status = self
+            .keyboard
+            .pending_hint()
+            .or_else(|| self.panel_hint())
+            .or_else(|| self.terminal_review_hint());
         let model = crate::shelf::Model {
             app_view: self.app_view_available,
             project: &self.config.workspace,
@@ -3708,6 +4840,15 @@ impl Workspace {
             project_hover: self
                 .project_hover
                 .as_deref()
+                .or_else(|| {
+                    (self.panel_focus == Some(focus_ui::Panel::Projects))
+                        .then(|| {
+                            category_rows
+                                .get(self.category_cursor)
+                                .map(|r| r.id.as_str())
+                        })
+                        .flatten()
+                })
                 .filter(|_| self.modal.is_none() && self.context_menu.is_none() && !self.git_open),
             project_manual: !self.navigation.recent,
             project_drag: self
@@ -3780,9 +4921,10 @@ impl Workspace {
             terminal: self.state.terminal,
             terminal_font_size: self.font_label(),
             split: self.state.split,
+            plugin_overlay: self.state.plugin_overlay.is_some(),
             agent_name,
             agent_state,
-            status: &self.status,
+            status: keyboard_status.as_deref().unwrap_or(&self.status),
             apps,
             app_desktop: self
                 .active_app
@@ -3818,8 +4960,14 @@ impl Workspace {
         };
         let cache_key = ((direct && self.native_terminal_cells) || self.state.space == Space::Apps)
             .then(|| {
-                serde_json::to_vec(&(v, &self.appearance, &model, self.visible_panes()))
-                    .expect("Serialize graphical presentation")
+                serde_json::to_vec(&(
+                    v,
+                    &self.appearance,
+                    &model,
+                    self.visible_panes(),
+                    self.panel_focus,
+                ))
+                .expect("Serialize graphical presentation")
             });
         if let Some(scene) = cache_key
             .as_ref()
@@ -3827,8 +4975,17 @@ impl Workspace {
         {
             return scene;
         }
-        let (chrome, foreground) = crate::shelf::surfaces(layout, &self.appearance, &model);
+        let (chrome, mut foreground) = crate::shelf::surfaces(layout, &self.appearance, &model);
         drop(model);
+        if let Some(rect) = self.focus_rect() {
+            foreground
+                .nodes
+                .push(starkit::native_surface::Primitive::Border {
+                    rect,
+                    color: self.appearance.accent.clone(),
+                    radius: 0,
+                });
+        }
 
         self.chrome_hits = chrome
             .hits
@@ -3968,6 +5125,7 @@ impl Controller for Workspace {
             self.ensure_sessions();
         }
         {
+            self.fonts = Default::default();
             self.native_terminal_cells = capabilities.native_terminal_cells;
             self.native_font_points = capabilities.native_font_millipoints;
             self.initial_native_font_points = capabilities.native_font_millipoints;
@@ -4040,7 +5198,36 @@ impl Controller for Workspace {
         self.refresh_kitty_fonts();
     }
     fn tick(&mut self) {
+        self.popup_tick();
+        self.coordinator_tick();
+        if self.sessions_retry_at.elapsed() >= Duration::from_secs(3) {
+            self.sessions_retry_at = Instant::now();
+            self.ensure_sessions();
+        }
+        self.session_capture
+            .retain(|key, _| self.session_monitors.contains_key(key));
+        self.session_sources
+            .retain(|key, _| self.session_monitors.contains_key(key));
+        for (key, capture) in &self.session_capture {
+            let enabled = if key.0 == self.config.workspace {
+                self.state.save_terminal_screens
+            } else {
+                self.states
+                    .get(&key.0)
+                    .is_none_or(|s| s.save_terminal_screens)
+            };
+            capture.store(
+                enabled && !self.terminals.contains_key(key),
+                Ordering::Release,
+            );
+        }
+        if let Some(error) = self.screen_writer.error() {
+            self.note(error);
+        }
         if self.shared_synced_at.elapsed() >= Duration::from_millis(250) {
+            if let Err(error) = self.leave_removed_worktree() {
+                self.note(format!("Worktree project: {error:#}"));
+            }
             if let Err(e) = self.sync_project() {
                 self.note(format!("Shared project: {e:#}"));
             }
@@ -4051,6 +5238,150 @@ impl Controller for Workspace {
         self.refresh_activity();
         for event in self.rx.try_iter().collect::<Vec<_>>() {
             match event {
+                Event::AttentionInbox(token, result) => {
+                    if self.attention_token == Some(token) {
+                        self.attention_loading = false;
+                        if self.context_menu.as_ref().is_some_and(|m| {
+                            matches!(m.title.as_str(), "Attention inbox" | "Loading attention…")
+                        }) {
+                            match result {
+                                Ok(items) => self.attention_render(items),
+                                Err(e) => {
+                                    self.note(format!("Attention inbox: {e}"));
+                                    self.context_menu = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                Event::AttentionUpdated(result) => {
+                    match result {
+                        Ok(r) => {
+                            let mut message = if let Some(count) = r["updated"].as_u64() {
+                                format!("Notifications marked read: {count}")
+                            } else {
+                                let removed = r["projects"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|p| p["removed"].as_u64())
+                                    .sum::<u64>();
+                                format!("Expired notifications removed: {removed}")
+                            };
+                            let failures = r["errors"].as_array().map_or(0, Vec::len);
+                            if failures > 0 {
+                                message.push_str(&format!(" · {failures} project updates failed; refresh the inbox for details"));
+                            }
+                            self.note(message);
+                        }
+                        Err(e) => self.note(format!("Notifications: {e}")),
+                    }
+                    if self.modal.is_none() && self.context_menu.is_none() {
+                        let _ = self.attention_load(false);
+                    }
+                }
+                Event::CategoryAgentBadges(badges) => {
+                    self.coordinator_badges = badges;
+                    self.coordinator_badges_pending = false;
+                }
+                Event::CategoryAgent(token, category, result) => {
+                    self.coordinator_result(token, &category, result)
+                }
+                Event::Plugins(token, target, result) => self.plugin_result(token, &target, result),
+                Event::PluginPaneOpened(generation, result) => {
+                    self.plugin_pane_opened(generation, *result)
+                }
+                Event::MachineChecked(machine, token, result) => {
+                    if self.machine_pending.get(&machine.id) != Some(&token) {
+                        continue;
+                    }
+                    self.machine_pending.remove(&machine.id);
+                    if crate::machines::get(&machine.id)
+                        .is_ok_and(|m| m.revision == machine.revision)
+                    {
+                        let result = match result {
+                            Ok(r) => {
+                                self.note(format!(
+                                    "{}: SSH connected / project terminals {} / workspace API {}",
+                                    machine.label,
+                                    if r["project_terminals_ready"] == true {
+                                        "ready"
+                                    } else {
+                                        "unavailable"
+                                    },
+                                    if r["workspace_api_ready"] == true {
+                                        "ready"
+                                    } else {
+                                        "unavailable"
+                                    }
+                                ));
+                                r
+                            }
+                            Err(error) => {
+                                self.note(format!("{}: {error}", machine.label));
+                                json!({"machine":machine.id,"revision":machine.revision,"error":error})
+                            }
+                        };
+                        self.machine_checks.insert(machine.id.clone(), result);
+                        if self
+                            .context_menu
+                            .as_ref()
+                            .is_some_and(|m| m.title == "SSH machine")
+                            && self
+                                .machine_profile
+                                .as_ref()
+                                .is_some_and(|m| m.id == machine.id)
+                        {
+                            self.machine_details(machine);
+                        }
+                    }
+                }
+                Event::Worktrees(config, token, result) => {
+                    if self.worktree_token == Some(token)
+                        && self
+                            .context_menu
+                            .as_ref()
+                            .is_some_and(|m| m.title == "Git worktrees")
+                    {
+                        match result {
+                            Ok(catalog) => self.worktree_menu(*config, catalog),
+                            Err(error) => {
+                                self.note(format!("Worktrees: {error}"));
+                                self.context_menu = None;
+                            }
+                        }
+                    }
+                }
+                Event::WorktreeOpened(origin, token, result) => {
+                    if self.worktree_token == Some(token) {
+                        match result {
+                            Ok(config) => {
+                                if self.config.workspace == origin {
+                                    if let Err(e) = self.reopen_project(*config) {
+                                        self.note(format!("Open worktree: {e:#}"));
+                                    }
+                                } else {
+                                    self.note(format!(
+                                        "Worktree project ready: {}",
+                                        config.label.as_deref().unwrap_or(&config.workspace)
+                                    ));
+                                }
+                            }
+                            Err(error) => self.note(format!("Worktree: {error}")),
+                        }
+                    }
+                }
+                Event::WorktreeRemoved(token, result) => {
+                    if self.worktree_token == Some(token) {
+                        match result {
+                            Ok(_) => {
+                                self.worktree_catalog = None;
+                                self.note("Worktree removed / branch retained".into());
+                            }
+                            Err(error) => self.note(format!("Worktree: {error}")),
+                        }
+                    }
+                }
                 Event::SessionEntries(token, result) => {
                     if let Some(m) = self.modal.as_mut()
                         && let Some(p) = m.sessions.as_mut()
@@ -4105,16 +5436,80 @@ impl Controller for Workspace {
                         self.effects.push(ServerMessage::Clipboard { text });
                     }
                 }
-                Event::Activity(activity) => {
+                Event::Activity(activity, scan) => {
+                    let count_changed = self.attention_unread != scan.unread.len();
+                    self.attention_unread = scan.unread.len();
+                    let unread_ids = scan.unread.iter().collect::<BTreeSet<_>>();
+                    self.attention_seen.retain(|id| unread_ids.contains(id));
+                    let eligible = scan.eligible.iter().collect::<BTreeSet<_>>();
+                    let new = scan
+                        .unread
+                        .iter()
+                        .filter(|id| self.attention_seen.insert((*id).clone()))
+                        .filter(|id| eligible.contains(id))
+                        .count()
+                        > 0;
+                    if new
+                        || (count_changed
+                            && !scan.eligible.is_empty()
+                            && self.status.starts_with("Attention inbox:"))
+                    {
+                        let shortcut = self
+                            .keyboard
+                            .help()
+                            .into_iter()
+                            .find(|(_, _, action)| action == "attention")
+                            .map(|(_, hint, _)| format!(" · {hint}"))
+                            .unwrap_or_default();
+                        self.note(format!(
+                            "Attention inbox: {} unread{shortcut}",
+                            self.attention_unread
+                        ));
+                    }
+                    self.notification_error = scan.error;
+                    if !self.attention_loading
+                        && self
+                            .context_menu
+                            .as_ref()
+                            .is_some_and(|m| m.title == "Attention inbox")
+                    {
+                        let _ = self.attention_load(true);
+                    }
                     self.navigation.observe(&activity, crate::navigation::now());
                     self.activity = activity;
                     self.activity_pending = false;
                     self.activity_at = Instant::now();
                     self.sort_projects(false);
                 }
-                Event::Git(id, location, status) => {
-                    self.git_pending.remove(&id);
-                    self.git.insert(id, (location, *status, Instant::now()));
+                Event::SavedScreen(project, pane, epoch, token, result) => {
+                    if self.session_epochs.get(&(project.clone(), pane)) != Some(&epoch) {
+                        continue;
+                    }
+                    if let Some(terminal) = self.terminals.get_mut(&(project, pane)) {
+                        match result {
+                            Ok(saved) => {
+                                if let Err(e) = terminal.review_saved(token, &saved) {
+                                    self.note(format!("Saved screen: {e:#}"));
+                                }
+                            }
+                            Err(error) => terminal.review_loaded(token, Err(error)),
+                        }
+                    }
+                }
+                Event::TerminalHistory(project, pane, epoch, token, result) => {
+                    if let Some(config) = self.projects.iter().find(|p| p.workspace == project)
+                        && let Ok(state) = ProjectState::load(config)
+                        && state.terminal_epochs.get(&pane) == epoch.as_ref()
+                        && state.terminal_ids().contains(&pane)
+                        && let Some(terminal) =
+                            self.terminals.get_mut(&(config.workspace.clone(), pane))
+                    {
+                        terminal.review_loaded(token, result);
+                    }
+                }
+                Event::Git(location, status) => {
+                    self.git_pending.remove(&location);
+                    self.git.insert(location, (*status, Instant::now()));
                 }
                 Event::Applications(source, token, result) => {
                     if let Some(modal) = self.modal.as_mut()
@@ -4139,12 +5534,52 @@ impl Controller for Workspace {
                         }
                     }
                 }
+                Event::EnsureFailed(project, pane, error, stopped) => {
+                    let key = (project.clone(), pane);
+                    if stopped.load(Ordering::Acquire)
+                        || !self
+                            .session_monitors
+                            .get(&key)
+                            .is_some_and(|current| Arc::ptr_eq(current, &stopped))
+                    {
+                        continue;
+                    }
+                    stopped.store(true, Ordering::Release);
+                    self.session_monitors.remove(&key);
+                    self.registered.remove(&key);
+                    if self.health.get(&key).is_none_or(|v| v["error"] != error) {
+                        self.note(format!(
+                            "{project} / terminal {}: {error} · reconnecting",
+                            pane + 1
+                        ));
+                    }
+                    self.health.insert(
+                        key,
+                        json!({"alive":false,"error":error,"reconnecting":true}),
+                    );
+                }
                 Event::Ready(config, pane) => {
+                    let restored = config
+                        .adopted
+                        .get(&pane)
+                        .is_some_and(|t| t.retired(&config, pane));
                     if self.navigation.closed_projects.contains(&config.workspace) {
                         continue;
                     }
-                    self.launch(*config, pane);
-                    self.note("Project session connected / process retained".into())
+                    if config.herdr.is_none()
+                        || (config.workspace == self.config.workspace
+                            && self.visible_panes().iter().any(|(id, _)| *id == pane))
+                    {
+                        self.launch(*config, pane);
+                    }
+                    self.note(
+                        if restored {
+                            "Terminal shell restored after reboot / saved conversations retained"
+                        } else {
+                            "Project session connected / process retained"
+                        }
+                        .into(),
+                    )
                 }
                 Event::Recovered(config, pane) => {
                     let key = (config.workspace.clone(), pane);
@@ -4176,6 +5611,36 @@ impl Controller for Workspace {
                     self.launch(*config, pane);
                     self.layout();
                     self.note("Terminal reconnected".into());
+                }
+                Event::Terminated(config, pane, epoch) => {
+                    let key = (config.workspace.clone(), pane);
+                    if self.session_epochs.get(&key) == Some(&epoch) {
+                        if let Some(stopped) = self.session_monitors.remove(&key) {
+                            stopped.store(true, Ordering::Release);
+                        }
+                        self.registered.remove(&key);
+                        self.session_epochs.remove(&key);
+                        self.terminals.remove(&key);
+                        self.health.remove(&key);
+                        self.launched.remove(&key);
+                    }
+                    if let Some(project) = self
+                        .projects
+                        .iter_mut()
+                        .find(|p| p.workspace == config.workspace)
+                    {
+                        project.adopted = config.adopted.clone();
+                    }
+                    if self.config.workspace == config.workspace {
+                        self.config.adopted = config.adopted.clone();
+                        if let Err(e) = self.state.sync_shared(&self.config) {
+                            self.note(format!("Reload terminated terminal: {e:#}"));
+                        }
+                        self.cell_ui.terminal_focus = true;
+                        self.layout();
+                        self.save();
+                    }
+                    self.note("Terminal terminated / other sessions retained".into());
                 }
                 Event::Health(project, pane, value, stopped) => {
                     if stopped.load(Ordering::Acquire) {
@@ -4249,12 +5714,33 @@ impl Controller for Workspace {
                 }
             }
         }
-        for terminal in self.terminals.values_mut() {
+        for (key, terminal) in &mut self.terminals {
             if let Some(text) = terminal.take_clipboard() {
                 self.effects.push(ServerMessage::Clipboard { text });
             }
             if let Err(error) = terminal.poll() {
                 self.status = format!("Terminal: {error:#}");
+            }
+            if terminal.snapshot_due()
+                && (if key.0 == self.config.workspace {
+                    self.state.save_terminal_screens
+                } else {
+                    self.states
+                        .get(&key.0)
+                        .is_none_or(|s| s.save_terminal_screens)
+                })
+                && let Some(config) = self.projects.iter().find(|c| c.workspace == key.0)
+                && let Some(health) = self.health.get(key).filter(|h| h["alive"] == true)
+            {
+                let epoch = self.session_epochs.get(key).cloned().flatten();
+                match terminal.snapshot_capture(config, key.1, epoch, health) {
+                    Ok(screen) => terminal
+                        .snapshot_attempted(self.screen_writer.submit(config.clone(), screen)),
+                    Err(e) => {
+                        terminal.snapshot_attempted(false);
+                        self.status = format!("Saved screen: {e:#}");
+                    }
+                }
             }
         }
         let ended_imports = self
@@ -4276,7 +5762,11 @@ impl Controller for Workspace {
                 self.note(format!("Close exited terminal: {error:#}"));
             }
         }
-        if self.desktop.is_none() && self.native_terminal_cells && self.state.space != Space::Apps {
+        if self.popup.is_none()
+            && self.desktop.is_none()
+            && self.native_terminal_cells
+            && self.state.space != Space::Apps
+        {
             let panes = self.visible_panes();
             let content = self.presentation_canvas();
             let key = format!(
@@ -4292,6 +5782,14 @@ impl Controller for Workspace {
                 self.native_layout_key = key;
             }
             for (pane, area) in panes {
+                let stream = app_id(&self.config.workspace, pane);
+                // Reliable output may be blocked behind a slow frontend. Keep
+                // one unsent delta per pane, and leave the parser dirty until
+                // that delta is admitted; dropping/replacing deltas would lose
+                // the receiver's baseline.
+                let frame_pending = self.effects.iter().any(|effect| {
+                    matches!(effect, ServerMessage::TerminalCells { frame } if frame.stream == stream)
+                });
                 let (rect, padding) = if self.cells {
                     (
                         self.cell_panes()
@@ -4320,8 +5818,11 @@ impl Controller for Workspace {
                         ],
                     ) {
                         Ok(()) => {
+                            if frame_pending {
+                                continue;
+                            }
                             if let Some(frame) = terminal.native_frame(
-                                app_id(&self.config.workspace, pane),
+                                stream,
                                 self.viewport.generation,
                                 rect,
                                 &self.appearance,
@@ -4329,7 +5830,8 @@ impl Controller for Workspace {
                                     && self.modal.is_none()
                                     && self.context_menu.is_none()
                                     && !self.git_open
-                                    && (!self.cells || self.cell_ui.terminal_focus),
+                                    && (!self.cells || self.cell_ui.terminal_focus)
+                                    && self.panel_focus.is_none(),
                             ) {
                                 self.effects.push(ServerMessage::TerminalCells { frame });
                             }
@@ -4360,11 +5862,19 @@ impl Controller for Workspace {
             for event in host.client.events.try_iter() {
                 match event {
                     DesktopEvent::Windows(windows) => {
+                        if let Some(focused) = windows.iter().find(|w| w.focused) {
+                            host.selected = Some(focused.id);
+                            host.focus_known = true;
+                        }
                         if !host
                             .selected
                             .is_some_and(|id| windows.iter().any(|w| w.id == id))
                         {
-                            host.selected = windows.last().map(|w| w.id)
+                            host.selected = windows.last().map(|w| w.id);
+                            host.focus_known = windows.len() == 1;
+                        }
+                        if windows.len() == 1 {
+                            host.focus_known = true;
                         }
                         host.windows = windows;
                     }
@@ -4399,7 +5909,9 @@ impl Controller for Workspace {
                 self.launch(config, pane);
             }
         }
-        let frame = if self.state.space == Space::Apps {
+        let frame = if !self.cells && (self.viewport.width < 320 || self.viewport.height < 240) {
+            None
+        } else if self.state.space == Space::Apps {
             self.active_app
                 .as_ref()
                 .and_then(|key| self.app_hosts.get(key))
@@ -4501,10 +6013,19 @@ impl Controller for Workspace {
                             .unwrap_or(json!({"state":"starting"}))
                     })
                     .collect::<Vec<_>>();
-                let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected})).collect::<Vec<_>>();
+                let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected,"focus_known":h.focus_known})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
                 let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                snapshot["terminal_font"] = json!({"family":self.fonts.family,"millipoints":self.native_font_points,"controls_available":self.fonts.available});
+                snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
+                snapshot["categories"] = json!({"catalog":self.category_catalog,"collapsed":self.navigation.collapsed_categories,"rows":self.category_rows().iter().map(|r|json!({"id":r.id,"name":r.name,"summary":r.detail})).collect::<Vec<_>>()});
                 snapshot["graphical_render"] = self.graphical_cache.statistics();
+                snapshot["terminal_presentation"]["queued_cell_frames"] = json!(
+                    self.effects
+                        .iter()
+                        .filter(|effect| matches!(effect, ServerMessage::TerminalCells { .. }))
+                        .count()
+                );
                 snapshot["app_video_render"] = self.video.statistics();
                 snapshot["audio"]["playback_protocol"] = json!(if self.audio_pcm_v2 {
                     "pcm-v2"
@@ -4516,6 +6037,16 @@ impl Controller for Workspace {
                 snapshot["session_id"] = json!(crate::session_catalog::group(&self.config));
                 snapshot["app_view_available"] = json!(self.app_view_available);
                 snapshot["cell_terminal_focus"] = json!(self.cell_ui.terminal_focus);
+                snapshot["panel_focus"] = json!(self.panel_focus);
+                snapshot["controller_start_ticks"] =
+                    json!(crate::agent_state::process_start(std::process::id()));
+                snapshot["controller_boot_id"] =
+                    json!(crate::agent_state::boot_id().map(|b| b.to_string()));
+                snapshot["controller_observed_ns"] = json!(crate::runtime::monotonic_ns());
+                let focused_config = self.focused_config();
+                snapshot["focused_location"] =
+                    json!({"host": focused_config.host, "directory": focused_config.directory});
+                snapshot["snapshot_coverage"]=json!(self.session_monitors.iter().filter(|(_,stopped)|!stopped.load(Ordering::Acquire)).map(|((project,pane),_)|json!({"project":project,"pane":pane,"epoch":self.session_epochs.get(&(project.clone(),*pane)).cloned().flatten(),"endpoint":self.session_sources.get(&(project.clone(),*pane))})).collect::<Vec<_>>());
                 if self.cells {
                     let canvas = self.presentation_canvas();
                     snapshot["terminal_renderer"] = json!("parent-terminal");
@@ -4527,7 +6058,44 @@ impl Controller for Workspace {
                     }
                 }
                 snapshot["ui_refresh"] = json!(true);
+                snapshot["plugin_workspace"] = json!({"generation":self.plugin_generation,"view":self.plugin_view,"loading":self.plugin_token.is_some()});
+                snapshot["attention_query"] = json!(self.attention_query);
+                snapshot["attention_total"] = json!(self.attention_total);
+                snapshot["attention_items"] = json!(self.attention_items);
+                snapshot["notification_error"] = json!(self.notification_error);
+                snapshot["notification_focused"] = json!(self.notification_focused);
+                snapshot["attention_unread"] = json!(self.attention_unread);
+                snapshot["machine_profile"] = json!(self.machine_profile);
+                snapshot["machine_checks"] = json!(self.machine_checks);
+                snapshot["worktree_catalog"] = self.worktree_catalog.as_ref().map(|(c,list)|json!({"project":c.workspace,"repository":list.repository,"worktrees":list.worktrees})).unwrap_or(Value::Null);
+                snapshot["worktree_project"] = match crate::worktrees::link(&self.config) {
+                    Ok(link) => json!(link),
+                    Err(e) => json!({"error":format!("{e:#}")}),
+                };
+                snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
+                let geometry = if self.cells {
+                    self.cell_pane_geometry()
+                } else {
+                    self.native_pane_geometry()
+                };
+                snapshot["terminal_review"] = self
+                    .terminals
+                    .get(&(
+                        self.config.workspace.clone(),
+                        self.config.canonical_pane(self.state.selected()),
+                    ))
+                    .and_then(|t| t.review_status())
+                    .map(|s| json!(s))
+                    .unwrap_or(serde_json::Value::Null);
+                snapshot["pane_layout"] = json!({"units":if self.cells {"cells"} else {"pixels"},"canvas":self.presentation_canvas(),"panes":geometry.panes.iter().map(|(id,rect)|json!({"pane":id,"rect":rect})).collect::<Vec<_>>(),"dividers":geometry.dividers.iter().map(|d|json!({"path":d.path,"axis":d.axis,"rect":d.rect})).collect::<Vec<_>>()});
                 snapshot["frontend"] = json!(self.controller_id);
+                snapshot["frontend_commands"] = json!(1);
+                snapshot["frontend_plugin_panes"] = json!(1);
+                snapshot["frontend_plugin_popups"] =
+                    json!(self.desktop.is_none() && self.native_terminal_cells);
+                snapshot["plugin_popup"] = self.popup_snapshot();
+                snapshot["popup_controls_shortcut"] = json!(self.keyboard.popup_controls_hint());
+                snapshot["frontend_command_busy"] = json!(self.frontend_command_busy());
                 if self.desktop.is_none() {
                     snapshot["terminal_presentation"]["fps"] = Value::Null;
                     snapshot["terminal_presentation"]["burst_fps"] = Value::Null;
@@ -4545,7 +6113,11 @@ impl Controller for Workspace {
                 }
                 let actions = root.join(format!("{}.actions", self.controller_id));
                 if let Ok(entries) = fs::read_dir(actions) {
-                    let mut entries = entries.flatten().map(|e| e.path()).collect::<Vec<_>>();
+                    let mut entries = entries
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+                        .collect::<Vec<_>>();
                     entries.sort();
                     for path in entries.into_iter().take(32) {
                         if let Ok(bytes) = fs::read(&path)
@@ -4558,14 +6130,84 @@ impl Controller for Workspace {
                         let _ = fs::remove_file(path);
                     }
                 }
+                let controller = self.controller_id.clone();
+                let workspace = self.workspace_id.clone();
+                if !self.quit
+                    && let Err(error) =
+                        crate::frontend_commands::process(&controller, &workspace, |command| {
+                            self.frontend_command(command)
+                        })
+                {
+                    self.note(format!("Frontend command: {error:#}"));
+                }
             }
         }
     }
     fn scene(&mut self, v: Viewport) -> Scene {
-        self.draw(v)
+        let mut scene = self.draw(v);
+        self.popup_scene(&mut scene);
+        self.terminal_link_regions(&mut scene);
+        scene
     }
     fn input(&mut self, input: Input) {
+        if self.popup_input(&input) {
+            return;
+        }
+        if self.terminal_link_input(&input) {
+            return;
+        }
+        if self.keyboard_input(&input) {
+            return;
+        }
+        if self.panel_input(&input) {
+            return;
+        }
+        if self.terminal_review_input(&input) {
+            return;
+        }
+        // A canvas may retain capture while an overlay opens. Its keys must
+        // navigate the overlay rather than disappear or reach the program.
+        let input = if self.modal.is_some() || self.context_menu.is_some() || self.git_open {
+            match input {
+                Input::Embedded { event, .. } => match event.kind {
+                    EmbeddedKind::Key {
+                        code,
+                        modifiers,
+                        phase,
+                    } if phase != KeyPhase::Release => Input::Key { code, modifiers },
+                    EmbeddedKind::Text { text } => Input::Paste { text },
+                    _ => return,
+                },
+                other => other,
+            }
+        } else {
+            input
+        };
         if let Input::Notice { message } = &input {
+            if self.font_notice(message) {
+                return;
+            }
+            if message == "window-focus:lost" || message == "focus-canvas:terminals" {
+                self.notification_focused = message != "window-focus:lost";
+                if message == "window-focus:lost" {
+                    self.release();
+                } else if self.state.space == Space::Apps {
+                    self.app_keyboard_released = true;
+                }
+                self.notification_focus.publish(
+                    &self.controller_id,
+                    &self.config,
+                    self.state.selected(),
+                    self.state
+                        .terminal_epochs
+                        .get(&self.state.selected())
+                        .cloned(),
+                    self.notification_focused && self.state.space != Space::Apps,
+                );
+                if message == "window-focus:lost" {
+                    return;
+                }
+            }
             if message == "require-graphical" {
                 self.require_graphical();
                 return;
@@ -4581,23 +6223,6 @@ impl Controller for Workspace {
                 return;
             }
         }
-        let refresh = match &input {
-            Input::Key { code, modifiers } => {
-                matches!(code.as_str(), "f5" | "f:5")
-                    || (matches!(code.as_str(), "char:r" | "char:R") && modifiers & 3 == 3)
-            }
-            Input::Embedded { event, .. } => {
-                matches!(&event.kind,EmbeddedKind::Key{code,modifiers,phase} if *phase!=KeyPhase::Release && matches!(code.as_str(),"char:r"|"char:R") && modifiers&3==3)
-            }
-            _ => false,
-        };
-        if refresh {
-            if let Err(error) = self.refresh_ui() {
-                self.note(format!("Refresh UI: {error:#}"));
-            }
-            return;
-        }
-
         match &input {
             Input::Pointer {
                 action,
@@ -4670,6 +6295,15 @@ impl Controller for Workspace {
                 }
                 input => input,
             };
+            if self
+                .context_menu
+                .as_ref()
+                .is_some_and(|m| m.title == "Attention inbox")
+                && matches!(&input,Input::Key{code,modifiers:0} if code=="char:/")
+            {
+                self.open_prompt(Prompt::AttentionSearch);
+                return Ok(());
+            }
             if self.git_open {
                 match input {
                     Input::Key { code, .. } => match code.as_str() {
@@ -4723,6 +6357,16 @@ impl Controller for Workspace {
             }
             if self.context_menu.is_some() {
                 match &input {
+                    Input::Pointer { action, .. }
+                        if action == "scroll_up" || action == "scroll_down" =>
+                    {
+                        self.menu_key(if action == "scroll_up" {
+                            "pageup"
+                        } else {
+                            "pagedown"
+                        })?;
+                        return Ok(());
+                    }
                     Input::Key { code, .. } => {
                         self.menu_key(code)?;
                         return Ok(());
@@ -4771,7 +6415,9 @@ impl Controller for Workspace {
                             .as_deref()
                             .and_then(|h| h.strip_prefix("menu:item:"))
                             .and_then(|i| i.parse().ok());
-                        if let Some(menu) = &mut self.context_menu {
+                        if let Some(menu) = &mut self.context_menu
+                            && selected.is_some()
+                        {
                             menu.selected = selected;
                         }
                     }

@@ -12,6 +12,9 @@ use std::{
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Activity {
+    pub available: bool,
+    pub unknown: usize,
+    pub failed: usize,
     pub running: usize,
     pub working: usize,
     pub waiting: usize,
@@ -23,6 +26,8 @@ pub struct Activity {
 }
 impl Activity {
     pub fn observe(&mut self, state: &str) {
+        self.available = true;
+        self.unknown += usize::from(state == "unknown");
         if matches!(
             state,
             "needs_input" | "question_pending" | "waiting_for_answer"
@@ -33,6 +38,7 @@ impl Activity {
             self.running += 1;
         }
         match state {
+            "failed" | "backend_unavailable" => self.failed += 1,
             "working" | "busy" | "thinking" | "executing" => self.working += 1,
             "needs_input"
             | "question_pending"
@@ -125,7 +131,12 @@ pub fn screen_state(text: &str) -> &'static str {
         return "waiting_for_approval";
     }
     for line in footer.lines().rev() {
-        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•".contains(c));
+        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•■".contains(c));
+        if line.starts_with("automatic reconnect could not restore this session")
+            || line.starts_with("server connection could not be restored")
+        {
+            return "backend_unavailable";
+        }
         if line.starts_with("worked for ") {
             return "idle";
         }
@@ -199,6 +210,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                     .and_then(|h| sequences.get(&h.workspace_id))
                     .copied()
                     .unwrap_or(0);
+                state.available = true;
                 for agent in agents.iter().filter(|a| {
                     Some(a["workspace_id"].as_str().unwrap_or(""))
                         == project.herdr.as_ref().map(|h| h.workspace_id.as_str())
@@ -240,6 +252,9 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
         let Ok(state) = ProjectState::load(project) else {
             continue;
         };
+        if state.terminal_ids().is_empty() {
+            activity.get_mut(&project.workspace).unwrap().available = true;
+        }
         for pane in state
             .agent_ids()
             .into_iter()
@@ -260,9 +275,22 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
             } else {
                 read(project.command(pane, &json!({"workspace": project.workspace, "pane": format!("p{pane}"), "action": "inspect"}), false))
             };
-            if let Some(value) = value {
+            if let Some(mut value) = value {
+                crate::agent_state::enrich(project, pane, &mut value);
+                let _ = crate::agent_state::observe_attention(
+                    project,
+                    pane,
+                    state.terminal_epochs.get(&pane).map(String::as_str),
+                    &value,
+                );
                 let activity = activity.get_mut(&project.workspace).unwrap();
-                if value["alive"] == true && value["agent"].as_str().is_some() {
+                activity.available = true;
+                if (value["alive"] == true && value["agent"].as_str().is_some())
+                    || matches!(
+                        value["state"].as_str(),
+                        Some("failed" | "backend_unavailable")
+                    )
+                {
                     activity.observe(value["state"].as_str().unwrap_or("unknown"));
                 }
                 activity.signals.insert(
@@ -339,5 +367,30 @@ mod tests {
         activity.observe("blocked");
         assert_eq!(activity.working, 2);
         assert_eq!(activity.waiting, 1);
+    }
+    #[test]
+    fn reconnect_failure_is_not_idle_or_old_work() {
+        assert_eq!(
+            screen_state(
+                "Working (1s · esc to interrupt)\n■ Automatic reconnect could not restore this session. Your draft is still editable.\n■ Server connection could not be restored"
+            ),
+            "backend_unavailable"
+        );
+        assert_eq!(
+            screen_state("The error was: Server connection could not be restored"),
+            "idle"
+        );
+        assert_eq!(
+            screen_state(
+                "■ Server connection could not be restored\nWorking (1s · esc to interrupt)"
+            ),
+            "working"
+        );
+        let mut activity = Activity::default();
+        activity.observe("backend_unavailable");
+        assert_eq!(
+            (activity.failed, activity.running, activity.working),
+            (1, 1, 0)
+        );
     }
 }

@@ -16,6 +16,21 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
     try:
         call('ensure',directory=tmp,argv=['bash','--noprofile','--norc'])
         first=call('inspect');assert first['alive']
+        framed=call('inspect',include_screen=True)
+        frame=framed['saved_screen'];assert frame['rows']>0 and frame['columns']>0
+        assert len(base64.b64decode(frame['ansi_base64']))<=1024*1024
+        socket_path=subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0','#{socket_path}'],env=env,text=True).strip()
+        source_session=subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0','#{session_id}'],env=env,text=True).strip()
+        imported=call('inspect',source_socket=socket_path,source_session=source_session,include_screen=True)
+        assert imported['pid']==first['pid'] and imported['saved_screen']['rows']==frame['rows']
+        rejected=call('stop',check=False,source_socket=socket_path,source_session=source_session)
+        assert rejected.returncode!=0 and call('inspect')['pid']==first['pid'],'source inspection allowed a write'
+        rejected=call('terminate',check=False,expected_boot_id=first['boot_id'],expected_pid=first['pid'],expected_start_ticks=first['pid_start_ticks']+1)
+        assert rejected.returncode!=0 and call('inspect')['pid']==first['pid'],'stale process identity terminated a shell'
+        for boot in [None,str(uuid.uuid4())]:
+            for action in ['input','terminate']:
+                rejected=call(action,check=False,expected_boot_id=boot,expected_pid=first['pid'],expected_start_ticks=first['pid_start_ticks'],expected_agent_pid=None,expected_agent_start_ticks=None,text='SHOULD_NOT_REACH_TERMINAL',submit=True)
+                assert rejected.returncode!=0 and b'boot identity' in rejected.stderr and call('inspect')['pid']==first['pid'],'old boot identity authorized an action'
         # A second independent helper/connection reuses the process, not a new shell.
         call('ensure',directory=tmp,argv=['bash']);assert call('inspect')['pid']==first['pid']
         marker=pathlib.Path(tmp)/'must-not-submit'
@@ -43,6 +58,33 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
         assert call('inspect')['pid']==first['pid'],'Replacing the fixture disturbed the first pane'
         kept=call('ensure',pane='p1',directory=tmp,argv=['false'],replace_fixture=True)
         assert not kept['replaced_fixture'] and call('inspect',pane='p1')['pid']==shell['pid'],'A real process was replaced'
+        # An exited retained pane may have no pane_pid on current tmux. Status
+        # must still expose recovery, without silently replaying its command.
+        call('ensure',pane='p2',directory=tmp,argv=['bash','--noprofile','--norc'])
+        call('paste',pane='p2',text='exit');call('key',pane='p2',key='Enter')
+        deadline=time.monotonic()+3
+        while call('inspect',pane='p2')['alive'] and time.monotonic()<deadline:time.sleep(.05)
+        dead=call('inspect',pane='p2');assert dead['exited'] and not dead['alive'],dead
+        call('ensure',pane='p2',directory=tmp,argv=['bash'])
+        assert call('inspect',pane='p2')['exited'],'Ensure silently restarted an exited process'
+        call('restart',pane='p2',directory=tmp,argv=['bash','--noprofile','--norc'])
+        assert call('inspect',pane='p2')['alive'],'Explicit restart did not restore the exited pane'
+        assert call('inspect')['pid']==first['pid'],'Exited pane recovery disturbed a live terminal'
+        # One shared destination can expand into megabytes of OSC 8 capture
+        # text. Bound the helper read without stopping the retained program.
+        capture_ready=pathlib.Path(tmp)/'capture-ready'
+        capture_gate=pathlib.Path(tmp)/'capture-go'
+        program="import pathlib,sys,time\nwhile not pathlib.Path(sys.argv[2]).exists():time.sleep(.01)\nu='https://example.invalid/'+('x'*800);sys.stdout.write(('\\x1b]8;;'+u+'\\x1b\\\\X\\x1b]8;;\\x1b\\\\ ')*4000);sys.stdout.flush();pathlib.Path(sys.argv[1]).touch();time.sleep(30)"
+        call('ensure',pane='p3',directory=tmp,argv=['python3','-c',program,str(capture_ready),str(capture_gate)])
+        subprocess.run(['tmux','-L','starflux-'+workspace,'resize-window','-t','p3:0','-x','200','-y','64'],env=env,check=True)
+        capture_gate.touch()
+        deadline=time.monotonic()+10
+        while not capture_ready.exists() and time.monotonic()<deadline:time.sleep(.02)
+        assert capture_ready.exists(),'large capture fixture did not finish printing'
+        limited=call('inspect',pane='p3',include_screen=True)
+        assert limited['alive'] and 'exceeds 2 MiB' in limited.get('screen_error',''),{k:limited.get(k) for k in ('alive','pid','screen_error')}
+        assert call('inspect',pane='p3')['pid']==limited['pid'],'capture limit stopped the program'
+        assert call('inspect')['pid']==first['pid'],'capture limit disturbed a sibling terminal'
         # Explicit recovery can replace a live/hung shell, scoped to its pane.
         call('recover',pane='p1',directory=tmp)
         recovered=call('inspect',pane='p1')
@@ -86,6 +128,6 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
         call('stop');assert call('inspect',pane='p1')['alive'],'Scoped stop killed another session'
         print('PASS: persistent PID, bracketed paste without submission, explicit Enter, binary/Unicode upload, private staging, digest checks, interrupted upload cleanup, traversal rejection, fixture-only migration, protected real process and scoped stop')
     finally:
-        for pane in ['p0','p1']:
+        for pane in ['p0','p1','p2','p3']:
             try:call('stop',pane=pane)
             except Exception:pass
