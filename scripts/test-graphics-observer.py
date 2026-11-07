@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-graphics-observer-') as folder
             decoded=True
         if args.flow_control:
             observer.stdin.write(("refresh-client -A '"+pane+":pause'\n").encode());observer.stdin.flush()
-            
+
             try:wait(lambda:saw(('%pause '+pane).encode()),'control pause was not acknowledged')
             except AssertionError:
                 print('CONTROL_DIAGNOSTIC',repr(lines[-12:]),flush=True);raise
