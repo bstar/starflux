@@ -1,0 +1,484 @@
+diff --git a/examples/native-source-broker.rs b/examples/native-source-broker.rs
+--- a/examples/native-source-broker.rs
++++ b/examples/native-source-broker.rs
+@@ -41,6 +41,9 @@
+ fn main() -> Result<()> {
+     let args = std::env::args().collect::<Vec<_>>();
+     match args.get(1).map(String::as_str) {
++        Some("--native-source-supervisor") => {
++            std::process::exit(source_broker::supervision::run(&args[2..])?);
++        }
+         Some("--native-source-service") if args.len() == 3 => {
+             source_broker::service::run(Path::new(&args[2]))
+         }
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -322,6 +322,13 @@
+         );
+     }
+     #[cfg(target_os = "linux")]
++    if raw
++        .get(1)
++        .is_some_and(|s| s == "--native-source-supervisor")
++    {
++        std::process::exit(source_broker::supervision::run(&raw[2..])?);
++    }
++    #[cfg(target_os = "linux")]
+     if raw.get(1).is_some_and(|s| s == "--native-source-service") {
+         anyhow::ensure!(raw.len() == 3, "Expected native source data namespace");
+         return source_broker::service::run(std::path::Path::new(&raw[2]));
+diff --git a/src/native_backend.rs b/src/native_backend.rs
+--- a/src/native_backend.rs
++++ b/src/native_backend.rs
+@@ -271,9 +271,12 @@
+             let mut connection = handle.connect()?;
+             let hello = connection.call(source_broker::Action::Hello)?;
+             ensure!(
+-                hello["capabilities"]
+-                    .as_array()
+-                    .is_some_and(|caps| caps.iter().any(|cap| cap == "retirement-eof-v1")),
++                hello["capabilities"].as_array().is_some_and(|caps| [
++                    "retirement-eof-v1",
++                    "retirement-tree-v1"
++                ]
++                .iter()
++                .all(|required| caps.iter().any(|cap| cap == required))),
+                 "Existing native owner lacks safe retirement support; its processes were left running"
+             );
+             let started = Instant::now();
+@@ -290,6 +293,10 @@
+                             info["source"].clone()
+                         )? == *source,
+                         "Native source identity changed before retirement"
++                    );
++                    ensure!(
++                        info["exited"] != true || info["retirement_verified"] == true,
++                        "Native supervisor was lost; descendants are unverified and the source was not replaced"
+                     );
+                     if request["exited_only"] == true
+                         && (info["exited"] != true
+@@ -395,9 +402,11 @@
+                     })?;
+                     info["backend"] = json!("native");
+                     info["native_retirement_available"] = json!(
+-                        hello["capabilities"]
+-                            .as_array()
+-                            .is_some_and(|caps| caps.iter().any(|cap| cap == "retirement-eof-v1"))
++                        hello["capabilities"].as_array().is_some_and(|caps| {
++                            ["retirement-eof-v1", "retirement-tree-v1"]
++                                .iter()
++                                .all(|required| caps.iter().any(|cap| cap == required))
++                        }) && (info["exited"] != true || info["retirement_verified"] == true)
+                     );
+                     info["pid"] = json!(source.pid);
+                     info["pid_start_ticks"] = json!(source.start_ticks);
+diff --git a/src/source_broker/supervision.rs b/src/source_broker/supervision.rs
+new file mode 100644
+--- /dev/null
++++ b/src/source_broker/supervision.rs
+@@ -0,0 +1,256 @@
++//! One single-threaded subreaper per PTY. Only kernel-owned children are
++//! signalled; process groups and global /proc scans are never kill authority.
++use anyhow::{Context, Result, ensure};
++use std::{
++    fs,
++    io::{self, Read},
++    os::{
++        fd::{AsRawFd, FromRawFd, OwnedFd},
++        unix::process::CommandExt,
++    },
++    process::{Command, Stdio},
++    time::{Duration, Instant},
++};
++
++const GRACE: Duration = Duration::from_millis(200);
++
++fn checked(value: i32, context: &str) -> Result<i32> {
++    if value < 0 {
++        Err(io::Error::last_os_error()).context(context.to_owned())
++    } else {
++        Ok(value)
++    }
++}
++
++/// Called only by the early helper dispatch, before any application threads.
++/// The supervisor's PID remains the source identity until every descendant has
++/// exited and been reaped. The actual shell owns its own foreground group.
++pub fn run(argv: &[String]) -> Result<i32> {
++    ensure!(!argv.is_empty(), "Missing supervised command");
++    ensure!(
++        fs::read_dir("/proc/self/task")?.count() == 1,
++        "PTY supervisor must start before threads"
++    );
++    let pid = unsafe { libc::getpid() };
++    ensure!(
++        unsafe { libc::getsid(0) } == pid && unsafe { libc::isatty(0) } == 1,
++        "PTY supervisor requires its own controlling terminal session"
++    );
++    checked(
++        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
++        "Enable child subreaper",
++    )?;
++    unsafe {
++        libc::signal(libc::SIGCHLD, libc::SIG_DFL);
++    }
++    let probe = checked(
++        unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32,
++        "PTY supervision requires pidfd support",
++    )?;
++    drop(unsafe { OwnedFd::from_raw_fd(probe) });
++    let mut mask = unsafe { std::mem::zeroed::<libc::sigset_t>() };
++    unsafe {
++        libc::sigemptyset(&mut mask);
++    }
++    for signal in [
++        libc::SIGCHLD,
++        libc::SIGHUP,
++        libc::SIGTERM,
++        libc::SIGINT,
++        libc::SIGQUIT,
++    ] {
++        unsafe {
++            libc::sigaddset(&mut mask, signal);
++        }
++    }
++    checked(
++        unsafe { libc::sigprocmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut()) },
++        "Block supervisor signals",
++    )?;
++    let descriptor = checked(
++        unsafe { libc::signalfd(-1, &mask, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK) },
++        "Create supervisor signal descriptor",
++    )?;
++    let signals = unsafe { OwnedFd::from_raw_fd(descriptor) };
++    let null = fs::OpenOptions::new()
++        .read(true)
++        .write(true)
++        .open("/dev/null")?;
++    let mut command = Command::new(&argv[0]);
++    command
++        .args(&argv[1..])
++        .stdin(Stdio::inherit())
++        .stdout(Stdio::inherit())
++        .stderr(Stdio::inherit());
++    // This child hook uses only async-signal-safe libc operations. It cannot
++    // wait for the parent: Command::spawn itself waits for the exec result.
++    unsafe {
++        command.pre_exec(|| {
++            if libc::setpgid(0, 0) < 0 {
++                return Err(io::Error::last_os_error());
++            }
++            libc::signal(libc::SIGTTOU, libc::SIG_IGN);
++            if libc::tcsetpgrp(0, libc::getpid()) < 0 {
++                return Err(io::Error::last_os_error());
++            }
++            for signal in [
++                libc::SIGCHLD,
++                libc::SIGHUP,
++                libc::SIGTERM,
++                libc::SIGINT,
++                libc::SIGQUIT,
++                libc::SIGTTOU,
++                libc::SIGTTIN,
++                libc::SIGTSTP,
++            ] {
++                libc::signal(signal, libc::SIG_DFL);
++            }
++            let mut empty = std::mem::zeroed::<libc::sigset_t>();
++            libc::sigemptyset(&mut empty);
++            if libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut()) < 0 {
++                return Err(io::Error::last_os_error());
++            }
++            Ok(())
++        });
++    }
++    let child = command
++        .spawn()
++        .context("Start supervised terminal command")?;
++    let root = child.id() as i32;
++    drop(child); // waitpid below exclusively owns reaping, including orphans.
++    // The supervisor must not hold the slave open after its children exit.
++    // From this point failures must never return while children still exist.
++    let mut stopping = None;
++    for fd in 0..=2 {
++        if unsafe { libc::dup2(null.as_raw_fd(), fd) } < 0 {
++            stopping = Some(Instant::now());
++        }
++    }
++    drop(null);
++    let mut root_status = None;
++    loop {
++        let mut empty = false;
++        let mut changed = false;
++        for _ in 0..2048 {
++            let mut status = 0;
++            let reaped = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
++            changed |= reaped > 0;
++            if reaped == root {
++                root_status = Some(status);
++                // A terminal command's natural exit also retires its remaining
++                // descendants, including ones which detached and closed stdio.
++                stopping.get_or_insert_with(Instant::now);
++            }
++            if reaped == 0 {
++                break;
++            }
++            if reaped < 0 {
++                if io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD) {
++                    empty = true;
++                }
++                break;
++            }
++        }
++        if empty {
++            let status = root_status.unwrap_or(0);
++            return Ok(if libc::WIFEXITED(status) {
++                libc::WEXITSTATUS(status)
++            } else if libc::WIFSIGNALED(status) {
++                128 + libc::WTERMSIG(status)
++            } else {
++                1
++            });
++        }
++        // Drain all pending signals. No handler, allocation or lock runs from
++        // asynchronous signal context, and root/child SIGCHLD cannot be lost.
++        loop {
++            let mut info = unsafe { std::mem::zeroed::<libc::signalfd_siginfo>() };
++            let read = unsafe {
++                libc::read(
++                    signals.as_raw_fd(),
++                    std::ptr::from_mut(&mut info).cast(),
++                    std::mem::size_of_val(&info),
++                )
++            };
++            if read != std::mem::size_of_val(&info) as isize {
++                break;
++            }
++            if info.ssi_signo == libc::SIGCHLD as u32 {
++                changed = true;
++            } else {
++                stopping.get_or_insert_with(Instant::now);
++            }
++        }
++        if let Some(at) = stopping {
++            let signal = if at.elapsed() >= GRACE {
++                libc::SIGKILL
++            } else {
++                libc::SIGHUP
++            };
++            // An inspection error leaves the supervisor alive and the source
++            // unavailable for replacement. It is never evidence of retirement.
++            let _ = signal_children(pid, signal);
++        }
++        if changed {
++            continue;
++        }
++        let mut poll = libc::pollfd {
++            fd: signals.as_raw_fd(),
++            events: libc::POLLIN,
++            revents: 0,
++        };
++        unsafe {
++            // Idle sources sleep until a signal. Only active retirement has a
++            // timed wakeup for escalation; many idle panes add no polling load.
++            libc::poll(&mut poll, 1, if stopping.is_some() { 20 } else { -1 });
++        }
++    }
++}
++
++fn signal_children(supervisor: i32, signal: i32) -> Result<()> {
++    let path = format!("/proc/self/task/{supervisor}/children");
++    let mut bytes = String::new();
++    fs::File::open(path)?
++        .take(1024 * 1024 + 1)
++        .read_to_string(&mut bytes)?;
++    ensure!(
++        bytes.len() <= 1024 * 1024,
++        "Supervisor child list exceeds inspection budget"
++    );
++    for pid in bytes
++        .split_whitespace()
++        .take(2048)
++        .filter_map(|pid| pid.parse::<i32>().ok())
++    {
++        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
++        if descriptor < 0 {
++            continue;
++        }
++        let descriptor = unsafe { OwnedFd::from_raw_fd(descriptor as i32) };
++        // No other thread reaps children. A dying child stays our zombie and
++        // its PID cannot be reused between enumeration and pidfd_open. Still
++        // verify ancestry after opening the stable signal handle.
++        let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
++        let parent = stat
++            .rsplit_once(')')
++            .and_then(|(_, fields)| fields.split_whitespace().nth(1))
++            .and_then(|pid| pid.parse::<i32>().ok());
++        ensure!(
++            parent == Some(supervisor),
++            "Child ancestry changed; signal refused"
++        );
++        let result = unsafe {
++            libc::syscall(
++                libc::SYS_pidfd_send_signal,
++                descriptor.as_raw_fd(),
++                signal,
++                std::ptr::null::<libc::siginfo_t>(),
++                0,
++            )
++        };
++        if result < 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
++            return Err(io::Error::last_os_error().into());
++        }
++    }
++    Ok(())
++}
+diff --git a/src/source_broker.rs b/src/source_broker.rs
+--- a/src/source_broker.rs
++++ b/src/source_broker.rs
+@@ -34,6 +34,8 @@
+ mod render;
+ #[path = "source_broker/service.rs"]
+ pub mod service;
++#[path = "source_broker/supervision.rs"]
++pub mod supervision;
+ use std::sync::{
+     Arc,
+     atomic::{AtomicBool, Ordering},
+@@ -298,8 +300,8 @@
+     input_failed: bool,
+     pidfd: OwnedFd,
+     stopping_at: Option<Instant>,
+-    kill_sent: bool,
+     exit: bool,
++    tree_retired: bool,
+     error: Option<String>,
+     size: Size,
+     revision: u64,
+@@ -308,8 +310,22 @@
+ impl Drop for StartingChild {
+     fn drop(&mut self) {
+         if let Some(mut child) = self.0.take() {
+-            if matches!(child.try_wait(), Ok(None)) {
+-                let _ = child.kill();
++            if matches!(child.try_wait(), Ok(None))
++                && let Some(pid) = child.process_id()
++            {
++                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
++                if fd >= 0 {
++                    let fd = unsafe { OwnedFd::from_raw_fd(fd as RawFd) };
++                    let _ = unsafe {
++                        libc::syscall(
++                            libc::SYS_pidfd_send_signal,
++                            fd.as_raw_fd(),
++                            libc::SIGHUP,
++                            std::ptr::null::<libc::siginfo_t>(),
++                            0,
++                        )
++                    };
++                }
+             }
+             let _ = child.wait();
+         }
+@@ -355,8 +371,9 @@
+             .as_raw_fd()
+             .context("Source platform has no native PTY descriptor")?;
+         nonblocking(fd)?;
+-        let mut command = CommandBuilder::new(&spec.argv[0]);
+-        command.args(&spec.argv[1..]);
++        let mut command = CommandBuilder::new(std::env::current_exe()?);
++        command.arg("--native-source-supervisor");
++        command.args(&spec.argv);
+         command.cwd(&spec.directory);
+         source_environment(&mut command);
+         let mut child = StartingChild(Some(pair.slave.spawn_command(command)?));
+@@ -408,8 +425,8 @@
+             input_failed: false,
+             pidfd,
+             stopping_at: None,
+-            kill_sent: false,
+             exit: false,
++            tree_retired: false,
+             error: None,
+             size: spec.size.clone(),
+             revision: 0,
+@@ -423,7 +440,7 @@
+         Ok(())
+     }
+     fn info(&self) -> Value {
+-        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
++        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"process_tree_supervised":true,"retirement_verified":self.tree_retired,"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
+     }
+     fn modes(&self) -> Value {
+         let screen = self.owner.screen();
+@@ -450,16 +467,10 @@
+     }
+     fn step(&mut self, events: i16) -> Result<()> {
+         let previous_status = (self.exit, self.eof, self.input_failed);
+-        self.exit = self.child.try_wait()?.is_some();
+-        if !self.exit
+-            && !self.kill_sent
+-            && self
+-                .stopping_at
+-                .is_some_and(|at| at.elapsed() >= Duration::from_millis(200))
+-        {
+-            self.signal(libc::SIGKILL)?;
+-            self.kill_sent = true;
+-        }
++        self.observe_exit()?;
++        // The per-source supervisor owns graceful escalation and must remain
++        // alive until all descendants are gone. Killing only it would orphan
++        // detached children and make exit/EOF an invalid retirement proof.
+         if self.waiting.is_none()
+             && !self.eof
+             && events & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+@@ -543,6 +554,21 @@
+         }
+         Ok(())
+     }
++    fn observe_exit(&mut self) -> Result<()> {
++        if !self.exit
++            && let Some(status) = self.child.try_wait()?
++        {
++            self.exit = true;
++            self.tree_retired = status.signal().is_none();
++            if !self.tree_retired {
++                self.error = Some(
++                    "Terminal supervisor exited abnormally; descendant retirement is unverified"
++                        .into(),
++                );
++            }
++        }
++        Ok(())
++    }
+     fn signal(&self, signal: i32) -> Result<()> {
+         let result = unsafe {
+             libc::syscall(
+@@ -559,7 +585,7 @@
+         Ok(())
+     }
+     fn stop(&mut self) -> Result<()> {
+-        self.exit = self.child.try_wait()?.is_some();
++        self.observe_exit()?;
+         if !self.exit && self.stopping_at.is_none() {
+             self.signal(libc::SIGHUP)?;
+         }
+@@ -768,7 +794,7 @@
+         }
+         match action {
+             Action::Hello => Ok(
+-                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
++                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
+             ),
+             Action::List => Ok(json!(
+                 self.sources.values().map(Source::info).collect::<Vec<_>>()
+@@ -1632,7 +1658,7 @@
+             // A reaped shell can still have children holding its PTY. Keep the
+             // source observable until EOF, so recovery cannot mistake the
+             // missing parent for a fully retired terminal and launch a duplicate.
+-            .retain(|_, s| s.stopping_at.is_none() || !s.exit || !s.eof);
++            .retain(|_, s| s.stopping_at.is_none() || !s.exit || !s.eof || !s.tree_retired);
+         let stale = self
+             .watches
+             .keys()

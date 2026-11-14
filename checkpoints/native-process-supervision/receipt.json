@@ -1,0 +1,75 @@
+{
+  "saved_at": 1794630706.415584,
+  "canonical_base_commit": "72d01769695fae0245b293fc86b0cebecf6430d8",
+  "previous_candidate_patch_sha256": "e7bd6ddeb1c4242e44864f99b8bb299ddc37fac381ef9da62afa7e1c861ae4a3",
+  "source_patch_sha256": "acf715fe590f41d9bd58ae4b776a81591a60c14740c3b1e336eb45b05cd4372b",
+  "files": {
+    "examples/native-source-broker.rs": {
+      "before": "fa593829ae3ce52647b989746cd76c831fac3cdde4aece1818dbf01629276346",
+      "after": "5aeff164f301ca9851b8089d1e9c4743518754c196e5f94f421ba2f9367299ee"
+    },
+    "src/main.rs": {
+      "before": "cac6d6fa2fc4a70c568fb01ea9d42b4645ffc2b4092160bcfdd472197aff2f31",
+      "after": "56cd2e932ccefdf6f0bfa65695776df2bad5dfbe4e342b94327b882b6c89ea76"
+    },
+    "src/native_backend.rs": {
+      "before": "05e9135eced075a38e61e44267e6d5cf8df8d561d666347ccf5cfd08ecb16d70",
+      "after": "68bb2c1d37a4c2063634c22f0cca3079cdabcf80ee743e6d031c7b5fbebe0549"
+    },
+    "src/source_broker/supervision.rs": {
+      "before": null,
+      "after": "5fe73fbd9cc32ae13699cf5aff583bd725a9b5655c4c7674295a06d1f83a2451"
+    },
+    "src/source_broker.rs": {
+      "before": "45bfd9e2986d0da74f5e09b6e7666b0d80db601759a75e4fa26d3a75555bc77a",
+      "after": "c457d52dcdb6fd9aaab2e04748eb58d59b5071c8939fa56c499b4acefec7b535"
+    }
+  },
+  "fixtures": {
+    "test-native-process-tree.py": "080777602e091bce3a0a084676a437a9b9df4e989d9882c36a6f2f65f23b0277",
+    "test-native-shell-supervision.py": "36bfd1669d3ae2e62a3ff5ff028e158ad16b0cddf0d7734c46072b9e5c8b2058",
+    "test-native-tree-older-owner.py": "024774dcbaa7298a0a5093c7fa9da1756d028f8e97346e9a1772b167e001c1df",
+    "test-native-tree-views.py": "eae4f1dc9e04da984349181b6fa6bd6e4a257d83f76848975ce06b7706a3eede",
+    "run-native-tree-candidate": "6b910cf289303fa01b3bf8f311c3da6b5f5f4ff65bd3656836344087db180a39"
+  },
+  "validation_evidence": {
+    "native-tree-clippy": {
+      "sha256": "37c38d9a998cc6286ae920d21aec34f23e03720b28a29939a286de3126895998",
+      "mtime": 1794603656.399227,
+      "runtime_revision": "final isolated compile/test pipeline"
+    },
+    "native-tree-unit": {
+      "sha256": "7e9eff4eaca03e86f2f20c4a74b10036c3b3887eb899a07a3f030dc21c37e1d5",
+      "mtime": 1794603691.855541,
+      "runtime_revision": "final isolated compile/test pipeline"
+    },
+    "native-tree-minimal": {
+      "sha256": "f6da75333a158e2be21ef0f3e8022e60bf6059e58e24385f91147d2cdb350b02",
+      "mtime": 1794603756.474114,
+      "runtime_revision": "final isolated compile/test pipeline"
+    },
+    "native-tree-build": {
+      "sha256": "2255c2c2fbfcfc9d6796f644f394c21a1c659688f636d6627dc49e00f8546d3b",
+      "mtime": 1794603796.204467,
+      "runtime_revision": "final isolated compile/test pipeline"
+    },
+    "native-tree-local": {
+      "sha256": "dff3c7ccb81baf713a4f5b980eb483b5c0b05a4117b6075e41693f42e5e703fe",
+      "mtime": 1794603472.9156098,
+      "runtime_revision": "earlier local iteration; final paused revision runtime checks pending"
+    },
+    "native-tree-shell": {
+      "sha256": "d7d4f8f749102dbe11408a6d5f68bdf318db25f28af8679257f17d78ae737a5d",
+      "mtime": 1794603467.791565,
+      "runtime_revision": "earlier local iteration; final paused revision runtime checks pending"
+    },
+    "native-tree-older-owner-local": {
+      "sha256": "b6f663d3f4a077be98a60614401a5a7b4e7eb4e93be089a05012fecc939677be",
+      "mtime": 1794603468.6295724,
+      "runtime_revision": "earlier local iteration; final paused revision runtime checks pending"
+    }
+  },
+  "shipping_activation": false,
+  "latest_runtime_validation_complete": false,
+  "goal_was_paused_before_final_ssh_ui_and_guardian_loss_validation": true
+}
