@@ -116,7 +116,7 @@ fn pixels(v: Viewport, r: Rect) -> PixelRect {
     PixelRect::new(x as u16, y as u16, (right - x) as u16, (bottom - y) as u16)
 }
 fn menu_rect(menu: &crate::shelf::ContextMenu, v: Viewport) -> Rect {
-    if matches!(menu.title.as_str(), "Category agent" | "Plugins") {
+    if matches!(menu.title.as_str(), "Portfolio Coordinator" | "Plugins") {
         return Rect {
             x: 2.min(v.columns.saturating_sub(1)),
             y: 2.min(v.rows.saturating_sub(1)),
@@ -455,7 +455,7 @@ impl Workspace {
                         width: 24,
                         height: 1,
                     },
-                    "Categories",
+                    "Portfolios",
                     "categories:global".into(),
                     false,
                 );
@@ -792,11 +792,13 @@ impl Workspace {
         }
         if let Some(modal) = &self.modal {
             let title = match &modal.kind {
-                Prompt::CategoryAgentSetup(_, _, _) => "Category agent / executable and charter",
-                Prompt::CategoryAgentMessage(_) => "Category conversation",
-                Prompt::CategoryAgentSetting(_, _, _, _) => "Category provider setting",
-                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve category task",
-                Prompt::Category(_, _, _) => "Category",
+                Prompt::CategoryAgentSetup(_, _, _) => {
+                    "Portfolio Coordinator / executable and charter"
+                }
+                Prompt::CategoryAgentMessage(_) => "Portfolio conversation",
+                Prompt::CategoryAgentSetting(_, _, _, _) => "Portfolio provider setting",
+                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve portfolio task",
+                Prompt::Category(_, _, _) => "Portfolio",
                 Prompt::PluginLink => "Open link with plugin",
                 Prompt::LinkPlugin(_) => "Link plugin / initially disabled",
                 Prompt::InstallPlugin(_) => "Install plugin / initially disabled",

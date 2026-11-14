@@ -290,7 +290,7 @@ impl Workspace {
         self.navigation.filter_open(&mut self.projects);
         self.navigation.sort(&mut self.projects);
         self.config = config;
-        self.appearance = crate::appearance::Appearance::load(&self.config.theme)?;
+        self.appearance = crate::settings::Settings::appearance()?;
         self.project_offset = 0;
         self.native_layout_key.clear();
         self.context_menu = None;

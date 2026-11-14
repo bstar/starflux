@@ -422,7 +422,7 @@ impl Workspace {
                     .find(|c| c.workspace == id)
             })
             .unwrap_or(config);
-        let appearance = crate::appearance::Appearance::load(&config.theme)?;
+        let appearance = crate::settings::Settings::appearance()?;
         let state = ProjectState::load_view(&config, &controller_id)?;
         state.save(&config)?;
         let mut projects = project_state::catalog(&config);
@@ -922,7 +922,7 @@ impl Workspace {
                 if let Some(gap) = drag.gap
                     && let Err(error) = self.category_drop(&drag.id, gap)
                 {
-                    self.note(format!("Move project/category: {error:#}"));
+                    self.note(format!("Move project/portfolio: {error:#}"));
                 }
             } else if let Err(error) = if let Some(id) = drag.id.strip_prefix("category:") {
                 self.category_action(&format!("categories:toggle:{id}"))
@@ -1699,7 +1699,7 @@ impl Workspace {
                 };
             }
         }
-        self.appearance = crate::appearance::Appearance::load(&self.config.theme)?;
+        self.appearance = crate::settings::Settings::appearance()?;
         self.ensure_sessions();
         self.reconnect_saved_apps();
         self.layout();
@@ -1711,19 +1711,19 @@ impl Workspace {
     }
     fn apply_theme(&mut self, theme: crate::appearance::Appearance) {
         self.appearance = theme;
-        for ((project, _), terminal) in &mut self.terminals {
-            if project == &self.config.workspace {
-                terminal.set_palette(&self.appearance);
-            }
+        for terminal in self.terminals.values_mut() {
+            terminal.set_palette(&self.appearance);
         }
-        self.config.theme = self.appearance.id.clone();
-        let config = self.config.clone();
         let colors = self.appearance.kitty_colors();
         std::thread::spawn(move || {
-            for pane in 0..32 {
-                if let Ok(root) = root() {
-                    let socket = root.join(format!("kitty-{}-{pane}.sock", config.workspace));
-                    if !socket.exists() {
+            if let Ok(root) = root()
+                && let Ok(entries) = fs::read_dir(root)
+            {
+                for entry in entries.flatten() {
+                    let socket = entry.path();
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if !name.starts_with("kitty-") || !name.ends_with(".sock") {
                         continue;
                     }
                     let _ = std::process::Command::new(
@@ -1743,14 +1743,10 @@ impl Workspace {
                 }
             }
         });
-        self.save();
-        let _ = starkit::fs::write_private(
-            &crate::runtime::config_path(&self.config.workspace).unwrap(),
-            &serde_json::to_vec_pretty(&self.config).unwrap(),
-        );
     }
     fn cycle_theme(&mut self) -> Result<()> {
         let theme = self.appearance.cycle()?;
+        let theme = crate::settings::Settings::set_theme(&theme.id)?;
         self.apply_theme(theme);
         Ok(())
     }
@@ -2479,12 +2475,12 @@ impl Workspace {
                         .unwrap_or_default(),
                 ),
                 field(
-                    "Category charter / alignment objectives",
+                    "Portfolio charter / alignment objectives",
                     profile.charter.clone(),
                 ),
             ],
             Prompt::CategoryAgentMessage(_) => {
-                vec![field("Message to the category coordinator", String::new())]
+                vec![field("Message to the portfolio coordinator", String::new())]
             }
             Prompt::CategoryAgentSetting(_, _, p, effort) => vec![field(
                 if *effort {
@@ -2509,7 +2505,7 @@ impl Workspace {
             )],
 
             Prompt::Category(id, _, _) => vec![field(
-                "Category name",
+                "Portfolio name",
                 id.as_ref()
                     .and_then(|id| self.category_catalog.groups.iter().find(|g| g.id == *id))
                     .map(|g| g.name.clone())
@@ -2823,17 +2819,17 @@ impl Workspace {
                     let revision = *revision;
                     self.coordinator_render();
                     self.coordinator_request(move |c, g| {
-                        ensure!(g == category, "Category changed while editing settings");
+                        ensure!(g == category, "Portfolio changed while editing settings");
                         crate::category_agent::configure(c, g, revision, profile).map(|_| ())
                     });
                 }
                 Prompt::CategoryAgentMessage(category) => {
-                    ensure!(!values[0].is_empty(), "Write a category message first");
+                    ensure!(!values[0].is_empty(), "Write a portfolio message first");
                     let message = values[0].clone();
                     let category = category.clone();
                     self.coordinator_render();
                     self.coordinator_request(move |c, g| {
-                        ensure!(g == category, "Category changed");
+                        ensure!(g == category, "Portfolio changed");
                         crate::category_agent_runtime::start(c, g, "chat", &message).map(|_| ())
                     });
                 }
@@ -2850,7 +2846,7 @@ impl Workspace {
                     let revision = *revision;
                     self.coordinator_render();
                     self.coordinator_request(move |c, g| {
-                        ensure!(g == category, "Category changed");
+                        ensure!(g == category, "Portfolio changed");
                         crate::category_agent::configure(c, g, revision, profile).map(|_| ())
                     });
                 }
@@ -2867,7 +2863,7 @@ impl Workspace {
                     );
                     self.coordinator_render();
                     self.coordinator_request(move |c, g| {
-                        ensure!(g == category, "Category changed");
+                        ensure!(g == category, "Portfolio changed");
                         if let Some(target) = target {
                             crate::category_agent_runtime::approve(
                                 c,
@@ -2895,7 +2891,7 @@ impl Workspace {
                         crate::categories::Catalog::edit(&self.config, *revision, |c| {
                             c.name(id.as_deref(), &name)?;
                             if let Some(project) = project {
-                                let id = c.groups.last().context("Missing category")?.id.clone();
+                                let id = c.groups.last().context("Missing portfolio")?.id.clone();
                                 c.assign(project, &id)?;
                             }
                             Ok(())
@@ -3683,7 +3679,7 @@ impl Workspace {
         self.release();
         let mut items = items;
         items.push(item(
-            "Move project to category…",
+            "Move project to portfolio…",
             "",
             format!(
                 "categories:move:{}",
@@ -3692,7 +3688,7 @@ impl Workspace {
                     .unwrap_or(&self.config.workspace)
             ),
         ));
-        items.push(item("Categories…", "", "categories:manage".into()));
+        items.push(item("Portfolios…", "", "categories:manage".into()));
         items.push(item("Attention inbox", "", "attention:inbox".into()));
         let help_hint = self
             .keyboard
@@ -4766,12 +4762,14 @@ impl Workspace {
                 }
             }),
             title: match &m.kind {
-                Prompt::CategoryAgentSetup(_, _, _) => "Category agent / executable and charter",
-                Prompt::CategoryAgentMessage(_) => "Category conversation",
-                Prompt::CategoryAgentSetting(_, _, _, _) => "Category provider setting",
-                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve category task",
+                Prompt::CategoryAgentSetup(_, _, _) => {
+                    "Portfolio Coordinator / executable and charter"
+                }
+                Prompt::CategoryAgentMessage(_) => "Portfolio conversation",
+                Prompt::CategoryAgentSetting(_, _, _, _) => "Portfolio provider setting",
+                Prompt::CategoryAgentApprove(_, _, _, _) => "Approve portfolio task",
 
-                Prompt::Category(_, _, _) => "Category",
+                Prompt::Category(_, _, _) => "Portfolio",
                 Prompt::PluginLink => "Open link with plugin",
                 Prompt::LinkPlugin(_) => "Link plugin / initially disabled",
                 Prompt::InstallPlugin(_) => "Install plugin / initially disabled",
@@ -5998,9 +5996,7 @@ impl Controller for Workspace {
                     self.sort_projects(false);
                     self.catalog_stamp = stamp;
                 }
-                if let Ok(bytes) = fs::read(root.join(format!("{}.json", self.config.workspace)))
-                    && let Ok(config) = serde_json::from_slice::<Config>(&bytes)
-                    && let Ok(theme) = crate::appearance::Appearance::load(&config.theme)
+                if let Ok(theme) = crate::settings::Settings::appearance()
                     && theme != self.appearance
                 {
                     self.apply_theme(theme)
@@ -6016,6 +6012,7 @@ impl Controller for Workspace {
                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected,"focus_known":h.focus_known})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
                 let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                snapshot["appearance"] = json!(self.appearance);
                 snapshot["terminal_font"] = json!({"family":self.fonts.family,"millipoints":self.native_font_points,"controls_available":self.fonts.available});
                 snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
                 snapshot["categories"] = json!({"catalog":self.category_catalog,"collapsed":self.navigation.collapsed_categories,"rows":self.category_rows().iter().map(|r|json!({"id":r.id,"name":r.name,"summary":r.detail})).collect::<Vec<_>>()});

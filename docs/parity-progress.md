@@ -2152,3 +2152,24 @@ attention forwarding, buffer/graphics history, placement-loss repair, larger and
 additional graphics transports, constrained-network/media stress and final
 canonical release/Nix validation also remain. Continue every other unchecked
 requirement in `docs/plan.md`; no user-input blocker prevents further work.
+
+### Sidebar navigation refinement (November 13)
+
+The graphical sidebar now uses a continuous theme-derived surface, quiet section
+labels and native one-pixel square plus/minus disclosure controls. Category
+headers no longer use separate panel blocks or hover outlines. Project rows
+retain full-width selection, a subtle selected surface, host/agent detail,
+working animation and error/question/approval markers. Category project totals,
+hidden counts, progress/attention summaries and coordinator/menu access remain.
+The footer reports actual projects shown rather than counting category headers
+and drop targets as projects or claiming collapsed projects are visible.
+
+The existing shelf geometry tests and strict workspace Clippy passed. Private
+category acceptance passed locally and over authenticated loopback SSH, covering
+creation, assignment, drag/drop and append targets, keyboard expansion,
+independent collapse, rename, hidden-project counts, reveal, stale-edit fencing
+and persistence through private controller replacement. Original fixture source
+PIDs survived. Evidence: `target/sidebar-navigation-{tests,clippy,local,ssh}.log`;
+the private rendered inspection is `target/sidebar-navigation-preview.png`.
+This is a UI refinement, not completion of the remaining parity requirements.
+No live user frontend, agent, terminal source or App Space was restarted.

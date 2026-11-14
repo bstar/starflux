@@ -97,7 +97,7 @@ impl Workspace {
             && self
                 .context_menu
                 .as_ref()
-                .is_some_and(|m| m.title == "Category agent")
+                .is_some_and(|m| m.title == "Portfolio Coordinator")
         {
             self.coordinator_render();
         }
@@ -120,7 +120,7 @@ impl Workspace {
             && self
                 .context_menu
                 .as_ref()
-                .is_some_and(|m| m.title == "Category agent")
+                .is_some_and(|m| m.title == "Portfolio Coordinator")
             && self.coordinator.as_ref().is_some_and(|u| {
                 u.pending.is_none() && u.updated.elapsed() > Duration::from_millis(600)
             })
@@ -156,7 +156,7 @@ impl Workspace {
             .or_else(|| state["label"].as_str().map(String::from))
             .unwrap_or_else(|| {
                 if ui.category.is_empty() {
-                    "Archived category agents".into()
+                    "Archived portfolio coordinators".into()
                 } else {
                     ui.category.clone()
                 }
@@ -205,14 +205,14 @@ impl Workspace {
                     "category-agent:tab:authentication",
                 ));
                 items.push(item(
-                    "Edit executable and category charter…",
+                    "Edit executable and portfolio charter…",
                     "category-agent:settings",
                 ));
                 items.push(item(
                     if enabled {
-                        "Disable category agent"
+                        "Disable portfolio coordinator"
                     } else {
-                        "Enable category agent for this category"
+                        "Enable portfolio coordinator for this portfolio"
                     },
                     if enabled {
                         "category-agent:disable"
@@ -291,7 +291,7 @@ impl Workspace {
                         c["label"]
                             .as_str()
                             .or(c["id"].as_str())
-                            .unwrap_or("Archived category"),
+                            .unwrap_or("Archived portfolio"),
                         format!(
                             "category-agent:archive-open:{}",
                             c["id"].as_str().unwrap_or("")
@@ -304,14 +304,14 @@ impl Workspace {
                     lines(
                         width,
                         &mut items,
-                        "Archived category agent. Conversation and assessment history remain available. Coordination and repository access have been revoked.",
+                        "Archived portfolio coordinator. Conversation and assessment history remain available. Coordination and repository access have been revoked.",
                     );
                 } else {
                     items.push(item(
                         if enabled {
                             "Configure provider, authentication and charter…"
                         } else {
-                            "Enable category agent…"
+                            "Enable portfolio coordinator…"
                         },
                         "category-agent:setup",
                     ));
@@ -335,15 +335,18 @@ impl Workspace {
                         ),
                         "category-agent:tab:effort",
                     ));
-                    items.push(item("Review category now", "category-agent:review"));
-                    items.push(item("Message category agent…", "category-agent:compose"));
+                    items.push(item("Review portfolio now", "category-agent:review"));
+                    items.push(item(
+                        "Message portfolio coordinator…",
+                        "category-agent:compose",
+                    ));
                     items.push(item(
                         "Use STAR/FLEET alignment charter",
                         "category-agent:fleet",
                     ));
                     items.push(item("Cancel active review", "category-agent:cancel"));
                     items.push(item(
-                        "Start a new category conversation / retain history",
+                        "Start a new portfolio conversation / retain history",
                         "category-agent:new-conversation",
                     ));
                     items.push(item(
@@ -351,7 +354,7 @@ impl Workspace {
                         "category-agent:resume-queue",
                     ));
                     items.push(item(
-                        "Disable category agent / cancel future work",
+                        "Disable portfolio coordinator / cancel future work",
                         "category-agent:disable",
                     ));
                 }
@@ -480,11 +483,14 @@ impl Workspace {
             }
             "chat" => {
                 if enabled {
-                    items.push(item("Message category agent…", "category-agent:compose"));
-                    items.push(item("Review category now", "category-agent:review"));
+                    items.push(item(
+                        "Message portfolio coordinator…",
+                        "category-agent:compose",
+                    ));
+                    items.push(item("Review portfolio now", "category-agent:review"));
                     items.push(item("Cancel active review", "category-agent:cancel"));
                     items.push(item(
-                        "Start a new category conversation / retain history",
+                        "Start a new portfolio conversation / retain history",
                         "category-agent:new-conversation",
                     ));
                 }
@@ -497,7 +503,7 @@ impl Workspace {
                             r["prompt"]
                                 .as_str()
                                 .filter(|s| !s.is_empty())
-                                .unwrap_or("Review the category")
+                                .unwrap_or("Review the portfolio")
                         ),
                     );
                     lines(
@@ -529,7 +535,7 @@ impl Workspace {
                     lines(
                         width,
                         &mut items,
-                        "This is a dedicated category conversation. Start a review or send a message; no existing project conversation is reused.",
+                        "This is a dedicated portfolio conversation. Start a review or send a message; no existing project conversation is reused.",
                     );
                 }
             }
@@ -681,11 +687,11 @@ impl Workspace {
             }
             _ => {}
         }
-        items.push(item("Back to category projects", "category-agent:close"));
+        items.push(item("Back to portfolio projects", "category-agent:close"));
         let cursor = ui.cursor.min(items.len().saturating_sub(1));
         self.context_menu = Some(crate::shelf::ContextMenu {
             position: [12, 12],
-            title: "Category agent".into(),
+            title: "Portfolio Coordinator".into(),
             subtitle: format!(
                 "{name} · {} · {status}",
                 if archived {
@@ -705,7 +711,7 @@ impl Workspace {
             && self
                 .context_menu
                 .as_ref()
-                .is_some_and(|m| m.title == "Category agent")
+                .is_some_and(|m| m.title == "Portfolio Coordinator")
             && let Some(ui) = &mut self.coordinator
         {
             ui.cursor = index.parse().unwrap_or(0);
@@ -745,7 +751,7 @@ impl Workspace {
             ensure!(
                 command.starts_with("archive-open:")
                     || self.category_catalog.all().iter().any(|g| g.id == category),
-                "Category is unavailable"
+                "Portfolio is unavailable"
             );
             self.release();
             self.coordinator = Some(Coordinator {
@@ -777,7 +783,7 @@ impl Workspace {
         let ui = self
             .coordinator
             .as_ref()
-            .context("Open a category agent first")?
+            .context("Open a portfolio coordinator first")?
             .clone();
         let profile: crate::category_agent::Profile =
             serde_json::from_value(ui.data["state"]["profile"].clone()).unwrap_or_default();
@@ -787,7 +793,7 @@ impl Workspace {
                 || matches!(command, "noop" | "close" | "copy" | "older" | "newer")
                 || command.starts_with("tab:")
                 || command.starts_with("proposal:"),
-            "Archived category agents are read only"
+            "Archived portfolio coordinators are read only"
         );
         match command {
             "noop" => self.coordinator_render(),
@@ -963,7 +969,7 @@ impl Workspace {
                         "effort"
                     ]
                     .contains(&tab),
-                    "Unknown category page"
+                    "Unknown portfolio page"
                 );
                 if let Some(ui) = &mut self.coordinator {
                     ui.tab = tab.into();
@@ -1086,7 +1092,7 @@ impl Workspace {
                     crate::category_agent::configure(c, g, revision, p).map(|_| ())
                 });
             }
-            _ => anyhow::bail!("Unknown category agent action"),
+            _ => anyhow::bail!("Unknown portfolio coordinator action"),
         }
         Ok(true)
     }

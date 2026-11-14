@@ -27,7 +27,7 @@ impl Workspace {
                         )
                     })
                     .collect::<Vec<_>>();
-                items.push(item("Categories…", "categories:manage"));
+                items.push(item("Portfolios…", "categories:manage"));
                 items.push(item("+ Add / reopen project…", "project:new"));
                 ("Projects", items)
             }
@@ -101,7 +101,7 @@ impl Workspace {
                     item("Git status…", "git:details"),
                     item("Git worktrees…", "worktrees:list"),
                     item("Deliver a file…", "file:deliver"),
-                    item("Categories…", "categories:manage"),
+                    item("Portfolios…", "categories:manage"),
                     item("Reverse project order", "projects:sort:direction"),
                     item("Next theme", "theme:next"),
                 ];

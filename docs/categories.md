@@ -1,42 +1,42 @@
-# Project categories
+# Project portfolios
 
-The sidebar groups projects into collapsible categories. Right-click blank space
-in the sidebar and choose **Create category**, or use **More → Categories**.
-The blank-space menu also offers Add project, Manage categories, Expand all and
-Collapse all. Category headers have equal internal top/bottom padding.
+The sidebar groups projects into collapsible portfolios. Right-click blank space
+in the sidebar and choose **Create portfolio**, or use **More → Portfolios**.
+The blank-space menu also offers Add project, Manage portfolios, Expand all and
+Collapse all. Portfolio headers have equal internal top/bottom padding.
 Existing and new projects start in
-**Uncategorized**. Each project belongs to one category.
+**Unassigned**. Each project belongs to one portfolio.
 
-Click a category header to expand or collapse it. Its menu button or right-click
+Click a portfolio header to expand or collapse it. Its menu button or right-click
 menu provides rename, manual ordering, project details and deletion. Deleting a
-category moves its projects into Uncategorized; it does not close or stop them.
-Uncategorized is always last and cannot be renamed or deleted.
+portfolio moves its projects into Unassigned; it does not close or stop them.
+Unassigned is always last and cannot be renamed or deleted.
 
-Right-click a project and choose **Move project to category**. The picker also
-offers **Create category and move project**. Drag project rows within or between
+Right-click a project and choose **Move project to portfolio**. The picker also
+offers **Create portfolio and move project**. Drag project rows within or between
 groups to order them, or drop onto a collapsed header to append the project.
-The entire category header accepts a drop and highlights with **Drop project
+The entire portfolio header accepts a drop and highlights with **Drop project
 here** while a project is over it. Release the mouse to move the project; a
-collapsed category stays collapsed.
+collapsed portfolio stays collapsed.
 You can also drop in the empty sidebar space below the last item, above **Add
-project**, to append to the final category. An insertion marker shows the end
+project**, to append to the final portfolio. An insertion marker shows the end
 position in graphical mode.
-Drag category headers to change their order. Activity never reorders the list.
+Drag portfolio headers to change their order. Activity never reorders the list.
 
-There is padding below each category, before the next category header. Drop a
-project into that space to place it after the category's last project. This
-also works when reordering projects already in the same category. The space
-shows **Drop at end of category** during a drag in graphical mode.
+There is padding below each portfolio, before the next portfolio header. Drop a
+project into that space to place it after the portfolio's last project. This
+also works when reordering projects already in the same portfolio. The space
+shows **Drop at end of portfolio** during a drag in graphical mode.
 
-Category membership and ordering are saved with the session and shared between
+Portfolio membership and ordering are saved with the session and shared between
 its windows. Expansion is saved independently for each frontend. Concurrent
-category edits are guarded: a stale edit asks you to reopen the menu.
+portfolio edits are guarded: a stale edit asks you to reopen the menu.
 
 ## Activity summaries
 
 Headers keep summarizing all assigned projects when collapsed, including projects
 hidden with **Close project**. Their total and hidden counts remain visible.
-The category menu lists those projects; selecting one reveals it in this window
+The portfolio menu lists those projects; selecting one reveals it in this window
 without replacing its running terminal.
 
 - **Working** counts projects with one or more working agents.
@@ -53,9 +53,13 @@ collapsing or organizing groups does not alter agents or App Space workers.
 
 Tab to the Projects panel. Up/Down traverse visible rows; Left collapses a group
 or returns from a project to its header; Right expands it. Enter toggles the
-focused header or selects a project. Menus expose category order controls.
-Explicit project navigation expands its category and scrolls to the project.
+focused header or selects a project. Menus expose portfolio order controls.
+Explicit project navigation expands its portfolio and scrolls to the project.
 
 Cells mode and the compact Projects picker provide the same management actions.
 The cells summary abbreviates counts as `W` (working), `!` (attention) and `?`
 (unknown). Add project remains at the bottom of the sidebar.
+
+The UI calls these groups portfolios. Existing saved group identities, project
+assignments, ordering, collapse state and coordinator settings stay intact.
+Storage keys and automation names containing `category` remain compatible.

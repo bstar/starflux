@@ -4,7 +4,7 @@ use serde::Serialize;
 use starkit::theme::{Theme, ThemeFile, Variant, color::Rgb};
 
 pub fn default_theme() -> String {
-    "kanagawa".into()
+    "system".into()
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Appearance {
@@ -23,6 +23,11 @@ pub struct Appearance {
     pub error: String,
     pub grid: String,
     pub ansi: Vec<String>,
+}
+pub struct SidebarPalette {
+    pub background: String,
+    pub hover: String,
+    pub selection: String,
 }
 fn mix(a: Rgb, b: Rgb, amount: f64) -> Rgb {
     let c = |x: u8, y: u8| (f64::from(x) * (1. - amount) + f64::from(y) * amount).round() as u8;
@@ -45,6 +50,26 @@ fn readable(color: Rgb, surfaces: &[Rgb], target: f64) -> Rgb {
     end
 }
 impl Appearance {
+    pub fn sidebar_palette(&self) -> SidebarPalette {
+        let bg = Rgb::parse_hex(&self.bg).unwrap();
+        if (self.id.starts_with("gruvbox") || self.name.to_ascii_lowercase().contains("gruvbox"))
+            && bg.contrast(Rgb::new(255, 255, 255)) > bg.contrast(Rgb::new(0, 0, 0))
+        {
+            // Gruvbox's hard background gives navigation a distinct dark plane,
+            // including when the palette comes from the System theme.
+            let background = Rgb::new(29, 32, 33);
+            return SidebarPalette {
+                background: background.to_hex(),
+                hover: mix(background, Rgb::new(255, 255, 255), 0.045).to_hex(),
+                selection: mix(background, Rgb::parse_hex(&self.accent).unwrap(), 0.14).to_hex(),
+            };
+        }
+        SidebarPalette {
+            background: self.panel.clone(),
+            hover: self.raised.clone(),
+            selection: self.selection.clone(),
+        }
+    }
     pub fn load(id: &str) -> Result<Self> {
         let file = if id == "system" {
             starkit::theme::system::theme()
@@ -198,9 +223,11 @@ impl Appearance {
         colors
     }
     pub fn cycle(&self) -> Result<Self> {
-        let list = &starkit::theme::BUILTINS;
-        let at = list.iter().position(|b| b.id == self.id).unwrap_or(0);
-        Self::load(list[(at + 1) % list.len()].id).context("Load next theme")
+        let list = std::iter::once("system")
+            .chain(starkit::theme::BUILTINS.iter().map(|theme| theme.id))
+            .collect::<Vec<_>>();
+        let at = list.iter().position(|id| *id == self.id).unwrap_or(0);
+        Self::load(list[(at + 1) % list.len()]).context("Load next theme")
     }
 }
 #[cfg(test)]

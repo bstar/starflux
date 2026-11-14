@@ -169,11 +169,12 @@ Blueprint is the default live treatment, implemented from `design/treatments.htm
 
 ```sh
 starflux --themes
-STAR_GRAPHICS_RENDERER=gpu starflux --agent codex --theme kanagawa
-starflux --workspace remote --theme catppuccin-latte
+starflux --theme kanagawa
+STAR_GRAPHICS_RENDERER=gpu starflux --agent codex
+starflux --theme system
 ```
 
-The last command changes a running workspace's palette without opening a duplicate frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored with the workspace configuration. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/KIT built-ins plus `system`; system uses KIT's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
+Theme commands save the application preference and update all running views without opening a frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored in the core application configuration, `~/.config/starflux/config.json`, independently of projects and sessions. System is the default. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/KIT built-ins plus `system`; system uses KIT's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
 
 Controllers started before the Blueprint build need to be closed once and reopened to load the new presentation; their tmux-backed agents survive:
 

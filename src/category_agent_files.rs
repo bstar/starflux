@@ -52,7 +52,7 @@ pub(crate) fn allowed(path: &Path) -> Result<()> {
                 && !name.ends_with(".jsonl")
                 && !name.ends_with(".state.json")
                 && !name.ends_with(".screen.json"),
-            "Credential and private runtime paths are excluded from category evidence"
+            "Credential and private runtime paths are excluded from portfolio evidence"
         );
     }
     Ok(())
@@ -79,7 +79,7 @@ pub(crate) fn read_file(root: &Path, path: &Path) -> Result<String> {
             | if last { 0 } else { libc::O_DIRECTORY };
         let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
         if fd < 0 {
-            return Err(std::io::Error::last_os_error()).context("Read category evidence file");
+            return Err(std::io::Error::last_os_error()).context("Read portfolio evidence file");
         }
         let file = unsafe { File::from_raw_fd(fd) };
         if last {
@@ -108,12 +108,12 @@ pub fn read(
     let settings = crate::category_agent::read(config, category)?;
     ensure!(
         settings["state"]["profile"]["enabled"] == true,
-        "Category agent is disabled"
+        "Portfolio Coordinator is disabled"
     );
     let member = crate::category_agent::members(config, category)?
         .into_iter()
         .find(|m| m.workspace == project)
-        .context("Project is outside this category")?;
+        .context("Project is outside this portfolio")?;
     query(&member, "read", path, "")
 }
 
@@ -132,7 +132,7 @@ pub fn query(
         command.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--"]);
         command.arg(member.host.as_deref().context("Missing project host")?);
         command.arg(format!(
-            "{} --category-repository-query {}",
+            "{} --portfolio-repository-query {}",
             starkit::terminal_graphics::client::shell_quote(&member.executable),
             starkit::terminal_graphics::client::shell_quote(&request.to_string())
         ));
