@@ -3490,6 +3490,7 @@ dependencies = [
  "starkit",
  "tempfile",
  "tracing",
+ "unicode-width",
  "uuid",
  "vt100",
 ]
