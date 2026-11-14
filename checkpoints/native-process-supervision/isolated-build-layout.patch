@@ -1,0 +1,50 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,4 +1,6 @@
+ [package]
++autobins = false
++autoexamples = false
+ name = "starflux"
+ version = "0.2.0"
+ edition = "2024"
+@@ -58,3 +60,27 @@
+ opt-level = 2
+ debug = 1
+ overflow-checks = true
++
++[[bin]]
++name = "starflux-graphics"
++path = "src/main.rs"
++
++[[example]]
++name = "graphics-next-owner-proof"
++path = "examples/graphics-owner-proof.rs"
++
++[[example]]
++name = "graphics-next-stream-proof"
++path = "examples/graphics-stream-proof.rs"
++
++[[example]]
++name = "graphics-next-authority-proof"
++path = "examples/graphics-authority-proof.rs"
++
++[[example]]
++name = "graphics-next-broker-proof"
++path = "examples/native-source-broker.rs"
++
++[[example]]
++name = "graphics-next-presenter-proof"
++path = "examples/graphics-presenter-proof.rs"
+diff --git a/terminal-client/Cargo.toml b/terminal-client/Cargo.toml
+--- a/terminal-client/Cargo.toml
++++ b/terminal-client/Cargo.toml
+@@ -5,7 +5,7 @@
+ license = "MIT"
+ 
+ [[bin]]
+-name = "starflux-terminal-client"
++name = "starflux-terminal-client-graphics"
+ path = "src/main.rs"
+ 
+ [dependencies]
