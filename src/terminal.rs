@@ -550,12 +550,13 @@ impl Terminal {
             let mut previous_style = None;
             for col in 0..rect.width {
                 let cell = screen.cell(row, col)?;
-                if cell.is_wide_continuation() {
-                    if let Some(run) = runs.last_mut() {
-                        run.columns += 1;
-                    }
+                if cell.is_wide_continuation()
+                    && col > 0
+                    && screen.cell(row, col - 1).is_some_and(vt100::Cell::is_wide)
+                {
                     continue;
                 }
+                let columns = (if cell.is_wide() { 2 } else { 1 }).min(rect.width - col);
                 let selected = self.selected(row, col);
                 let attributes = u8::from(cell.bold())
                     | (u8::from(cell.dim()) << 1)
@@ -563,15 +564,11 @@ impl Terminal {
                     | (u8::from(cell.underline()) << 3)
                     | (u8::from(cell.inverse() && !selected) << 4);
                 let style = (cell.fgcolor(), cell.bgcolor(), attributes, selected);
-                let text = if cell.has_contents() {
-                    cell.contents()
-                } else {
-                    " "
-                };
+                let text = crate::graphics_paint::cell_text(cell, columns);
                 if previous_style == Some(style) {
                     let run = runs.last_mut().unwrap();
-                    run.columns += 1;
-                    run.text.push_str(text);
+                    run.columns += columns;
+                    run.text.push_str(&text);
                 } else {
                     let fg = rgb(color(cell.fgcolor(), &theme.fg, theme));
                     let bg = rgb(if selected {
@@ -580,8 +577,8 @@ impl Terminal {
                         color(cell.bgcolor(), &theme.bg, theme)
                     });
                     runs.push(Run {
-                        text: text.into(),
-                        columns: 1,
+                        text: text.into_owned(),
+                        columns,
                         foreground: fg,
                         background: bg,
                         attributes,
@@ -1319,6 +1316,38 @@ pub(super) fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_frames_accept_emoji_presentation_and_clipped_wide_cells() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal = Terminal::spawn(
+            &["sleep".into(), "5".into()],
+            temp.path().join("unicode.sock"),
+        )
+        .unwrap();
+        let theme = crate::appearance::Appearance::load("kanagawa").unwrap();
+        let mut rect = starkit::terminal_graphics::protocol::Rect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 2,
+        };
+        terminal.resize_native(rect, [0, 0], [8, 16]).unwrap();
+        terminal.parser.process("❤️⚠️1️⃣".as_bytes());
+        let frame = terminal
+            .native_frame("unicode".into(), 1, rect, &theme, true)
+            .unwrap();
+        frame.validate().unwrap();
+        assert!(frame.rows[0].runs[0].text.starts_with("❤⚠1\u{20e3}"));
+        assert!(terminal.parser.screen().contents().contains("❤️⚠️1️⃣"));
+        terminal.parser.process("\x1b[2J\x1b[Hab界".as_bytes());
+        terminal.native_dirty = true;
+        rect.width = 3;
+        let frame = terminal
+            .native_frame("unicode".into(), 2, rect, &theme, true)
+            .unwrap();
+        frame.validate().unwrap();
+        assert_eq!(frame.rows[0].runs[0].text, "ab ");
+    }
     #[test]
     fn native_pty_frames_preserve_unicode_styles_and_only_changed_rows() {
         let temp = tempfile::tempdir().unwrap();

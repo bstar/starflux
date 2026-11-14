@@ -346,6 +346,30 @@ fn halves(
     }
     (colors, above)
 }
+/// Keep presentation text inside the parser's retained cell allocation.
+/// VS16 can widen a one-column base even though the parser treats it as a
+/// zero-width mark. Omit only marks that would overflow; history stays intact.
+pub(crate) fn cell_text(cell: &vt100::Cell, columns: u16) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    use unicode_width::UnicodeWidthStr;
+    if !cell.has_contents() || cell.is_wide_continuation() || (cell.is_wide() && columns < 2) {
+        return Cow::Borrowed(" ");
+    }
+    let text = cell.contents();
+    if text.width() <= usize::from(columns) {
+        return Cow::Borrowed(text);
+    }
+    let mut fitted = String::new();
+    for ch in text.chars() {
+        let previous = fitted.len();
+        fitted.push(ch);
+        if fitted.width() > usize::from(columns) {
+            fitted.truncate(previous);
+        }
+    }
+    Cow::Owned(fitted)
+}
+
 /// Half-block fallback is an approximation; the terminal screen is immutable.
 /// A positive image covering part of a wide glyph replaces its whole cluster,
 /// preventing dangling continuation cells. History/copy still use source text.
@@ -390,11 +414,7 @@ pub fn cells(
         while col < rect.width {
             let cell = screen.cell(row, col).ok_or(Error::Invalid)?;
             let span = (if cell.is_wide() { 2 } else { 1 }).min(rect.width - col);
-            let text = if !cell.has_contents() || (cell.is_wide() && span == 1) {
-                " ".to_string()
-            } else {
-                cell.contents().to_string()
-            };
+            let text = cell_text(cell, span).into_owned();
             let original_fg = color(cell.fgcolor(), true);
             let original_bg = color(cell.bgcolor(), false);
             let (fg, bg) = if cell.inverse() {
@@ -772,6 +792,16 @@ mod tests {
         assert_eq!(frame.rows[0].runs[0].background, [0, 0, 255]);
         assert_eq!(frame.rows[0].runs[1].text, "B");
         assert_eq!(frame.rows[0].runs[1].background, [255, 0, 0]);
+    }
+    #[test]
+    fn emoji_presentation_fits_retained_cells_without_changing_history() {
+        let w = World::new();
+        let mut parser = vt100::Parser::new(1, 4, 0);
+        parser.process("❤️⚠️1️⃣".as_bytes());
+        let frame = fallback(parser.screen(), &w.raster(4, 2));
+        frame.validate().unwrap();
+        assert!(frame.rows[0].runs[0].text.starts_with("❤⚠1\u{20e3}"));
+        assert!(parser.screen().contents().contains("❤️⚠️1️⃣"));
     }
     #[test]
     fn transparent_images_preserve_combining_text_and_attributes() {
