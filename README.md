@@ -24,8 +24,10 @@ The [JSON Lines automation API](docs/automation.md) supports headless local/SSH 
 
 The paused parity effort and remaining work are recorded in the [implementation checkpoint](docs/parity-progress.md).
 
-[Project categories](docs/categories.md) provide collapsible session groupings,
-manual ordering and live summaries, including hidden projects.
+[Portfolios](docs/categories.md) group related projects with shared progress
+summaries, collapsible sections and manual ordering. An optional
+[Portfolio Coordinator](docs/category-agents.md) reviews alignment and proposes
+cross-project work; coordination is enabled explicitly for each portfolio.
 Manage [Git worktrees](docs/worktrees.md) with **Ctrl+B, Shift+W**, including creation, reattachment, repository grouping and guarded removal on local/SSH hosts.
 **Ctrl+Esc** releases terminal input to workspace controls; **F6** toggles focus.
 Cells mode has **Add project** and **Close project** controls; with controls focused,
@@ -45,6 +47,14 @@ Codex or another supported agent in any terminal; STAR/FLUX tracks it automatica
 **+ Tab** opens another PTY-backed terminal in the project directory, locally or on
 its SSH host. Tabs retain their sessions and support rename and explicit splits.
 **Refresh** reloads the UI while keeping those sessions running.
+
+The application theme defaults to **System** and follows the desktop palette.
+It is stored once in `$XDG_CONFIG_HOME/starflux/config.json` (normally
+`~/.config/starflux/config.json`), for example `{"theme":"system"}`.
+The theme button and `starflux --theme NAME` update this application-wide
+preference for all open views. Renaming, opening, or switching projects and
+sessions never selects a different theme. Legacy project-level theme fields
+are ignored and are omitted when project metadata is next saved.
 
 In graphical mode, working project names use bold accent text with a broad, bright activity wave and an accent-colored working count; idle and waiting projects stay still. Terminal capture uses input-driven pacing to reduce typing delay.
 

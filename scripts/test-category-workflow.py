@@ -51,7 +51,7 @@ def completed(identity):
  return r if r.get('status')=='completed' else None
 
 a.action('category-agent:open:'+gid)
-wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Category agent','category workspace did not open')
+wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Portfolio Coordinator','category workspace did not open')
 assert 'turn/start' not in calls(),'opening the workspace started inference'
 profile_update(executable=str(fake),model='fake-codex',effort='high')
 connected=review('connect');wait(lambda:completed(connected),'provider metadata did not connect')
@@ -127,7 +127,7 @@ assert state()['state']['conversation']==conversation and 'thread/resume' in cal
 blocked=review('chat','BLOCK_REVIEW');wait(lambda:result(blocked).get('text'),'streamed text did not persist')
 api('category_agent.start',dict(**base,mode='review',message=''),write=True,ok=False)
 b.action('category-agent:open:'+gid)
-wait(lambda:(b.snapshot().get('context_menu')or{}).get('title')=='Category agent','second window could not open coordinator')
+wait(lambda:(b.snapshot().get('context_menu')or{}).get('title')=='Portfolio Coordinator','second window could not open coordinator')
 api('category_agent.cancel',base,write=True)
 wait(lambda:result(blocked).get('status')=='cancelled','cancel did not stop the owned review')
 # Disabling revokes a live provider without touching the project agent.
@@ -165,7 +165,7 @@ api('category_agent.approve',approval,write=True,ok=False)
 assert not delivery.exists(),'stale source evidence dispatched work'
 (tmp/'review-evidence.txt').write_text('café 界')
 a.action('category-agent:open:'+gid)
-wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Category agent','approval workspace missing')
+wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Portfolio Coordinator','approval workspace missing')
 a.action('category-agent:proposal:'+third['id']+':'+proposal['id'])
 a.action('category-agent:targets')
 wait(lambda:any(i['action'].startswith('category-agent:target:') for i in (a.snapshot().get('context_menu')or{}).get('items',[])),'native agent target picker missing')
@@ -249,6 +249,6 @@ api('category_agent.start',dict(**archive_base,mode='review',message=''),write=T
 a.action('category-agent:archives')
 wait(lambda:any(i['action']=='category-agent:archive-open:'+archived for i in (a.snapshot().get('context_menu')or{}).get('items',[])),'archived category history picker missing')
 a.action('category-agent:archive-open:'+archived)
-wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Category agent','archived category workspace missing')
+wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Portfolio Coordinator','archived category workspace missing')
 assert not any(i['action']=='category-agent:review' for i in a.snapshot()['context_menu']['items'])
 print(json.dumps(dict(category_archive='PASS',history_preserved=True,access_revoked=True,read_only_history_ui=True)))

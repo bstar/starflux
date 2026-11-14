@@ -42,7 +42,7 @@ impl Workspace {
                         .groups
                         .iter()
                         .position(|g| g.id == id)
-                        .context("Category disappeared")?;
+                        .context("Portfolio disappeared")?;
                     let group = c.groups.remove(from);
                     let to = c
                         .groups
@@ -178,7 +178,7 @@ impl Workspace {
         self.context_menu = Some(crate::shelf::ContextMenu {
             position: [12, 12],
             title: title.into(),
-            subtitle: "Session categories · manual order".into(),
+            subtitle: "Session portfolios · manual order".into(),
             items,
             selected: Some(0),
         });
@@ -190,7 +190,7 @@ impl Workspace {
         let expected = if self.context_menu.as_ref().is_some_and(|m| {
             matches!(
                 m.title.as_str(),
-                "Categories" | "Category projects" | "Move project to category"
+                "Portfolios" | "Portfolio projects" | "Move project to portfolio"
             )
         }) {
             self.category_menu_revision
@@ -201,12 +201,15 @@ impl Workspace {
             self.category_menu(
                 "Sidebar options",
                 vec![
-                    item("Create category…", "categories:new"),
+                    item("Create portfolio…", "categories:new"),
                     item("Add project…", "project:new"),
-                    item("Manage categories…", "categories:manage"),
-                    item("Archived category agents…", "category-agent:archives"),
-                    item("Expand all categories", "categories:expand-all"),
-                    item("Collapse all categories", "categories:collapse-all"),
+                    item("Manage portfolios…", "categories:manage"),
+                    item(
+                        "Archived portfolio coordinators…",
+                        "category-agent:archives",
+                    ),
+                    item("Expand all portfolios", "categories:expand-all"),
+                    item("Collapse all portfolios", "categories:collapse-all"),
                 ],
             );
             return Ok(true);
@@ -236,11 +239,11 @@ impl Workspace {
             return Ok(true);
         }
         if command == "manage" {
-            let mut items = vec![item("Add category…", "categories:new")];
+            let mut items = vec![item("Add portfolio…", "categories:new")];
             for g in self.category_catalog.all() {
                 items.push(item(g.name, format!("categories:details:{}", g.id)));
             }
-            self.category_menu("Categories", items);
+            self.category_menu("Portfolios", items);
             return Ok(true);
         }
         if let Some(id) = command.strip_prefix("toggle:") {
@@ -268,15 +271,18 @@ impl Workspace {
                 .map(|g| item(&g.name, format!("categories:assign:{project}:{}", g.id)))
                 .collect::<Vec<_>>();
             items.push(item(
-                "Create category and move project…",
+                "Create portfolio and move project…",
                 format!("categories:new-for:{project}"),
             ));
-            self.category_menu("Move project to category", items);
+            self.category_menu("Move project to portfolio", items);
             return Ok(true);
         }
         if let Some(id) = command.strip_prefix("details:") {
             let mut items = vec![
-                item("Category agent…", format!("category-agent:open:{id}")),
+                item(
+                    "Portfolio Coordinator…",
+                    format!("category-agent:open:{id}"),
+                ),
                 item("Expand / collapse", format!("categories:toggle:{id}")),
             ];
             if id != UNASSIGNED {
@@ -285,7 +291,7 @@ impl Workspace {
                     item("Move up", format!("categories:up:{id}")),
                     item("Move down", format!("categories:down:{id}")),
                     item(
-                        "Delete category / move projects to Uncategorized",
+                        "Delete portfolio / move projects to Unassigned",
                         format!("categories:delete:{id}"),
                     ),
                 ]);
@@ -310,7 +316,7 @@ impl Workspace {
                     ));
                 }
             }
-            self.category_menu("Category projects", items);
+            self.category_menu("Portfolio projects", items);
             return Ok(true);
         }
         if let Some(id) = command.strip_prefix("rename:") {
@@ -328,7 +334,7 @@ impl Workspace {
             return Ok(true);
         }
         if let Some(tail) = command.strip_prefix("assign:") {
-            let (project, category) = tail.split_once(':').context("Missing category")?;
+            let (project, category) = tail.split_once(':').context("Missing portfolio")?;
             self.category_catalog =
                 Catalog::move_project(&self.config, expected, project, category, None)?;
             self.navigation.load_session_order(&self.config)?;
@@ -337,7 +343,9 @@ impl Workspace {
             self.context_menu = None;
             return Ok(true);
         }
-        let (kind, id) = command.split_once(':').context("Unknown category action")?;
+        let (kind, id) = command
+            .split_once(':')
+            .context("Unknown portfolio action")?;
         if kind == "delete" {
             crate::category_agent::archive(&self.config, id)?;
         }
@@ -348,7 +356,7 @@ impl Workspace {
                     c.remove(id)?;
                 }
                 "assign" => {
-                    let (project, category) = id.split_once(':').context("Missing category")?;
+                    let (project, category) = id.split_once(':').context("Missing portfolio")?;
                     c.assign(project, category)?;
                 }
                 "up" | "down" => {
@@ -356,7 +364,7 @@ impl Workspace {
                         .groups
                         .iter()
                         .position(|g| g.id == id)
-                        .context("Category disappeared")?;
+                        .context("Portfolio disappeared")?;
                     let next = if kind == "up" {
                         i.saturating_sub(1)
                     } else {
@@ -364,7 +372,7 @@ impl Workspace {
                     };
                     c.groups.swap(i, next);
                 }
-                _ => anyhow::bail!("Unknown category action"),
+                _ => anyhow::bail!("Unknown portfolio action"),
             }
             Ok(())
         })?;

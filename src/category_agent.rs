@@ -57,7 +57,7 @@ pub fn root_path(config: &Config, category: &str) -> Result<PathBuf> {
             .all()
             .iter()
             .any(|c| c.id == category),
-        "Category is unavailable"
+        "Portfolio is unavailable"
     );
     storage_path(config, category)
 }
@@ -67,7 +67,7 @@ pub fn storage_path(config: &Config, category: &str) -> Result<PathBuf> {
             && category
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
-        "Invalid category identity"
+        "Invalid portfolio identity"
     );
     Ok(crate::project_state::data_path()
         .parent()
@@ -87,7 +87,7 @@ pub(crate) fn load_path(path: &std::path::Path) -> Result<State> {
     let state: State = crate::plugin_store::read(&file, 1024 * 1024)?;
     ensure!(
         state.version == 1,
-        "Unsupported category coordinator version"
+        "Unsupported portfolio coordinator version"
     );
     Ok(state)
 }
@@ -105,7 +105,7 @@ pub fn configure(
 ) -> Result<Value> {
     ensure!(
         profile.charter.len() <= 32768,
-        "Category objectives exceed 32 KiB"
+        "Portfolio objectives exceed 32 KiB"
     );
     for text in [&profile.model, &profile.effort].into_iter().flatten() {
         ensure!(
@@ -133,7 +133,7 @@ pub fn configure(
     let mut state = load_path(&root)?;
     ensure!(
         state.revision == expected,
-        "Category agent configuration changed; reload it"
+        "Portfolio Coordinator configuration changed; reload it"
     );
     let provider_changed = state.profile.provider != profile.provider
         || state.profile.executable != profile.executable
@@ -181,7 +181,7 @@ pub fn evidence(config: &Config, category: &str) -> Result<Value> {
     let state = load_path(&root_path(config, category)?)?;
     ensure!(
         state.profile.enabled,
-        "Enable the category agent before requesting its evidence"
+        "Enable the portfolio coordinator before requesting its evidence"
     );
     let catalog = crate::categories::Catalog::load(config)?;
     let mut projects = Vec::new();
@@ -191,11 +191,11 @@ pub fn evidence(config: &Config, category: &str) -> Result<Value> {
         let current = load_path(&root)?;
         ensure!(
             current.profile.enabled && current.revision == state.revision,
-            "Category evidence access was revoked"
+            "Portfolio evidence access was revoked"
         );
         ensure!(
             crate::categories::Catalog::load(config)?.category(&member.workspace) == category,
-            "Category membership changed"
+            "Portfolio membership changed"
         );
         let mut project = json!({"id":member.workspace,"label":member.label,"host":member.host,"directory":member.directory,"reported_agents":crate::agent_state::records(&member).map(|records|records.iter().map(|r|json!({"pane":r.pane,"observed_ms":r.observed_ms,"run_id":r.report.run_id,"state":r.report.state,"harness":r.report.harness,"conversation_id":r.report.conversation_id})).collect::<Vec<_>>()).unwrap_or_default()});
         project["coverage"] = if began.elapsed() > std::time::Duration::from_secs(10) {
@@ -216,7 +216,7 @@ pub fn read_root(config: &Config, category: &str) -> Result<PathBuf> {
         return Ok(root);
     }
     let root = storage_path(config, category)?;
-    ensure!(load_path(&root)?.archived, "Category is unavailable");
+    ensure!(load_path(&root)?.archived, "Portfolio is unavailable");
     Ok(root)
 }
 pub fn archive(config: &Config, category: &str) -> Result<()> {
@@ -246,7 +246,7 @@ pub fn archive(config: &Config, category: &str) -> Result<()> {
 pub fn archives(config: &Config) -> Result<Value> {
     let parent = storage_path(config, "placeholder")?
         .parent()
-        .context("Missing category namespace")?
+        .context("Missing portfolio namespace")?
         .to_owned();
     let mut entries = Vec::new();
     if parent.exists() {

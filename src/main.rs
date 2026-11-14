@@ -63,6 +63,7 @@ mod runtime;
 mod selection;
 mod session_catalog;
 mod session_import;
+mod settings;
 mod shelf;
 mod snapshot_service;
 #[cfg(target_os = "linux")]
@@ -120,7 +121,7 @@ struct Args {
     /// Prepare and back up a live Herdr migration without applying it
     #[arg(long)]
     plan_herdr_migration: bool,
-    /// Shared Kitty/chrome theme (see --themes); saved per workspace
+    /// Application-wide Kitty/chrome theme (see --themes); defaults to system
     #[arg(long)]
     theme: Option<String>,
     /// List available shared palettes
@@ -265,13 +266,13 @@ fn run() -> Result<()> {
     if raw.get(1).is_some_and(|s| s == "--category-agent-handoffs") {
         return category_agent_runtime::handoffs(
             raw.get(2).context("Missing project")?,
-            raw.get(3).context("Missing category")?,
+            raw.get(3).context("Missing portfolio")?,
         );
     }
     if raw.get(1).is_some_and(|s| s == "--category-agent-worker") {
         return category_agent_runtime::worker(
-            raw.get(2).context("Missing category project")?,
-            raw.get(3).context("Missing category")?,
+            raw.get(2).context("Missing portfolio project")?,
+            raw.get(3).context("Missing portfolio")?,
             raw.get(4).context("Missing review identity")?,
         );
     }
@@ -601,6 +602,14 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
+    if let Some(theme) = &a.theme {
+        settings::Settings::set_theme(theme)?;
+        println!(
+            "Saved application theme '{}'. All controllers apply it without restarting agents.",
+            theme
+        );
+        return Ok(());
+    }
     if a.sessions {
         let mut names = Vec::new();
         for entry in [root()?, project_state::data_root()?]
@@ -869,18 +878,6 @@ fn run() -> Result<()> {
     }
     if a.desktop_helper.is_some() {
         starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
-    }
-    if let Some(theme) = &a.theme {
-        config.theme = theme.clone();
-        config.validate()?;
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
-        if explicit_workspace && socket_active(&session::socket_path(&root()?, &a.workspace)?)? {
-            println!(
-                "Saved theme '{}' for workspace '{}'. The controller applies it without restarting agents.",
-                config.theme, a.workspace
-            );
-            return Ok(());
-        }
     }
     if let Some(path) = a.png {
         let mut ui = ui::Workspace::new(config)?;

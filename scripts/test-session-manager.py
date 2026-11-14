@@ -24,6 +24,7 @@ import time
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh',action='store_true')
+parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--herdr',action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
@@ -339,6 +340,35 @@ GLib.MainLoop().run()
             retry_ready.touch()
         wait(lambda:a.scene and b.scene and a.snapshot().get('panes') and a.snapshot()['panes'][0].get('pid'),'initial views missing')
         original_pid=a.snapshot()['panes'][0]['pid']
+        if args.theme_settings:
+            def appearance_is(theme):
+                return all(c.snapshot().get('appearance',{}).get('id')==theme for c in (a,b))
+            wait(lambda:appearance_is('system'),'system must be the application default')
+            # Reproduce a stale per-project theme left by older versions.
+            for directory in (state,tmp/'data/starflux/projects'):
+                path=directory/(name+'.json')
+                if path.exists():
+                    value=json.loads(path.read_text());value['theme']='kanagawa';path.write_text(json.dumps(value))
+            a.action('rename-project:'+name)
+            wait(lambda:a.snapshot().get('modal_open'),'rename prompt missing')
+            a.key('char:e',2);a.key('char:u',2);a.paste('Renamed theme fixture');a.accept()
+            wait(lambda:a.snapshot().get('project_label')=='Renamed theme fixture','rename did not save')
+            time.sleep(.7);a.pump();b.pump()
+            assert appearance_is('system'),'rename restored stale project palette'
+            # Explicit theme choice is global, durable, and reaches both views.
+            for theme in ('kanagawa','system'):
+                subprocess.run([str(app),'--workspace',name,'--theme',theme],env=env,check=True,capture_output=True)
+                wait(lambda:appearance_is(theme),'global theme did not reach both views')
+                assert json.loads((tmp/'config/starflux/config.json').read_text())['theme']==theme
+            a.action('sessions:new');wait(lambda:a.snapshot().get('modal_open'),'session prompt missing')
+            a.paste('Theme session');a.accept()
+            wait(lambda:a.snapshot().get('session_id')!='base' and not a.snapshot().get('modal_open'),'new session missing')
+            assert appearance_is('system'),'new session changed application theme'
+            picker(a);choose(a,'base')
+            wait(lambda:a.snapshot().get('active_project')==name,'return to original session failed')
+            assert appearance_is('system') and alive(original_pid),'session switch changed theme or stopped source'
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,global_theme=True,rename_preserves_theme=True,session_switch_preserves_theme=True,live_theme_changes=True,processes_preserved=True)))
+            raise SystemExit(0)
         if args.startup_retry:
             wait(lambda:a.snapshot().get('direct_terminals'),'retried terminal did not attach')
             a.paste('AFTER_STARTUP_RETRY');a.key('enter')
@@ -457,7 +487,7 @@ GLib.MainLoop().run()
             assert all(r['id']!=name for r in cat().get('rows',[])),'collapsed project still visible'
             assert any(r['id']=='category:'+gid and '(1)' in r['name'] for r in cat().get('rows',[])),'collapsed count missing'
             assert alive(original_pid),'collapse killed terminal'
-            a.action('categories:details:'+gid);wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Category projects','category menu missing')
+            a.action('categories:details:'+gid);wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Portfolio projects','category menu missing')
             assert any(i['action']=='categories:reveal:'+name for i in a.snapshot()['context_menu']['items'])
             a.key('escape');a.action('project:'+name);wait(lambda:gid not in cat().get('collapsed',[]),'project navigation did not expand category')
             a.action('categories:rename:'+gid);wait(lambda:a.snapshot().get('modal_open'),'rename missing');a.key('end');[a.key('backspace') for _ in range(6)];a.paste('Renamed');a.accept()
@@ -466,7 +496,7 @@ GLib.MainLoop().run()
             a.action('categories:rename:'+gid);wait(lambda:a.snapshot().get('modal_open'),'stale rename missing')
             b.action('categories:new');wait(lambda:b.snapshot().get('modal_open'),'other category prompt missing');b.paste('Other');b.accept()
             wait(lambda:any(g['name']=='Other' for g in groups(b)),'second category missing');a.accept()
-            wait(lambda:'Categories changed' in (a.snapshot().get('modal_error') or ''),'stale category edit was not rejected');a.key('escape')
+            wait(lambda:'Portfolios changed' in (a.snapshot().get('modal_error') or ''),'stale category edit was not rejected');a.key('escape')
             a.action('categories:delete:'+gid);wait(lambda:all(g['id']!=gid for g in groups()),'delete failed');assert cat()['catalog']['assignments'].get(name) is None
             # Empty categories and collapse survive replacement of only this private controller.
             other=next(g['id'] for g in groups() if g['name']=='Other');a.action('categories:toggle:'+other)

@@ -36,7 +36,8 @@ pub struct Config {
     pub tmux: Option<crate::tmux_source::Source>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub adopted: std::collections::BTreeMap<usize, crate::adoption::Terminal>,
-    #[serde(default = "crate::appearance::default_theme")]
+    // Read old project files, but never persist a project-level theme again.
+    #[serde(default = "crate::appearance::default_theme", skip_serializing)]
     pub theme: String,
     pub host: Option<String>,
     #[serde(default)]
@@ -154,7 +155,6 @@ impl Config {
         if let Some(source) = &self.tmux {
             source.validate()?;
         }
-        crate::appearance::Appearance::load(&self.theme)?;
         for terminal in self.adopted.values() {
             terminal.validate()?;
         }
@@ -972,7 +972,7 @@ mod tests {
     #[test]
     fn saved_workspaces_before_blueprint_use_the_default_palette() {
         let c: Config=serde_json::from_value(json!({"workspace":"legacy","host":null,"directory":null,"agent":null,"executable":"starflux"})).unwrap();
-        assert_eq!(c.theme, "kanagawa");
+        assert_eq!(c.theme, "system");
         c.validate().unwrap();
     }
     #[test]

@@ -88,7 +88,7 @@ impl Catalog {
         let mut groups = self.groups.clone();
         groups.push(Group {
             id: UNASSIGNED.into(),
-            name: "Uncategorized".into(),
+            name: "Unassigned".into(),
         });
         groups
     }
@@ -119,13 +119,13 @@ impl Catalog {
         )?;
         ensure!(
             state.revision == expected,
-            "Categories changed in another window; reopen the menu"
+            "Portfolios changed in another window; reopen the menu"
         );
         change(&mut state, &mut document)?;
         state.revision = state
             .revision
             .checked_add(1)
-            .context("Category revision exhausted")?;
+            .context("Portfolio revision exhausted")?;
         document["categories"] = serde_json::to_value(&state)?;
         document["recent"] = false.into();
         starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&document)?)?;
@@ -161,22 +161,22 @@ impl Catalog {
         let name = name.trim();
         ensure!(
             !name.is_empty() && name.chars().count() <= 80,
-            "Choose a category name of 1–80 characters"
+            "Choose a portfolio name of 1–80 characters"
         );
         ensure!(
-            !name.eq_ignore_ascii_case("Uncategorized")
+            !name.eq_ignore_ascii_case("Unassigned")
                 && !self
                     .groups
                     .iter()
                     .any(|g| Some(g.id.as_str()) != id
                         && g.name.to_lowercase() == name.to_lowercase()),
-            "That category name already exists"
+            "That portfolio name already exists"
         );
         if let Some(id) = id {
             self.groups
                 .iter_mut()
                 .find(|g| g.id == id)
-                .context("Category disappeared")?
+                .context("Portfolio disappeared")?
                 .name = name.into();
         } else {
             self.groups.push(Group {
@@ -189,7 +189,7 @@ impl Catalog {
     pub fn assign(&mut self, project: &str, id: &str) -> Result<()> {
         ensure!(
             id == UNASSIGNED || self.groups.iter().any(|g| g.id == id),
-            "Category disappeared"
+            "Portfolio disappeared"
         );
         if id == UNASSIGNED {
             self.assignments.remove(project);
@@ -201,7 +201,7 @@ impl Catalog {
     pub fn remove(&mut self, id: &str) -> Result<()> {
         ensure!(
             id != UNASSIGNED && self.groups.iter().any(|g| g.id == id),
-            "Category cannot be removed"
+            "Portfolio cannot be removed"
         );
         self.groups.retain(|g| g.id != id);
         self.assignments.retain(|_, v| v != id);
@@ -258,6 +258,6 @@ mod tests {
         c.name(None, "Work").unwrap();
         assert!(c.name(None, " work ").is_err());
         assert!(c.name(None, "").is_err());
-        assert!(c.name(None, "Uncategorized").is_err());
+        assert!(c.name(None, "Unassigned").is_err());
     }
 }

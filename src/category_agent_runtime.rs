@@ -155,18 +155,21 @@ pub fn cancel(config: &Config, category: &str) -> Result<Value> {
 pub fn start(config: &Config, category: &str, mode: &str, prompt: &str) -> Result<Value> {
     ensure!(
         matches!(mode, "connect" | "review" | "chat"),
-        "Unknown category operation"
+        "Unknown portfolio operation"
     );
     ensure!(
         prompt.len() <= 32768 && !prompt.contains('\0'),
-        "Category message exceeds its limit"
+        "Portfolio message exceeds its limit"
     );
     let root = category_agent::root_path(config, category)?;
     starkit::terminal_graphics::session::private_root(&root)?;
     let _configuration = crate::project_sync::Transaction::acquire(root.join("coordinator.lock"))?;
     let _lock = crate::project_sync::Transaction::acquire(root.join("runtime.lock"))?;
     let mut state = category_agent::load_path(&root)?;
-    ensure!(state.profile.enabled, "Enable the category agent first");
+    ensure!(
+        state.profile.enabled,
+        "Enable the portfolio coordinator first"
+    );
     if mode != "connect" {
         ensure!(
             state
@@ -182,7 +185,7 @@ pub fn start(config: &Config, category: &str, mode: &str, prompt: &str) -> Resul
         let old = load(&root, active)?;
         ensure!(
             !running(&old) || (!alive(&old) && old.created_ms + 15000 < now()),
-            "A category review is already running in another window"
+            "A portfolio review is already running in another window"
         );
     }
     let current_scope = scope(config, category)?;
@@ -254,11 +257,11 @@ fn valid(config: &Config, r: &Review) -> Result<()> {
     let state = category_agent::load_path(&root)?;
     ensure!(
         state.profile.enabled && state.revision == r.configuration_revision,
-        "Category configuration changed or was disabled"
+        "Portfolio configuration changed or was disabled"
     );
     ensure!(
         scope(config, &r.category)? == r.scope,
-        "Category membership or repository identity changed"
+        "Portfolio membership or repository identity changed"
     );
     ensure!(
         !root.join(format!("cancel-{}", r.id)).exists(),
@@ -274,7 +277,7 @@ pub fn tool(config: &Config, r: &mut Review, arguments: &Value) -> Result<Value>
     let member = category_agent::members(config, &r.category)?
         .into_iter()
         .find(|p| p.workspace == project)
-        .context("Project is outside the category")?;
+        .context("Project is outside the portfolio")?;
     let operation = arguments["operation"]
         .as_str()
         .context("Missing repository operation")?;
@@ -290,7 +293,7 @@ pub fn tool(config: &Config, r: &mut Review, arguments: &Value) -> Result<Value>
     r.evidence_bytes = r.evidence_bytes.saturating_add(bytes);
     ensure!(
         r.evidence_bytes <= 2 * 1024 * 1024,
-        "Category review evidence budget reached"
+        "Portfolio review evidence budget reached"
     );
     for item in value["sources"].as_array().into_iter().flatten() {
         let source = json!({"project":project,"operation":"read","path":item["path"],"sha256":item["sha256"]});
@@ -315,7 +318,7 @@ fn assessment(value: &Value, config: &Config, r: &Review) -> Result<Value> {
         .collect::<Vec<_>>();
     ensure!(
         value["summary"].as_str().is_some(),
-        "Provider did not return a structured category assessment"
+        "Provider did not return a structured portfolio assessment"
     );
     let mut value = value.clone();
     for item in value["findings"].as_array().into_iter().flatten() {
@@ -323,7 +326,7 @@ fn assessment(value: &Value, config: &Config, r: &Review) -> Result<Value> {
             item["project"]
                 .as_str()
                 .is_some_and(|p| projects.iter().any(|id| id == p)),
-            "Finding names a project outside this category"
+            "Finding names a project outside this portfolio"
         );
     }
     for item in value["projects"].as_array().into_iter().flatten() {
@@ -331,7 +334,7 @@ fn assessment(value: &Value, config: &Config, r: &Review) -> Result<Value> {
             item["project"]
                 .as_str()
                 .is_some_and(|p| projects.iter().any(|id| id == p)),
-            "Assessment names a project outside the category"
+            "Assessment names a project outside the portfolio"
         );
         ensure!(
             item["progress"].is_null() || item["progress"].as_u64().is_some_and(|n| n <= 100),
@@ -357,7 +360,7 @@ fn assessment(value: &Value, config: &Config, r: &Review) -> Result<Value> {
                 proposal["project"]
                     .as_str()
                     .is_some_and(|p| projects.iter().any(|id| id == p)),
-                "Proposed task names a project outside this category"
+                "Proposed task names a project outside this portfolio"
             );
             ensure!(
                 proposal["text"]
@@ -510,7 +513,7 @@ pub fn worker(project: &str, category: &str, id: &str) -> Result<()> {
                 ensure!(
                     began.elapsed()
                         < Duration::from_secs(if r.mode == "connect" { 60 } else { 1800 }),
-                    "Category operation timed out"
+                    "Portfolio operation timed out"
                 );
                 match rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(event) => {
@@ -570,7 +573,7 @@ pub fn worker(project: &str, category: &str, id: &str) -> Result<()> {
                                 "{}",
                                 event["message"]
                                     .as_str()
-                                    .unwrap_or("Category provider failed")
+                                    .unwrap_or("Portfolio provider failed")
                             ),
                             _ => anyhow::bail!("Unknown provider event"),
                         }
@@ -650,7 +653,7 @@ pub fn targets(config: &Config, category: &str, project: &str) -> Result<Value> 
         category_agent::members(config, category)?
             .iter()
             .any(|p| p.workspace == project),
-        "Project is outside the category"
+        "Project is outside the portfolio"
     );
     let member = crate::saved(project)?;
     let mut choices = Vec::new();
@@ -668,7 +671,7 @@ fn verify_sources(config: &Config, category: &str, sources: &[Value]) -> Result<
         let member = members
             .iter()
             .find(|p| p.workspace == source["project"])
-            .context("Evidence project left the category")?;
+            .context("Evidence project left the portfolio")?;
         let current = crate::category_agent_files::query(
             member,
             source["operation"].as_str().unwrap_or("read"),
@@ -677,7 +680,7 @@ fn verify_sources(config: &Config, category: &str, sources: &[Value]) -> Result<
         )?;
         ensure!(
             current["sha256"] == source["sha256"],
-            "Repository evidence changed; run a new category review"
+            "Repository evidence changed; run a new portfolio review"
         );
     }
     Ok(())
@@ -702,7 +705,7 @@ pub fn approve(
         let member = category_agent::members(config, category)?
             .into_iter()
             .find(|p| p.workspace == source["project"])
-            .context("Evidence project left this category")?;
+            .context("Evidence project left this portfolio")?;
         let current = crate::category_agent_files::query(
             &member,
             source["operation"].as_str().unwrap_or("read"),
@@ -711,7 +714,7 @@ pub fn approve(
         )?;
         ensure!(
             current["sha256"] == source["sha256"],
-            "Repository evidence changed; run a new category review before approving work"
+            "Repository evidence changed; run a new portfolio review before approving work"
         );
     }
     let p = r.result["proposals"]
@@ -757,7 +760,7 @@ pub fn resume_queue(config: &Config, category: &str) -> Result<Value> {
     let root = category_agent::root_path(config, category)?;
     ensure!(
         category_agent::load_path(&root)?.profile.enabled,
-        "Category agent is disabled"
+        "Portfolio Coordinator is disabled"
     );
     let mut child = Command::new(std::env::current_exe()?)
         .args(["--category-agent-handoffs", &config.workspace, category])

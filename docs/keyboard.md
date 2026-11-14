@@ -56,9 +56,9 @@ it does not change workspace or App Space navigation.
 
 ## Panel navigation
 
-In the Projects panel, categories support Up/Down row navigation, Left to
-collapse or return to a category header, Right to expand, and Enter to toggle a
-header or select a project. See [project categories](categories.md) for saved
+In the Projects panel, portfolios support Up/Down row navigation, Left to
+collapse or return to a portfolio header, Right to expand, and Enter to toggle a
+header or select a project. See [project portfolios](categories.md) for saved
 grouping, manual ordering and activity summaries.
 
 **Ctrl+B, then Tab / Shift+Tab** hop between Projects, workspace controls, terminal tabs and each visible split pane (or App Space). **Ctrl+B, then an arrow** focuses an adjacent pane. Plain Tab and Shift+Tab pass through while the terminal or app has input capture. Dialogs keep Tab for their fields.

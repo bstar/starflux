@@ -213,7 +213,7 @@ impl ContextMenu {
         self.selected.unwrap_or(0) / capacity * capacity
     }
     pub fn bounds(&self, width: u16, height: u16) -> R {
-        let w = (if matches!(self.title.as_str(), "Category agent" | "Plugins") {
+        let w = (if matches!(self.title.as_str(), "Portfolio Coordinator" | "Plugins") {
             760
         } else if matches!(
             self.title.as_str(),
@@ -233,7 +233,7 @@ impl ContextMenu {
             288
         })
         .min(width.saturating_sub(12));
-        let h = if matches!(self.title.as_str(), "Category agent" | "Plugins") {
+        let h = if matches!(self.title.as_str(), "Portfolio Coordinator" | "Plugins") {
             height.saturating_sub(24)
         } else {
             (88usize.saturating_add(self.items.len().saturating_mul(34)))
@@ -569,10 +569,13 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     move_surface(&mut foreground, l.sidebar.width, l.width);
     let mut p = Pen { surface: chrome };
     let w = l.sidebar.width;
-    p.fill(R::new(0, 0, w, l.height), &t.bg);
-    p.grid(R::new(0, 48, w, l.height.saturating_sub(48)), &t.grid);
+    // Leave a stable gutter around the scrollbar, outside row decorations.
+    let content_right = w.saturating_sub(20);
+    let sidebar = t.sidebar_palette();
+    // A quiet, continuous navigation surface; the workspace keeps its own grid.
+    p.fill(R::new(0, 0, w, l.height), &sidebar.background);
     p.fill(R::new(w.saturating_sub(1), 0, 1, l.height), &t.border);
-    p.fill(R::new(0, 0, w.saturating_sub(1), 48), &t.panel);
+    p.fill(R::new(0, 0, w.saturating_sub(1), 48), &sidebar.background);
     p.hit(R::new(0, 0, w.saturating_sub(1), 48), "sessions:open");
     p.text(
         R::new(w.saturating_sub(26), 26, 18, 16),
@@ -608,17 +611,17 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     );
     p.text(
         R::new(16, 63, w.saturating_sub(60), 22),
-        "CATEGORIES",
-        &t.muted,
+        "Projects",
+        &t.fg,
         11,
-        true,
+        false,
     );
     p.text(
-        R::new(w.saturating_sub(40), 63, 28, 22),
+        R::new(content_right.saturating_sub(28), 63, 28, 22),
         m.project_total.to_string(),
-        &t.accent,
+        &t.muted,
         11,
-        true,
+        false,
     );
     let rows = crate::categories::sidebar_capacity(
         l.height,
@@ -641,7 +644,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
                 p.fill(R::new(8, y, w.saturating_sub(20), 2), &t.accent);
                 p.text(
                     R::new(24, y, w.saturating_sub(32), 12),
-                    "Drop at end of category",
+                    "Drop at end of portfolio",
                     &t.accent,
                     9,
                     false,
@@ -656,26 +659,31 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             let drop_target = m
                 .project_drag
                 .is_some_and(|(source, gap)| !source.starts_with("category:") && gap == Some(n));
-            p.fill(R::new(0, y, w.saturating_sub(1), header_height), &t.panel);
             if m.project_hover == Some(project.id) || drop_target {
-                p.border(
-                    R::new(1, y, w.saturating_sub(3), header_height - 1),
-                    &t.accent,
-                );
+                p.fill(R::new(0, y, content_right, header_height), &sidebar.hover);
             }
+            let collapsed = project.name.starts_with('▸');
+            let name = project
+                .name
+                .strip_prefix("▸ ")
+                .or_else(|| project.name.strip_prefix("▾ "))
+                .unwrap_or(project.name);
+            let ink = if project.failed > 0 {
+                &t.warning
+            } else {
+                &t.fg
+            };
+            // Native one-pixel strokes keep the disclosure crisp at every font.
+            let title = R::new(44, y + padding, content_right.saturating_sub(76), 18);
+            let disclosure = R::new(18, title.y + (title.height - 16) / 2, 16, 16);
+            p.border(disclosure, &t.muted);
+            p.fill(R::new(disclosure.x + 4, disclosure.y + 7, 8, 1), ink);
+            if collapsed {
+                p.fill(R::new(disclosure.x + 7, disclosure.y + 4, 1, 8), ink);
+            }
+            p.text(title, name, ink, 12, false);
             p.text(
-                R::new(10, y + padding, w.saturating_sub(48), 18),
-                project.name,
-                if project.failed > 0 {
-                    &t.warning
-                } else {
-                    &t.accent
-                },
-                11,
-                true,
-            );
-            p.text(
-                R::new(10, y + padding + 20, w.saturating_sub(20), 12),
+                R::new(18, y + padding + 21, content_right.saturating_sub(18), 12),
                 if drop_target {
                     "Drop project here"
                 } else {
@@ -691,27 +699,33 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             );
             for dot in 0..3 {
                 p.fill(
-                    R::new(w.saturating_sub(19) + dot * 5, y + padding + 8, 2, 2),
+                    R::new(
+                        content_right.saturating_sub(19) + dot * 5,
+                        title.y + 8,
+                        2,
+                        2,
+                    ),
                     &t.muted,
                 );
             }
             p.hit(
-                R::new(w.saturating_sub(24), y + padding, 24, 20),
+                R::new(content_right.saturating_sub(24), y + padding, 24, 20),
                 format!("categories:details:{id}"),
             );
             continue;
         }
         let selected = project.id == m.project;
         if m.project_hover == Some(project.id) {
-            p.fill(R::new(0, y, w.saturating_sub(1), 34), &t.panel);
+            p.fill(R::new(0, y, content_right, 34), &sidebar.hover);
         }
         if m.project_drag.is_some_and(|(id, _)| id == project.id) {
             p.border(r, &t.border);
         }
         if selected {
+            p.fill(R::new(0, y, content_right, 34), &sidebar.selection);
             p.fill(R::new(r.x, r.y, 2, r.height), &t.accent);
         }
-        let label = R::new(24, y + 2, w.saturating_sub(64), 19);
+        let label = R::new(44, y + 2, content_right.saturating_sub(64), 19);
         let working = project.working > 0;
         if project.failed > 0 || project.waiting > 0 {
             let r = R::new(w.saturating_sub(33), y + 5, 14, 14);
@@ -731,7 +745,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         } else if working {
             activity_icon(
                 &mut p,
-                [w.saturating_sub(34), y + 4],
+                [content_right.saturating_sub(16), y + 4],
                 t,
                 ((if working || project.waiting > 0 {
                     m.wave_phase
@@ -832,7 +846,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             }
         };
         p.text(
-            R::new(24, y + 20, w.saturating_sub(42), 12),
+            R::new(44, y + 20, content_right.saturating_sub(44), 12),
             detail,
             if project.waiting > 0 {
                 &t.warning
@@ -887,9 +901,9 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         let thumb = (usize::from(track) * rows / m.projects.len()).max(18) as u16;
         let offset = (usize::from(track.saturating_sub(thumb)) * start
             / m.projects.len().saturating_sub(rows).max(1)) as u16;
-        p.fill(R::new(w.saturating_sub(6), 122, 2, track), &t.border);
+        p.fill(R::new(w.saturating_sub(10), 122, 2, track), &t.border);
         p.fill(
-            R::new(w.saturating_sub(6), 122 + offset, 2, thumb),
+            R::new(w.saturating_sub(10), 122 + offset, 2, thumb),
             &t.accent,
         );
     }
@@ -903,16 +917,17 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         );
         p.text(
             R::new(14, l.height - 28, w.saturating_sub(24), 21),
-            if m.projects.len() > rows {
-                format!(
-                    "{}–{} of {} · scroll",
-                    start + 1,
-                    (start + rows).min(m.projects.len()),
-                    m.projects.len()
-                )
-            } else {
-                format!("{} projects · all visible", m.projects.len())
-            },
+            format!(
+                "{} projects · {} shown",
+                m.project_total,
+                m.projects
+                    .iter()
+                    .skip(start)
+                    .take(rows)
+                    .filter(|project| !project.id.starts_with("category:")
+                        && !project.id.starts_with("category-end:"))
+                    .count()
+            ),
             &t.muted,
             9,
             false,
