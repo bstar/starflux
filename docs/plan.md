@@ -2,6 +2,11 @@
 
 ## Herdr parity goal — 2026-10-30
 
+Paused at the user's request on November 14. The current source, validation
+limits, safety check and remaining work are recorded in
+[the pause handoff](parity-handoff-2026-11-14.md). The original scope below remains
+unchanged; this is not a completion claim.
+
 The active parity goal follows the source and CLI audit of Herdr 0.9.1 and its published TUI documentation. The older architecture study below is historical; current terminal rendering and unified tabs are described in `cells.md` and the source.
 
 Implement incrementally, with private local and SSH acceptance fixtures. Preserve live terminal processes and App Space workers. Completion requires behavior checks in both presentations; capability-dependent controls stay hidden where unavailable.

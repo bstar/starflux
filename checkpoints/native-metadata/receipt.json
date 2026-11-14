@@ -1,0 +1,124 @@
+{
+  "saved_at": 1794676810.9636805,
+  "canonical_base_commit": "72d01769695fae0245b293fc86b0cebecf6430d8",
+  "prior_hyperlink_patch_sha256": "c0e98aeef48e8e3f55ae9e05c8df66877e9f4389529dbc1ff4617255abec526d",
+  "source_patch_sha256": "48029430882ff8b985ec28a838e0fc7eb134c6a79d8fd96e4d2f516a159b0d0d",
+  "files": {
+    "src/graphics_owner/metadata.rs": {
+      "before": null,
+      "after": "74ec6dd33bbdeaa46a2e50c9a2f8f95041136913c0da33601b4e1c9b03615f3e"
+    },
+    "src/graphics_owner.rs": {
+      "before": "8efe651cee39da6ff6bad81d2715f74547a064214d556461795ce0d9ac583e88",
+      "after": "3af6a0fa8793b243fb1ad9d4431da4e77a60a7de788246c5a623b1232d1ca2ca"
+    },
+    "src/native_view.rs": {
+      "before": "4da1c654dc66ae4e4bb293500c228dc76d6829e41a05b2e6af020a54b539bd13",
+      "after": "395c5e0cb754aed80da6d8d420e329d950baf616d3a30b4bfdaff02f2d76e536"
+    },
+    "src/source_broker/render.rs": {
+      "before": "faff53b737cf91c61ec7edeff3f0aa18f245f6f2c0b39d3d08b7ecf305a31058",
+      "after": "4328765c96c3a0ac4385b86902e7a75af331a144123ac23edf96dd0f678f74ec"
+    },
+    "src/source_broker.rs": {
+      "before": "284e6eeac90495b4521d9c5905afeb4dacd3a3cedb366c727873cb9db4389d63",
+      "after": "83943ec4ca18c859f2f965bbf99f3a6e52ea5d1ed980f6698ac3679362b2658b"
+    },
+    "src/terminal.rs": {
+      "before": "8904125eef1a205d315f89398fc22d2d557920f793ce8c99572a84e52f104ff7",
+      "after": "2dfdd4616541971a7c24f50156bc440b64b489827973bea1c9ffe21019102ae2"
+    },
+    "src/ui.rs": {
+      "before": "784c1730c9f770bddb673c85832238c0c85b66aeb3310fa94013e427df31c7c0",
+      "after": "67d36d7dee76613cf986e404f3f0b64a1ced987d2272b68b772580adfad09764"
+    }
+  },
+  "validation_evidence": {
+    "clippy": {
+      "sha256": "3817099c377268adc5cc8fa142788aac25693a766aca6dd7df5f26780d04265e",
+      "mtime": 1794676486.1237524
+    },
+    "unit": {
+      "sha256": "eeb299eeda8c3b743144bbe8f1df178f382eab5531c5fe3171da89345581afcf",
+      "mtime": 1794676516.6739445
+    },
+    "minimal": {
+      "sha256": "55b5a57ef2f58e509f7e7f2ce8e0fc54f0f13c260b9ef37525ff1133cd68ef78",
+      "mtime": 1794676546.520137
+    },
+    "build": {
+      "sha256": "42dfc03bb7f74525ce494ca84d2e13deb3a6ab396fd9396b103e0b7e646fcc78",
+      "mtime": 1794676586.9784052
+    },
+    "ui-local": {
+      "sha256": "939d1820ea09d73ebba46d9a073bcdaae30d9aa874af068b1c4f0712d8ae0be2",
+      "mtime": 1794676656.2878823
+    },
+    "ui-ssh": {
+      "sha256": "fb33784fdd58f469fb6fb0fc7b4a1e45ab761be747d2d28758499d521aa3b6ed",
+      "mtime": 1794676657.4458907
+    },
+    "ui-cells": {
+      "sha256": "28579b4cf50ebd8cb9cc85bc26d8cd65b2a113662fb1e04c650e3cc1a4059192",
+      "mtime": 1794676656.2878823
+    },
+    "ui-ssh-cells": {
+      "sha256": "6c876e4703dace9c9c00270340efb7e21bec54536312ae58bbf228559d32a142",
+      "mtime": 1794676657.4238904
+    },
+    "wire-local": {
+      "sha256": "14f2117e802484fc021fd696c6190caac67f869148ccf4cae569f2230d487961",
+      "mtime": 1794676658.4148974
+    },
+    "wire-ssh": {
+      "sha256": "e05c7219df34f9eebd60ea0e011ab769285e15a048c14dc24ce4e44ec0ab614e",
+      "mtime": 1794676659.6099057
+    },
+    "links-local": {
+      "sha256": "6877cd0c80dd7827497caa5c610ba5b6beff689b83fe419f7b71af954ef285dc",
+      "mtime": 1794676760.4446359
+    },
+    "links-ssh": {
+      "sha256": "76e63bfb2db59430d42652e23a34934e8095d08251f8e4797c453d390f781c4f",
+      "mtime": 1794676759.9516323
+    },
+    "links-cells": {
+      "sha256": "141f0124bef92b860abdf7a7470b475df5db49bb95925dc5a891c04aa352fddc",
+      "mtime": 1794676761.9596472
+    },
+    "links-ssh-cells": {
+      "sha256": "2417a44ab6b15b01ba1f408ad7af87ae8a32253ea43326981c045eb2d6e24bc7",
+      "mtime": 1794676759.9716322
+    },
+    "older-local": {
+      "sha256": "b6f663d3f4a077be98a60614401a5a7b4e7eb4e93be089a05012fecc939677be",
+      "mtime": 1794676709.3822615
+    },
+    "older-ssh": {
+      "sha256": "82eab7368a3ac197eca815c20b69855e59b0d08105d4be0529555f221256e3ae",
+      "mtime": 1794676711.8992796
+    }
+  },
+  "candidate_binary_sha256": "e83a135b987b5ad830435d13eaca52d0f2f78e26294d751b39e88cbbe3e75823",
+  "candidate_lock_sha256": "c66c76d0baea0c6a350031ae157ce349b2978bd301047a4cfe75ddbbaafb36ef",
+  "fixtures": {
+    "test-native-metadata-views.py": "2d8b1461354d88c6d32eff4b6e3e0f84928860c3ed7e630fcff73e910fba2fa4",
+    "test-native-metadata-wire.py": "04a64d4960b529c117bcd0eddce1a369ad30fc97ca96229857fa623f33596a16",
+    "test-native-links-views.py": "ddae1316f5293f5ff1ed01438d8eb4a4578bf015cf70de46f6b89406e2bdfbee",
+    "run-native-tree-candidate": "6b910cf289303fa01b3bf8f311c3da6b5f5f4ff65bd3656836344087db180a39"
+  },
+  "live_safety_sha256": "d5e3df6b2f183be26584dcf19923ddc779ffb17015254aeb4197ea2db1ed5111",
+  "original_processes_preserved": 5,
+  "installed_binary_unchanged": true,
+  "shipping_activation": false,
+  "retained_titles_and_icons": true,
+  "clipboard_writes": true,
+  "clipboard_acknowledgement_and_payload_elision": true,
+  "unlinked_loaded_owner_can_launch": true,
+  "no_attach_reveal_resize_reconnect_replay": true,
+  "clipboard_reading_enabled": false,
+  "bell_counters": true,
+  "bell_attention_delivery_complete": false,
+  "rich_terminal_metadata_complete": false,
+  "canonical_promotion": false
+}

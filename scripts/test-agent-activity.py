@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise read-only native activity detection against a disposable Codex-like TUI."""
-import base64,json,subprocess,tempfile,time,uuid,shlex
+import base64,json,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1]
 helper=(repo/'scripts/host.py').read_text()
@@ -31,7 +31,10 @@ while True:
  if key in 'wiaqhs':draw(key)
 ''')
     try:
-        call('ensure',directory=str(temp),argv=['bash','-c','exec -a codex python3 '+shlex.quote(str(program))])
+        # Keep Python's executable identity so its standard-library lookup
+        # remains inside the selected interpreter (including Nix). The fixture
+        # sets its process name to codex itself for foreground detection.
+        call('ensure',directory=str(temp),argv=[sys.executable,str(program)])
         working=wait('working');pid=working['pid']
         for key,state in [('i','idle'),('h','idle'),('s','idle'),('a','waiting_for_approval'),('q','needs_input'),('w','working'),('i','idle')]:
             subprocess.run(['tmux','-L','starflux-'+name,'send-keys','-t','p1:0.0',key],check=True)

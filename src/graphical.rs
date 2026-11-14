@@ -310,6 +310,7 @@ mod tests {
         };
         let layout = shelf::Layout::new(viewport.width as u16, viewport.height as u16, space);
         let model = shelf::Model {
+            native_skins: true,
             app_view: apps,
             project: "sample",
             project_label: "Renderer benchmark",

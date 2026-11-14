@@ -26,6 +26,7 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh',action='store_true')
 parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
+parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
 parser.add_argument('--herdr',action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
 parser.add_argument('--agent-lifecycle',action='store_true')
@@ -63,6 +64,7 @@ if args.reboot_adopted:args.cold_start=True
 if args.category_agent_selection:args.category_agent_workflow=True
 if args.category_agent_workflow:args.category_agent=True;args.agent_lifecycle=True
 if args.notification_service and not args.notifications:parser.error("--notification-service requires --notifications")
+if args.native_sources and args.startup_retry:parser.error("--startup-retry injects a tmux-specific launch failure")
 root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
 with tempfile.TemporaryDirectory(prefix='starflux-session-proof-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
@@ -130,9 +132,10 @@ for line in sys.stdin:
         retry_wrapper=retry_bin/'tmux'
         retry_wrapper.write_text('#!/usr/bin/python3\nimport os,sys,pathlib\nargs=sys.argv[1:]\nif "-L" in args and args[args.index("-L")+1]=='+repr('starflux-'+name)+' and "new-session" in args and not pathlib.Path('+repr(str(retry_ready))+').exists():\n print("fixture backend not ready",file=sys.stderr);sys.exit(75)\nos.execv('+repr(real_tmux)+',['+repr(real_tmux)+',*args])\n')
         retry_wrapper.chmod(0o700);env['PATH']=str(retry_bin)+os.pathsep+env['PATH']
-    (state/(name+'.json')).write_text(json.dumps(dict(workspace=name,label='Original',collection='base',host=None,directory=str(project_directory),agent=None,executable=str(app),project_host=True)))
+    native_config=dict(native_terminals=True,desktop_helper=str(app)) if args.native_sources else {}
+    (state/(name+'.json')).write_text(json.dumps(dict(workspace=name,label='Original',collection='base',host=None,directory=str(project_directory),agent=None,executable=str(app),project_host=True,**native_config)))
     for extra in ['extra-a','extra-b']:
-        (state/(extra+'.json')).write_text(json.dumps(dict(workspace=extra,label=extra,collection='base',host=None,directory=str(tmp),agent=None,executable=str(app),project_host=True)))
+        (state/(extra+'.json')).write_text(json.dumps(dict(workspace=extra,label=extra,collection='base',host=None,directory=str(tmp),agent=None,executable=str(app),project_host=True,**native_config)))
     processes=[];clients=[];daemon=None;herdr=None;ssh_args=[]
     socket_root=tmp/'tmux'/('tmux-'+str(os.getuid()));socket_root.mkdir(parents=True,mode=0o700);source_socket=socket_root/'fixture'
     def tmux(*arguments):
@@ -140,6 +143,31 @@ for line in sys.stdin:
     def alive(pid):
         try:return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[0]!='Z'
         except OSError:return False
+    def stop_native_owner():
+        owner_path=tmp/'data/starflux/native-sources/owner.json'
+        if owner_path.exists():
+            record=json.loads(owner_path.read_text())['owner'];pid=record['pid']
+            def same_owner():
+                try:
+                    fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
+                    return fields[0]!='Z' and int(fields[19])==record['start_ticks'] and record['boot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+                except FileNotFoundError:return False
+            if same_owner():
+                proc=Path('/proc',str(pid))
+                argv=(proc/'cmdline').read_bytes().split(b'\0')
+                role=argv.index(b'--native-source-service')
+                assert argv[role+1]==os.fsencode(tmp/'data/starflux'),'unexpected private native owner directory'
+                environment=dict(item.split(b'=',1) for item in (proc/'environ').read_bytes().split(b'\0') if b'=' in item)
+                assert environment.get(b'XDG_RUNTIME_DIR')==os.fsencode(runtime) and environment.get(b'XDG_DATA_HOME')==os.fsencode(tmp/'data'),'unexpected private native owner environment'
+                token=json.loads(owner_path.with_name('token.json').read_text())
+                with socket.socket(socket.AF_UNIX) as peer:
+                    peer.settimeout(5);peer.connect(str(owner_path.with_name('broker.sock')))
+                    peer.sendall((json.dumps(dict(version=1,id=1,token=token,action=dict(op='shutdown',instance=record['instance'])))+'\n').encode())
+                    response=peer.makefile('rb').readline(65536)
+                    assert json.loads(response).get('ok'),'private native owner rejected shutdown'
+                deadline=time.monotonic()+5
+                while same_owner() and time.monotonic()<deadline:time.sleep(.05)
+                assert not same_owner(),'private native owner did not retire before fixture cleanup'
     class Client:
         def __init__(self,identity,remote=False,executable=None):
             self.executable=executable;self.identity=identity;self.scene=None;self.messages=queue.Queue();self.serial=0;self.frames={};self.clipboards=[];self.all_frames=[]
@@ -339,6 +367,11 @@ GLib.MainLoop().run()
             wait(lambda:'reconnecting' in a.snapshot().get('status','') and 'reconnecting' in b.snapshot().get('status',''),'startup failure did not expose reconnecting state')
             retry_ready.touch()
         wait(lambda:a.scene and b.scene and a.snapshot().get('panes') and a.snapshot()['panes'][0].get('pid'),'initial views missing')
+        if args.native_sources:
+            wait(lambda:all(c.snapshot().get('project_state',{}).get('native_sources',{}).get('0',{}).get('binding',{}).get('source') for c in (a,b)),'native source backend was not selected in both views')
+            references=[c.snapshot()['project_state']['native_sources']['0']['binding'] for c in (a,b)]
+            assert references[0]==references[1],'independent views did not share the native source'
+            print(json.dumps(dict(native_source_backend_verified=True,ssh=args.ssh,cells=args.cells)),flush=True)
         original_pid=a.snapshot()['panes'][0]['pid']
         if args.theme_settings:
             def appearance_is(theme):
@@ -677,6 +710,10 @@ GLib.MainLoop().run()
             config.update(workspace=imported,label='Background tmux',tmux=dict(socket=str(source_socket),session=source_session))
             (projects/(imported+'.json')).write_text(json.dumps(config))
             model=json.loads((projects/(name+'.model.json')).read_text());model.update(terminal=1,split=False,pane_tree=None)
+            # This is a new project with one imported tmux pane. Native source
+            # identities remain bound to the original project and cannot be
+            # transplanted by copying fixture metadata.
+            model.pop('native_sources',None)
             (projects/(imported+'.model.json')).write_text(json.dumps(model))
             (projects/'catalog-version').write_bytes(os.urandom(16))
             wait(lambda:imported in a.snapshot().get('project_navigation',{}).get('visible',[]),'background source project did not enter catalog')
@@ -778,7 +815,8 @@ GLib.MainLoop().run()
                 subprocess.run([str(app),'--workspace',name,'--frontend',client.identity,'--close'],env=env,check=True,capture_output=True)
                 client.process.wait(timeout=5)
             old=archive(0)
-            subprocess.run(['tmux','-L','starflux-'+name,'kill-server'],env=env,check=True)
+            if args.native_sources:stop_native_owner()
+            else:subprocess.run(['tmux','-L','starflux-'+name,'kill-server'],env=env,check=True)
             wait(lambda:all(not alive(pid) for pid in owners),'private cold-start owners survived')
             markers=[tmp/('MUST_NOT_AUTORESTART_AGENT_'+str(pane)) for pane in range(2)]
             model=projects/(name+'.model.json');saved=json.loads(model.read_text())
@@ -808,6 +846,16 @@ GLib.MainLoop().run()
             # A cold runtime, retaining only durable data and per-view layouts.
             shutil.rmtree(runtime);runtime.mkdir(mode=0o700);state.mkdir(mode=0o700)
             a=Client('v-session-a',remote=args.ssh);b=Client('v-session-b')
+            if args.native_sources:
+                # Same-boot owner loss retains guarded references. Restore each
+                # shell through the real confirmation, without replaying the
+                # saved program or dropping its layout/history/conversation.
+                wait(lambda:a.scene and b.scene and len(a.snapshot().get('panes',[]))==2,'cold native layout missing')
+                for pane in range(2):
+                    wait(lambda:len(a.snapshot().get('panes',[]))>pane and a.snapshot()['panes'][pane].get('native_owner_recovery_available'),'cold native retirement proof unavailable')
+                    a.action('recover-terminal:'+str(pane));wait(lambda:a.snapshot().get('modal_open'),'cold native recovery confirmation missing')
+                    a.paste('RECOVER');a.accept()
+                    wait(lambda:not a.snapshot().get('modal_open'),'cold native recovery did not finish')
             wait(lambda:a.scene and b.scene and len(a.snapshot().get('panes',[]))==2 and all(p.get('pid') for p in a.snapshot()['panes']),'cold runtime did not recover layout')
             assert a.snapshot()['project_state']['pane_tree']==layout,'cold start changed split tree'
             assert all(p['pid'] not in owners for p in a.snapshot()['panes'])
@@ -856,7 +904,7 @@ GLib.MainLoop().run()
             wait(lambda:new_receipt.exists(),'cold resume did not consume its launch intent')
             assert new_receipt.stat().st_mode&0o777==0o600
             assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'cold recovery changed imported source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,cold_runtime_restored=True,split_layout_restored=True,styled_unicode_screen=True,previous_process_screen=True,clock_correction_safe=True,saved_commands_not_restarted=True,consumed_intents_not_replayed=True,cold_conversation_resume=True,invalid_archive_reported=True,pause_clear_resume=True,review_is_read_only=True,independent_frontends=True,new_shell_input=True,unrelated_source_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_source_recovery_confirmed=args.native_sources,cold_runtime_restored=True,split_layout_restored=True,styled_unicode_screen=True,previous_process_screen=True,clock_correction_safe=True,saved_commands_not_restarted=True,consumed_intents_not_replayed=True,cold_conversation_resume=True,invalid_archive_reported=True,pause_clear_resume=True,review_is_read_only=True,independent_frontends=True,new_shell_input=True,unrelated_source_preserved=True)))
             raise SystemExit(0)
         if args.narrow:
             def menu(title):return wait(lambda:(m if (m:=a.snapshot().get('context_menu')) and m['title']==title else None),'missing '+title)
@@ -1690,4 +1738,8 @@ GLib.MainLoop().run()
         if herdr:
             subprocess.run(['herdr','server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
             if herdr.poll() is None:herdr.terminate();herdr.wait(timeout=3)
-        if daemon:daemon.terminate();daemon.wait(timeout=3)
+        try:
+            if args.native_sources:
+                stop_native_owner()
+        finally:
+            if daemon:daemon.terminate();daemon.wait(timeout=3)

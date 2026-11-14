@@ -881,6 +881,8 @@ fn run() -> Result<()> {
     }
     if let Some(path) = a.png {
         let mut ui = ui::Workspace::new(config)?;
+        // The local reference renderer supports artwork without a peer handshake.
+        ui.native_skins = true;
         let scene = session::Controller::scene(&mut ui, Default::default());
         starkit::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
         return Ok(());

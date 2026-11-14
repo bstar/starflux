@@ -1,0 +1,149 @@
+--- a/src/native_backend.rs
++++ b/src/native_backend.rs
+@@ -723,10 +723,32 @@
+ }
+ 
+ #[cfg(target_os = "linux")]
++fn pending_command(
++    config: &crate::runtime::Config,
++    state: &crate::project_state::ProjectState,
++    pane: usize,
++) -> Option<String> {
++    if !state.terminal_launch_pending.contains(&pane) {
++        return None;
++    }
++    state.terminal_commands.get(&pane).cloned().or_else(|| {
++        let agents = state.agent_ids();
++        let agent = agents
++            .iter()
++            .find(|id| config.canonical_pane(**id) == pane)?;
++        let command = config.agent.as_ref()?;
++        Some(if agents.first() == Some(agent) {
++            command.clone()
++        } else {
++            crate::runtime::fresh_agent_command(command)
++        })
++    })
++}
++#[cfg(target_os = "linux")]
+ pub fn ensure_source(
+     config: &crate::runtime::Config,
+     pane: usize,
+-    agent: Option<&str>,
++    _agent: Option<&str>,
+ ) -> Result<bool> {
+     use crate::{
+         native_protocol::{Binding, Identity},
+@@ -766,6 +788,16 @@
+     if info["state"] != "missing" {
+         return Ok(false);
+     }
++    // Select from shared pending metadata, not this frontend's launch hint.
++    // Network/default-shell discovery stays outside the project transaction.
++    let snapshot = ProjectState::load(config)?;
++    let expected_epoch = snapshot.terminal_epochs.get(&pane).cloned();
++    let requested = pending_command(config, &snapshot, pane);
++    let wanted = launch_spec(config, pane, requested.as_deref())?;
++    let fallback = requested
++        .as_ref()
++        .map(|_| launch_spec(config, pane, None))
++        .transpose()?;
+     let discovered = rpc(
+         config,
+         pane,
+@@ -773,22 +805,33 @@
+     )?;
+     let namespace: PathBuf = serde_json::from_value(discovered["namespace"].clone())?;
+     let owner: Identity = serde_json::from_value(discovered["owner"].clone())?;
+-    let launch = launch_spec(config, pane, agent)?;
+-    let target = {
++    let (target, launch) = {
+         let _lock = crate::project_sync::transaction(config)?;
+         let mut state = ProjectState::load(config)?;
+         ensure!(
+-            state.terminal_ids().contains(&pane),
+-            "Native terminal was removed before launch"
++            state.terminal_ids().contains(&pane)
++                && state.terminal_epochs.get(&pane) == expected_epoch.as_ref(),
++            "Native terminal changed before launch"
+         );
+         if let Some(existing) = state.native_sources.get(&pane) {
+-            existing.clone()
++            (existing.clone(), None)
+         } else {
++            ensure!(
++                pending_command(config, &state, pane) == requested,
++                "Native launch command changed during discovery; no source launched"
++            );
+             let epoch = state
+                 .terminal_epochs
+                 .entry(pane)
+                 .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                 .clone();
++            let authorized = requested.is_some()
++                && crate::cold_start::consume_launch(config, pane, Some(&epoch))?;
++            let launch = if authorized {
++                wanted
++            } else {
++                fallback.unwrap_or(wanted)
++            };
+             let target = Pane {
+                 namespace,
+                 previous: serde_json::from_value(discovered["previous"].clone())?,
+@@ -805,25 +848,29 @@
+                 },
+             };
+             state.native_sources.insert(pane, target.clone());
++            state.terminal_launch_pending.retain(|id| *id != pane);
+             state.save(config)?;
+-            target
++            (target, Some(launch))
+         }
+     };
+     // Another frontend may have won while discovery was in progress. Inspect
+     // its durable intent; never open a different command under its identity.
+-    let ready: Pane = if target.binding.source_id != launch.id {
+-        serde_json::from_value(rpc(config, pane, json!({"op":"reattach","target":target}))?)?
+-    } else {
++    let ready: Pane = if let Some(launch) = launch {
+         serde_json::from_value(rpc(
+             config,
+             pane,
+             json!({"op":"open","target":target,"launch":launch}),
+         )?)?
++    } else {
++        serde_json::from_value(rpc(config, pane, json!({"op":"reattach","target":target}))?)?
+     };
+     let _lock = crate::project_sync::transaction(config)?;
+     let mut state = ProjectState::load(config)?;
+     ensure!(
+-        state.native_sources.get(&pane) == Some(&target),
++        state
++            .native_sources
++            .get(&pane)
++            .is_some_and(|current| current == &target || current == &ready),
+         "Native source created but pane changed; source kept running"
+     );
+     state.native_sources.insert(pane, ready);
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -1177,6 +1177,19 @@
+                     {
+                         return Ok(false);
+                     }
++                    let native = (config.native_terminals
++                        || state.native_sources.contains_key(&pane))
++                        && !config.externally_owned(pane)
++                        && config.adopted_terminal(pane).is_none()
++                        && crate::plugin_panes::owner(&config, pane)?.is_none();
++                    if native {
++                        // Native intent publication and one-shot command
++                        // consumption must be one shared transaction. Otherwise
++                        // another view can substitute a shell during discovery.
++                        drop(_transaction);
++                        config.ensure(pane, command.as_deref())?;
++                        return Ok(true);
++                    }
+                     let pending = state.terminal_launch_pending.contains(&pane);
+                     let launch = pending
+                         && command.is_some()

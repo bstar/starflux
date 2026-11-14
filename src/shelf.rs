@@ -249,6 +249,7 @@ impl ContextMenu {
 }
 #[derive(serde::Serialize)]
 pub struct Model<'a> {
+    pub native_skins: bool,
     pub app_view: bool,
     pub project: &'a str,
     pub project_label: &'a str,
@@ -400,6 +401,53 @@ impl Pen {
             false,
         );
         self.hit(r, action);
+    }
+    fn diagonal_grid(&mut self, bounds: R, color: &str) {
+        use std::{
+            collections::VecDeque,
+            sync::{Mutex, OnceLock},
+        };
+        type Tiles = VecDeque<(String, String, String)>;
+        static TILES: OnceLock<Mutex<Tiles>> = OnceLock::new();
+        const PERIOD: u16 = 34; // 24px perpendicular spacing, rotated by 45°.
+        let Some(bounds) = self.clip(bounds) else {
+            return;
+        };
+        let tile = (|| {
+            let mut tiles = TILES.get_or_init(Mutex::default).lock().ok()?;
+            if let Some((_, id, png)) = tiles.iter().find(|(ink, _, _)| ink == color) {
+                return Some((id.clone(), png.clone()));
+            }
+            let ink = starkit::theme::color::Rgb::parse_hex(color).ok()?;
+            let image = starkit::image::RgbaImage::from_fn(PERIOD.into(), PERIOD.into(), |x, y| {
+                if (x + y).is_multiple_of(u32::from(PERIOD))
+                    || (x + u32::from(PERIOD) - y).is_multiple_of(u32::from(PERIOD))
+                {
+                    starkit::image::Rgba([ink.r, ink.g, ink.b, 255])
+                } else {
+                    starkit::image::Rgba([0, 0, 0, 0])
+                }
+            });
+            let (id, png) = starkit::terminal_graphics::assets::encode_skin(&image).ok()?;
+            if tiles.len() == 32 {
+                tiles.pop_front();
+            }
+            tiles.push_back((color.into(), id.clone(), png.clone()));
+            Some((id, png))
+        })();
+        let Some((asset, png)) = tile else {
+            self.grid(bounds, color);
+            return;
+        };
+        self.surface.assets.insert(asset.clone(), Some(png));
+        self.surface.nodes.push(Primitive::Sprite {
+            rect: bounds,
+            asset,
+            source: R::new(0, 0, PERIOD, PERIOD),
+            // Zero corner insets select unscaled, integer-pixel repetition.
+            insets: Some([0; 4]),
+            tint: None,
+        });
     }
     fn grid(&mut self, r: R, c: &str) {
         for x in (r.x..r.x + r.width).step_by(24) {
@@ -572,8 +620,14 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     // Leave a stable gutter around the scrollbar, outside row decorations.
     let content_right = w.saturating_sub(20);
     let sidebar = t.sidebar_palette();
-    // A quiet, continuous navigation surface; the workspace keeps its own grid.
+    // Keep the drafting grid over the sidebar's own theme-specific background.
     p.fill(R::new(0, 0, w, l.height), &sidebar.background);
+    let grid = R::new(0, 48, w.saturating_sub(1), l.height.saturating_sub(48));
+    if m.native_skins {
+        p.diagonal_grid(grid, &t.grid);
+    } else {
+        p.grid(grid, &t.grid);
+    }
     p.fill(R::new(w.saturating_sub(1), 0, 1, l.height), &t.border);
     p.fill(R::new(0, 0, w.saturating_sub(1), 48), &sidebar.background);
     p.hit(R::new(0, 0, w.saturating_sub(1), 48), "sessions:open");
@@ -675,11 +729,21 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             };
             // Native one-pixel strokes keep the disclosure crisp at every font.
             let title = R::new(44, y + padding, content_right.saturating_sub(76), 18);
-            let disclosure = R::new(18, title.y + (title.height - 16) / 2, 16, 16);
+            let size = 11;
+            let glyph = 3;
+            let center = size / 2;
+            let inset = (size - glyph) / 2;
+            let disclosure = R::new(20, title.y + (title.height - size) / 2, size, size);
             p.border(disclosure, &t.muted);
-            p.fill(R::new(disclosure.x + 4, disclosure.y + 7, 8, 1), ink);
+            p.fill(
+                R::new(disclosure.x + inset, disclosure.y + center, glyph, 1),
+                ink,
+            );
             if collapsed {
-                p.fill(R::new(disclosure.x + 7, disclosure.y + 4, 1, 8), ink);
+                p.fill(
+                    R::new(disclosure.x + center, disclosure.y + inset, 1, glyph),
+                    ink,
+                );
             }
             p.text(title, name, ink, 12, false);
             p.text(
@@ -2658,6 +2722,7 @@ mod tests {
         for (width, height) in [(320, 240), (800, 600), (1400, 900), (3424, 2150)] {
             for space in [Space::Agent, Space::Terminals, Space::Apps] {
                 let mut model = Model {
+                    native_skins: true,
                     app_view: false,
                     project: "sample",
                     project_label: "sample",
@@ -2835,6 +2900,7 @@ mod tests {
             .collect::<Vec<_>>();
         for (height, offset) in [(900, 0), (500, 5)] {
             let model = Model {
+                native_skins: true,
                 app_view: false,
                 project: &ids[18],
                 project_label: "Zendocon decompile",

@@ -1,0 +1,755 @@
+diff --git a/src/graphics_owner/metadata.rs b/src/graphics_owner/metadata.rs
+new file mode 100644
+--- /dev/null
++++ b/src/graphics_owner/metadata.rs
+@@ -0,0 +1,262 @@
++//! Retained source metadata. Clipboard reads are never serviced or forwarded.
++use crate::graphics_resources::{Budget, Lease};
++use anyhow::{Result, ensure};
++use base64::Engine;
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++const TITLE: usize = 4096;
++const CLIPBOARD: usize = 65536;
++const RESERVATION: usize = 192 * 1024;
++#[derive(Clone, Debug, Default, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct Metadata {
++    pub title: String,
++    pub icon_name: String,
++    pub audible: u64,
++    pub visual: u64,
++    pub clipboard_sequence: u64,
++    pub clipboard: Option<String>,
++    pub rejected: u64,
++}
++impl Metadata {
++    pub fn projection(&self, after: u64) -> Self {
++        Self {
++            title: self.title.clone(),
++            icon_name: self.icon_name.clone(),
++            audible: self.audible,
++            visual: self.visual,
++            clipboard_sequence: self.clipboard_sequence,
++            clipboard: (self.clipboard_sequence > after)
++                .then(|| self.clipboard.clone())
++                .flatten(),
++            rejected: self.rejected,
++        }
++    }
++    pub fn clipboard_after<'a>(&'a self, seen: &mut u64, floor: u64) -> Option<&'a str> {
++        *seen = (*seen).max(floor);
++        if self.clipboard_sequence <= *seen {
++            return None;
++        }
++        *seen = self.clipboard_sequence;
++        self.clipboard.as_deref()
++    }
++    pub fn preflight(value: &Value) -> Result<usize> {
++        if value.is_null() {
++            return Ok(0);
++        }
++        let object = value
++            .as_object()
++            .ok_or_else(|| anyhow::anyhow!("Invalid terminal metadata"))?;
++        ensure!(object.len() == 7, "Invalid terminal metadata fields");
++        let mut bytes = 0;
++        for field in ["title", "icon_name"] {
++            let text = value[field]
++                .as_str()
++                .ok_or_else(|| anyhow::anyhow!("Invalid terminal title"))?;
++            ensure!(
++                text.len() <= TITLE && !text.chars().any(char::is_control),
++                "Invalid terminal title"
++            );
++            bytes += text.len();
++        }
++        for field in ["audible", "visual", "clipboard_sequence", "rejected"] {
++            ensure!(
++                value[field].as_u64().is_some(),
++                "Invalid terminal metadata sequence"
++            );
++        }
++        if !value["clipboard"].is_null() {
++            let text = value["clipboard"]
++                .as_str()
++                .ok_or_else(|| anyhow::anyhow!("Invalid terminal clipboard text"))?;
++            ensure!(
++                text.len() <= CLIPBOARD && value["clipboard_sequence"].as_u64().unwrap() > 0,
++                "Invalid terminal clipboard event"
++            );
++            bytes += text.len();
++        }
++        ensure!(
++            object.contains_key("clipboard"),
++            "Missing terminal clipboard field"
++        );
++        Ok(bytes * 4 + 4096)
++    }
++    pub fn memory_bytes(&self) -> usize {
++        4 * (self.title.capacity()
++            + self.icon_name.capacity()
++            + self.clipboard.as_ref().map_or(0, String::capacity))
++            + 4096
++    }
++}
++pub struct Capture {
++    pub value: Metadata,
++    budget: Budget,
++    memory: Option<Lease>,
++}
++impl Capture {
++    pub fn new(budget: Budget) -> Self {
++        Self {
++            value: Metadata::default(),
++            budget,
++            memory: None,
++        }
++    }
++    fn admit(&mut self) -> bool {
++        if self.memory.is_some() {
++            return true;
++        }
++        self.memory = self.budget.reserve(RESERVATION);
++        if self.memory.is_none() {
++            self.reject();
++            return false;
++        }
++        true
++    }
++    fn reject(&mut self) {
++        self.value.rejected = self.value.rejected.saturating_add(1);
++    }
++    pub fn title(&mut self, bytes: &[u8], icon: bool) {
++        let Ok(text) = std::str::from_utf8(bytes) else {
++            self.reject();
++            return;
++        };
++        if text.len() > TITLE || text.chars().any(char::is_control) {
++            self.reject();
++            return;
++        }
++        if !self.admit() {
++            return;
++        }
++        if icon {
++            self.value.icon_name = text.into();
++        } else {
++            self.value.title = text.into();
++        }
++    }
++    pub fn copy(&mut self, data: &[u8]) {
++        if data.len() > 87384 {
++            self.reject();
++            return;
++        }
++        // Reserve the retained value and transient decode before allocating.
++        if !self.admit() {
++            return;
++        }
++        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
++            self.reject();
++            return;
++        };
++        if bytes.len() > CLIPBOARD {
++            self.reject();
++            return;
++        }
++        let Ok(text) = String::from_utf8(bytes) else {
++            self.reject();
++            return;
++        };
++        let Some(sequence) = self.value.clipboard_sequence.checked_add(1) else {
++            self.reject();
++            return;
++        };
++        self.value.clipboard = Some(text);
++        self.value.clipboard_sequence = sequence;
++    }
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn clipboard_cursor_skips_old_attach_hidden_and_reconnect_values() {
++        let mut event = Metadata {
++            clipboard_sequence: 1,
++            clipboard: Some("first".into()),
++            ..Default::default()
++        };
++        let mut seen = 0;
++        assert!(event.clipboard_after(&mut seen, 1).is_none());
++        event.clipboard_sequence = 2;
++        event.clipboard = Some("next".into());
++        assert_eq!(event.clipboard_after(&mut seen, 1), Some("next"));
++        assert!(event.clipboard_after(&mut seen, 1).is_none());
++        event.clipboard_sequence = 3;
++        event.clipboard = Some("hidden".into());
++        assert!(event.clipboard_after(&mut seen, 3).is_none());
++        assert!(event.clipboard_after(&mut seen, 1).is_none());
++        event.clipboard_sequence = 4;
++        event.clipboard = Some(String::new());
++        assert_eq!(event.clipboard_after(&mut seen, 3), Some(""));
++        assert!(event.clipboard_after(&mut seen, 4).is_none());
++    }
++    #[test]
++    fn acknowledged_clipboard_text_is_omitted_from_subsequent_frames() {
++        let metadata = Metadata {
++            title: "retained title".into(),
++            clipboard_sequence: 7,
++            clipboard: Some("x".repeat(CLIPBOARD)),
++            ..Default::default()
++        };
++        assert_eq!(
++            metadata.projection(6).clipboard.as_ref().unwrap().len(),
++            CLIPBOARD
++        );
++        let acknowledged = metadata.projection(7);
++        assert_eq!(acknowledged.clipboard_sequence, 7);
++        assert_eq!(acknowledged.title, "retained title");
++        assert!(acknowledged.clipboard.is_none());
++        let wire = serde_json::to_value(&acknowledged).unwrap();
++        assert!(Metadata::preflight(&wire).is_ok());
++        assert!(serde_json::to_vec(&wire).unwrap().len() < 256);
++        assert!(metadata.projection(u64::MAX).clipboard.is_none());
++    }
++    #[test]
++    fn bounded_capture_preserves_previous_values_and_releases_its_lease() {
++        let budget = Budget::new(RESERVATION);
++        let mut capture = Capture::new(budget.clone());
++        capture.title("shell 界".as_bytes(), false);
++        capture.title(b"icon", true);
++        capture.copy(b"aGVsbG8K");
++        assert_eq!(capture.value.title, "shell 界");
++        assert_eq!(capture.value.icon_name, "icon");
++        assert_eq!(capture.value.clipboard.as_deref(), Some("hello\n"));
++        assert_eq!(capture.value.clipboard_sequence, 1);
++        capture.title(b"bad\x1btitle", false);
++        capture.copy(b"/w==");
++        capture.copy(&vec![b'A'; 87385]);
++        assert_eq!(capture.value.title, "shell 界");
++        assert_eq!(capture.value.clipboard_sequence, 1);
++        assert_eq!(capture.value.rejected, 3);
++        let value = serde_json::to_value(&capture.value).unwrap();
++        assert!(Metadata::preflight(&value).unwrap() >= capture.value.memory_bytes());
++        assert_eq!(budget.used(), RESERVATION);
++        drop(capture);
++        assert_eq!(budget.used(), 0);
++    }
++    #[test]
++    fn exhausted_budget_refuses_metadata_without_allocating_or_faulting_the_source() {
++        let mut capture = Capture::new(Budget::new(1));
++        capture.title(b"x", false);
++        capture.copy(b"eA==");
++        assert!(capture.value.title.is_empty());
++        assert_eq!(capture.value.clipboard_sequence, 0);
++        assert_eq!(capture.value.rejected, 2);
++    }
++    #[test]
++    fn untrusted_metadata_is_bounded_before_owned_decode() {
++        let valid = serde_json::to_value(Metadata::default()).unwrap();
++        assert!(Metadata::preflight(&valid).is_ok());
++        assert_eq!(Metadata::preflight(&Value::Null).unwrap(), 0);
++        for (key, value) in [
++            ("title", Value::String("x".repeat(TITLE + 1))),
++            ("title", Value::String("bad\x1b".into())),
++            ("audible", Value::from(-1)),
++            ("clipboard", Value::String("x".into())),
++        ] {
++            let mut invalid = valid.clone();
++            invalid[key] = value;
++            assert!(Metadata::preflight(&invalid).is_err());
++        }
++        let mut invalid = valid;
++        invalid["extra"] = Value::Bool(true);
++        assert!(Metadata::preflight(&invalid).is_err());
++    }
++}
+diff --git a/src/graphics_owner.rs b/src/graphics_owner.rs
+--- a/src/graphics_owner.rs
++++ b/src/graphics_owner.rs
+@@ -1,6 +1,8 @@
+ //! Single-source parser/graphics/reply authority. The backend owns the PTY and
+ //! decoder pool; frontends only inspect this state. No PTY, process or presenter
+ //! is created here, and this engine alone does not advertise graphics support.
++#[path = "graphics_owner/metadata.rs"]
++pub mod metadata;
+ use crate::{
+     graphics_decode::Completion,
+     graphics_reply,
+@@ -32,6 +34,7 @@
+     }
+ }
+ struct Callbacks {
++    metadata: metadata::Capture,
+     requests: Requests,
+     job: Option<Job>,
+     fault: Option<Fault>,
+@@ -60,6 +63,21 @@
+ }
+ impl vt100::Callbacks for Callbacks {
+     const TRACK_SCROLL: bool = true;
++    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
++        self.metadata.title(title, false);
++    }
++    fn set_window_icon_name(&mut self, _: &mut vt100::Screen, title: &[u8]) {
++        self.metadata.title(title, true);
++    }
++    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _: &[u8], data: &[u8]) {
++        self.metadata.copy(data);
++    }
++    fn audible_bell(&mut self, _: &mut vt100::Screen) {
++        self.metadata.value.audible = self.metadata.value.audible.saturating_add(1);
++    }
++    fn visual_bell(&mut self, _: &mut vt100::Screen) {
++        self.metadata.value.visual = self.metadata.value.visual.saturating_add(1);
++    }
+     fn scrolled(&mut self, screen: &mut vt100::Screen, top: u16, bottom: u16, rows: i32) {
+         let alternate = screen.alternate_screen();
+         if let Some(Mutation::Scroll {
+@@ -187,6 +205,7 @@
+     ) -> Result<Self, Fault> {
+         Self::validate_geometry(geometry)?;
+         let callbacks = Callbacks {
++            metadata: metadata::Capture::new(resources.retained.clone()),
+             requests: Requests::with_resources(generation.clone(), resources.clone()),
+             job: None,
+             fault: None,
+@@ -434,6 +453,9 @@
+             .requests
+             .drain(limit.min(MAX_CHUNK))
+     }
++    pub fn metadata(&self) -> &metadata::Metadata {
++        &self.parser.callbacks().metadata.value
++    }
+     pub fn screen(&self) -> &vt100::Screen {
+         self.parser.screen()
+     }
+@@ -505,6 +527,29 @@
+         );
+     }
+     const IMAGE: &[u8] = b"\x1b_Ga=T,f=24,s=1,v=1,i=71,c=2,r=2;ESIz\x1b\\";
++    #[test]
++    fn retained_metadata_captures_titles_writes_and_bells_but_never_reads_clipboards() {
++        let (mut owner, _, resources) = setup();
++        parse(
++            &mut owner,
++            "\x1b]0;shell 界\x1b\\\x1b]52;c;aGVsbG8K\x1b\\\x07\x1bg".as_bytes(),
++        );
++        assert_eq!(owner.metadata().title, "shell 界");
++        assert_eq!(owner.metadata().icon_name, "shell 界");
++        assert_eq!(owner.metadata().clipboard.as_deref(), Some("hello\n"));
++        assert_eq!(owner.metadata().clipboard_sequence, 1);
++        assert_eq!(owner.metadata().audible, 1);
++        assert_eq!(owner.metadata().visual, 1);
++        parse(&mut owner, b"\x1b]52;c;?\x1b\\");
++        assert!(owner.drain_replies(8192).is_empty());
++        assert_eq!(owner.metadata().clipboard_sequence, 1);
++        parse(&mut owner, b"\x1b]2;bad\xff\x1b\\");
++        assert_eq!(owner.metadata().title, "shell 界");
++        assert_eq!(owner.metadata().rejected, 1);
++        assert!(resources.retained.used() > 0);
++        drop(owner);
++        assert_eq!(resources.retained.used(), 0);
++    }
+     #[test]
+     fn source_palette_and_size_queries_share_graphics_reply_order() {
+         let (mut owner, pool, _) = setup();
+diff --git a/src/native_view.rs b/src/native_view.rs
+--- a/src/native_view.rs
++++ b/src/native_view.rs
+@@ -66,6 +66,8 @@
+     }
+ }
+ pub struct Snapshot {
++    pub metadata: crate::graphics_owner::metadata::Metadata,
++    pub clipboard_floor: u64,
+     pub screen: vt100::Screen,
+     pub exited: bool,
+     pub epoch: u64,
+@@ -525,6 +527,8 @@
+     state.queued.fetch_sub(discarded, Ordering::AcqRel);
+ }
+ struct Conversion {
++    metadata: crate::graphics_owner::metadata::Metadata,
++    clipboard_floor: u64,
+     state: Weak<State>,
+     canvas: Arc<Mutex<Canvas>>,
+     settings: Settings,
+@@ -570,6 +574,8 @@
+             drop(canvas);
+             if state.settings.lock().unwrap().epoch == job.settings.epoch {
+                 *state.latest.lock().unwrap() = Some(Snapshot {
++                    metadata: job.metadata,
++                    clipboard_floor: job.clipboard_floor,
+                     screen,
+                     exited: job.exited,
+                     epoch: job.settings.epoch,
+@@ -830,6 +836,9 @@
+                     .context("Native frame sequence missing")?;
+                 let frame: Frame = serde_json::from_value(value["frame"].clone())?;
+                 frame.validate()?;
++                let metadata_charge = crate::graphics_owner::metadata::Metadata::preflight(
++                    &value["terminal_metadata"],
++                )?;
+                 let link_charge = crate::native_links::Links::preflight(
+                     &value["links"],
+                     settings.size.rows,
+@@ -837,7 +846,7 @@
+                 )?;
+                 let mut link_memory = resources::shared()
+                     .presentation
+-                    .reserve(link_charge)
++                    .reserve(link_charge + metadata_charge)
+                     .context("Native hyperlink snapshots are busy")?;
+                 let links = if value["links"].is_null() {
+                     crate::native_links::Links::default()
+@@ -845,6 +854,28 @@
+                     serde_json::from_value::<crate::native_links::Links>(value["links"].clone())?
+                 };
+                 links.validate(frame.rect.height, frame.rect.width)?;
++                let metadata = if value["terminal_metadata"].is_null() {
++                    crate::graphics_owner::metadata::Metadata::default()
++                } else {
++                    serde_json::from_value::<crate::graphics_owner::metadata::Metadata>(
++                        value["terminal_metadata"].clone(),
++                    )?
++                };
++                let clipboard_floor = if value["terminal_metadata"].is_null() {
++                    0
++                } else {
++                    value["clipboard_floor"]
++                        .as_u64()
++                        .context("Invalid terminal clipboard baseline")?
++                };
++                ensure!(
++                    clipboard_floor <= metadata.clipboard_sequence,
++                    "Terminal clipboard sequence precedes attachment"
++                );
++                ensure!(
++                    metadata.clipboard.is_some() == (metadata.clipboard_sequence > clipboard_floor),
++                    "Terminal clipboard event does not match its baseline"
++                );
+                 let grid: [u16; 2] = serde_json::from_value(value["source_grid"].clone())?;
+                 ensure!(
+                     grid[0] > 0 && grid[0] <= 192 && grid[1] > 0 && grid[1] <= 512,
+@@ -899,13 +930,16 @@
+                             .map(|run| run.text.len() * 4)
+                             .sum::<usize>()
+                         + 4096
+-                        + links.memory_bytes(settings.size.rows, settings.size.columns);
++                        + links.memory_bytes(settings.size.rows, settings.size.columns)
++                        + metadata.memory_bytes();
+                 ensure!(
+                     link_memory.try_resize(charge + pixels.as_ref().map_or(0, |p| p.bytes() * 4)),
+                     "Native view snapshots are busy"
+                 );
+                 let memory = Arc::new(link_memory);
+                 v.conversion = Some(Conversion {
++                    metadata,
++                    clipboard_floor,
+                     state: Arc::downgrade(&state),
+                     canvas: v.canvas.clone(),
+                     settings,
+@@ -1296,6 +1330,8 @@
+             settings: state.settings.lock().unwrap().clone(),
+             frame,
+             modes: json!({"application_cursor":true,"bracketed_paste":true}),
++            metadata: crate::graphics_owner::metadata::Metadata::default(),
++            clipboard_floor: 0,
+             links: crate::native_links::Links::default(),
+             sequence: 7,
+             exited: false,
+diff --git a/src/source_broker/render.rs b/src/source_broker/render.rs
+--- a/src/source_broker/render.rs
++++ b/src/source_broker/render.rs
+@@ -13,6 +13,7 @@
+     source: Reference,
+     revision: u64,
+     modes: Value,
++    metadata: crate::graphics_owner::metadata::Metadata,
+     exited: bool,
+     input_available: bool,
+     size: Size,
+@@ -26,6 +27,7 @@
+         id: u64,
+     },
+     Watch {
++        clipboard_floor: u64,
+         peer: u64,
+         view: String,
+         epoch: u64,
+@@ -56,6 +58,7 @@
+     pub _memory: Lease,
+ }
+ pub(super) struct Picture {
++    pub clipboard_sequence: u64,
+     pub planes: Option<Arc<crate::graphics_planes::Encoded>>,
+     pub frame: starkit::terminal_graphics::terminal_cells::Frame,
+     _memory: Lease,
+@@ -96,6 +99,7 @@
+             source: source.reference.clone(),
+             revision: source.revision,
+             modes: source.modes(),
++            metadata: source.owner.metadata().projection(u64::MAX),
+             size: source.size.clone(),
+             palette: Palette {
+                 foreground: [0; 3],
+@@ -114,6 +118,7 @@
+         source: &Source,
+         size: Size,
+         palette: Palette,
++        clipboard_floor: u64,
+         resources: &Resources,
+     ) -> Result<Self> {
+         let geometry = size.geometry()?;
+@@ -137,6 +142,7 @@
+             source: source.reference.clone(),
+             revision: source.revision,
+             modes: source.modes(),
++            metadata: source.owner.metadata().projection(clipboard_floor),
+             exited: source.exit,
+             input_available: !source.exit
+                 && !source.eof
+@@ -209,6 +215,8 @@
+     pixels: Option<&'a crate::graphics_planes::Wire>,
+     frame: WireFrame<'a>,
+     links: &'a crate::native_links::Links,
++    terminal_metadata: &'a crate::graphics_owner::metadata::Metadata,
++    clipboard_floor: u64,
+     read_only: bool,
+     exited: bool,
+     input_available: bool,
+@@ -324,6 +332,13 @@
+                 .map(|p| &p.wire),
+             frame: WireFrame::new(&frame, self.base.as_ref().map(|(_, p)| p.as_ref())),
+             links: &links,
++            terminal_metadata: &s.metadata,
++            clipboard_floor: match &self.target {
++                Target::Watch {
++                    clipboard_floor, ..
++                } => *clipboard_floor,
++                Target::Request { .. } => s.metadata.clipboard_sequence,
++            },
+             read_only: true,
+             exited: s.exited,
+             input_available: s.input_available,
+@@ -381,9 +396,12 @@
+         let Snapshot {
+             screen,
+             store,
++            metadata,
+             _memory: mut snapshot_memory,
+             ..
+         } = self.snapshot;
++        let clipboard_sequence = metadata.clipboard_sequence;
++        drop(metadata);
+         drop(screen);
+         drop(store);
+         ensure!(
+@@ -391,6 +409,7 @@
+             "Presentation frame exceeds reservation"
+         );
+         let picture = Arc::new(Picture {
++            clipboard_sequence,
+             planes,
+             frame,
+             _memory: snapshot_memory,
+@@ -416,7 +435,7 @@
+                 .context("Native screen exceeds 1 MiB")?;
+             let (rows, columns) = screen.size();
+             let (row, col) = screen.cursor_position();
+-            json!({"source":self.snapshot.source,"revision":self.snapshot.revision,"text":screen.contents(),"input_modes":self.snapshot.modes,"screen":{"rows":rows,"columns":columns,"ansi_base64":STANDARD.encode(&ansi),"cursor":[col,row],"alternate":screen.alternate_screen(),"cursor_visible":!screen.hide_cursor()}})
++            json!({"source":self.snapshot.source,"revision":self.snapshot.revision,"text":screen.contents(),"input_modes":self.snapshot.modes,"terminal_metadata":self.snapshot.metadata,"screen":{"rows":rows,"columns":columns,"ansi_base64":STANDARD.encode(&ansi),"cursor":[col,row],"alternate":screen.alternate_screen(),"cursor_visible":!screen.hide_cursor()}})
+         } else {
+             let bytes = history_bytes(screen, usize::from(history))?;
+             json!({"source":self.snapshot.source,"revision":self.snapshot.revision,"history_base64":STANDARD.encode(bytes)})
+@@ -664,6 +683,7 @@
+     fn delta_keeps_cursor_updates_and_resets_when_host_generation_changes() {
+         let budget = Budget::new(1);
+         let base = Picture {
++            clipboard_sequence: 0,
+             planes: None,
+             frame: frame(),
+             _memory: budget.reserve(1).unwrap(),
+diff --git a/src/source_broker.rs b/src/source_broker.rs
+--- a/src/source_broker.rs
++++ b/src/source_broker.rs
+@@ -371,7 +371,9 @@
+             .as_raw_fd()
+             .context("Source platform has no native PTY descriptor")?;
+         nonblocking(fd)?;
+-        let mut command = CommandBuilder::new(std::env::current_exe()?);
++        // A retained owner may outlive replacement/unlinking of its installed
++        // path. Launch this loaded image, never a deleted path or newer binary.
++        let mut command = CommandBuilder::new("/proc/self/exe");
+         command.arg("--native-source-supervisor");
+         command.args(&spec.argv);
+         command.cwd(&spec.directory);
+@@ -440,7 +442,7 @@
+         Ok(())
+     }
+     fn info(&self) -> Value {
+-        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"process_tree_supervised":true,"retirement_verified":self.tree_retired,"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
++        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"process_tree_supervised":true,"retirement_verified":self.tree_retired,"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"terminal_metadata":{"title":self.owner.metadata().title,"icon_name":self.owner.metadata().icon_name,"audible":self.owner.metadata().audible,"visual":self.owner.metadata().visual,"clipboard_sequence":self.owner.metadata().clipboard_sequence,"clipboard_bytes":self.owner.metadata().clipboard.as_ref().map_or(0,String::len),"rejected":self.owner.metadata().rejected},"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
+     }
+     fn modes(&self) -> Value {
+         let screen = self.owner.screen();
+@@ -631,6 +633,7 @@
+     target: render::Target,
+ }
+ struct Watch {
++    clipboard_floor: u64,
+     pixels: bool,
+     source: Reference,
+     epoch: u64,
+@@ -794,7 +797,7 @@
+         }
+         match action {
+             Action::Hello => Ok(
+-                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1","osc8-spans-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
++                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1","osc8-spans-v1","terminal-metadata-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
+             ),
+             Action::List => Ok(json!(
+                 self.sources.values().map(Source::info).collect::<Vec<_>>()
+@@ -1035,7 +1038,10 @@
+                 let accepted = self.watches.get_mut(&(peer, view)).is_some_and(|w| {
+                     if sent && w.epoch == epoch && w.sequence == sequence && w.awaiting {
+                         w.awaiting = false;
+-                        w.base = w.sent.take().map(|p| (sequence, p));
++                        w.base = w.sent.take().map(|p| {
++                            w.clipboard_floor = w.clipboard_floor.max(p.clipboard_sequence);
++                            (sequence, p)
++                        });
+                         true
+                     } else {
+                         false
+@@ -1074,7 +1080,14 @@
+         let resources = self.resources.clone();
+         let source = self.source(&reference)?;
+         ensure!(source.stopping_at.is_none(), "Source is closing");
+-        let snapshot = render::Snapshot::capture(source, size, palette, &resources)?;
++        let clipboard_floor = match &target {
++            render::Target::Watch {
++                clipboard_floor, ..
++            } => *clipboard_floor,
++            render::Target::Request { .. } => source.owner.metadata().clipboard_sequence,
++        };
++        let snapshot =
++            render::Snapshot::capture(source, size, palette, clipboard_floor, &resources)?;
+         self.next_render = self
+             .next_render
+             .checked_add(1)
+@@ -1125,6 +1138,12 @@
+             geometry.rows <= retained.size.rows && geometry.columns <= retained.size.columns,
+             "View exceeds the retained grid"
+         );
++        let retained_clipboard_sequence = retained.owner.metadata().clipboard_sequence;
++        let clipboard_floor = self
++            .watches
++            .get(&(peer, view.clone()))
++            .filter(|watch| watch.source == source)
++            .map_or(retained_clipboard_sequence, |watch| watch.clipboard_floor);
+         let p = self.peers.get(&peer).context("View disconnected")?;
+         ensure!(
+             p.view_epochs.get(&view).is_none_or(|old| epoch > *old),
+@@ -1150,6 +1169,7 @@
+         self.watches.insert(
+             key,
+             Watch {
++                clipboard_floor,
+                 pixels,
+                 source,
+                 epoch,
+@@ -1328,6 +1348,7 @@
+                 continue;
+             };
+             let target = render::Target::Watch {
++                clipboard_floor: w.clipboard_floor,
+                 peer: key.0,
+                 view: key.1.clone(),
+                 epoch: w.epoch,
+diff --git a/src/terminal.rs b/src/terminal.rs
+--- a/src/terminal.rs
++++ b/src/terminal.rs
+@@ -226,6 +226,8 @@
+     }
+ }
+ pub struct Terminal {
++    metadata: crate::graphics_owner::metadata::Metadata,
++    clipboard_seen: u64,
+     parser: vt100::Parser<Replies>,
+     master: Option<Box<dyn MasterPty + Send>>,
+     child: Option<AttachmentChild>,
+@@ -367,6 +369,8 @@
+             history_request: None,
+             mouse_button: None,
+             clipboard: None,
++            metadata: crate::graphics_owner::metadata::Metadata::default(),
++            clipboard_seen: 0,
+             connection_notice: None,
+             padding: [PAD; 2],
+             native_previous: None,
+@@ -427,6 +431,8 @@
+             history_request: None,
+             mouse_button: None,
+             clipboard: None,
++            metadata: crate::graphics_owner::metadata::Metadata::default(),
++            clipboard_seen: 0,
+             connection_notice: None,
+             padding: [PAD; 2],
+             native_previous: None,
+@@ -519,6 +525,13 @@
+         #[cfg(target_os = "linux")]
+         if let Some(native) = &self.native {
+             if let Some(snapshot) = native.take() {
++                if let Some(text) = snapshot
++                    .metadata
++                    .clipboard_after(&mut self.clipboard_seen, snapshot.clipboard_floor)
++                {
++                    self.clipboard = Some(text.to_owned());
++                }
++                self.metadata = snapshot.metadata;
+                 *self.parser.screen_mut() = snapshot.screen;
+                 self.native_memory = Some(snapshot.memory);
+                 if let Some(pixels) = snapshot.pixels {
+@@ -876,6 +889,14 @@
+             rows: changed,
+             cursor,
+         })
++    }
++    pub fn title(&self) -> Option<&str> {
++        (!self.metadata.title.is_empty()).then_some(self.metadata.title.as_str())
++    }
++    pub fn metadata_diagnostics(&self) -> serde_json::Value {
++        serde_json::json!({"title":self.metadata.title,"icon_name":self.metadata.icon_name,
++            "audible":self.metadata.audible,"visual":self.metadata.visual,
++            "clipboard_sequence":self.metadata.clipboard_sequence,"rejected":self.metadata.rejected})
+     }
+     pub fn text(&self) -> String {
+         self.parser.screen().contents()
+diff --git a/src/ui.rs b/src/ui.rs
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -3478,6 +3478,12 @@
+                     .and_then(|h| h.panes.get(&id))
+                     .map(|p| p.label.clone())
+             })
++            .or_else(|| {
++                self.terminals
++                    .get(&(self.config.workspace.clone(), id))
++                    .and_then(crate::terminal::Terminal::title)
++                    .map(str::to_owned)
++            })
+             .unwrap_or_else(|| {
+                 let n = self
+                     .state
+@@ -6117,7 +6123,7 @@
+                     .collect::<Vec<_>>();
+                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected,"focus_known":h.focus_known})).collect::<Vec<_>>();
+                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
+-                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
++                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text(),"terminal_metadata":t.metadata_diagnostics()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                 snapshot["terminal_font"] = json!({"family":self.fonts.family,"millipoints":self.native_font_points,"controls_available":self.fonts.available});
+                 snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
+                 snapshot["categories"] = json!({"catalog":self.category_catalog,"collapsed":self.navigation.collapsed_categories,"rows":self.category_rows().iter().map(|r|json!({"id":r.id,"name":r.name,"summary":r.detail})).collect::<Vec<_>>()});

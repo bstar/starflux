@@ -189,3 +189,180 @@ stop ordinary protocol packet forwarding. See `inline-graphics.md` for the
 implemented path, actual offscreen Kitty evidence and remaining compatibility,
 recovery and resource/transport limits. None of this candidate has been activated
 in the installed sessions.
+
+### Candidate process supervision acceptance — November 14
+
+The isolated native candidate now uses one subreaper per PTY. Its source identity
+is the supervisor PID/start identity; a recognized foreground agent has its own
+PID/start identity. Program and working-directory inspection follows the verified
+foreground process, including a plain shell with no recognized agent.
+
+Closing or recovering a source requests graceful shutdown of its owned tree,
+escalates through pidfds, and waits for every descendant to be reaped and for PTY
+EOF. This covers stubborn PTY holders, detached children which closed stdio,
+nested subreapers and children forked during retirement. Idle supervisors sleep
+on signals rather than polling. A natural root-command exit also retires its
+remaining descendants.
+
+New retirement requires `retirement-tree-v1` as well as `retirement-eof-v1`.
+Older owners remain readable and interactive, with unsupported lifecycle controls
+disabled. Abnormal supervisor exit leaves `retirement_verified: false`, retains
+the binding and refuses a replacement even if EOF is visible. This is safe
+refusal, not completed broker/owner-loss recovery.
+
+Private local/SSH automation and real graphical/cells confirmation dialogs pass,
+including independent views, replay guards and empty-project reopening. Real Bash
+job control and foreground command/directory checks also pass. Source and evidence
+identities are saved in `checkpoints/native-process-supervision/receipt.json`.
+This is still uninstalled: the candidate must be rebased onto current application
+settings/presentation and complete the remaining native ownership, metadata,
+graphics and release gates before activation.
+
+### Candidate hyperlink forwarding acceptance — November 14
+
+The next isolated stage adds optional `osc8-spans-v1` projection metadata: a
+complete bounded target dictionary and disjoint cell spans accompany each frame,
+including link-only deltas. Views admit/validate the table before owned decoding
+and replace parser annotations without repainting text/styles. Old owners may
+omit the table. Invalid or excessive metadata refuses projection while preserving
+source/input and the last accepted presentation.
+
+Native retained-history export now preserves OSC 8 destinations and parameters
+alongside styles, within its existing 2 MiB bound. Two-view graphical/cells checks
+locally and over SSH cover hidden destinations, wide/combining labels, replacement
+and clearing on unchanged text, copy responses, pointer regions, frozen review,
+resize and connector reconnect. Explicit source recovery clears old targets in
+both views. This is link forwarding, not general clipboard/title/notification
+forwarding or completed native source migration.
+
+Source patches and reproducible validation identities are saved separately in
+`checkpoints/native-hyperlinks/`. Apply it after the supervision stage; that
+earlier stage's historical evidence is not reused as proof of the new metadata.
+The installed backend remains unchanged, and the candidate still requires current
+application/UI rebasing and the remaining ownership, graphics and release gates.
+
+### Candidate terminal metadata acceptance — November 14
+
+The next isolated stage advertises optional `terminal-metadata-v1`. The owner
+retains bounded OSC 0/1/2 title/icon values, bell counters and UTF-8 OSC 52 writes.
+Native views receive that metadata separately from cell text. Default tab labels
+can use the retained title; explicit user names, agent labels and imported names
+keep precedence. Diagnostics expose sequences/counters, not clipboard contents.
+Bell counters are informational and do not yet drive global attention delivery.
+
+A watch captures a source-scoped clipboard baseline at attachment. New writes
+reach attached frontend clipboard responses; late attachment, hidden-tab reveal,
+resize and reconnect do not replay old values. Applied-frame acknowledgements
+advance each watch independently, so later frames omit acknowledged clipboard
+text. Slow views coalesce to the latest retained write. Read-only snapshot RPCs
+omit actionable copy payloads. Clipboard reads are never serviced or forwarded.
+This is bounded latest-value delivery, not durable exactly-once offline copying.
+
+Titles are limited to 4 KiB each, clipboard text to 64 KiB, and accepted metadata
+lazily reserves 192 KiB from the shared owner budget. Invalid values retain the
+last accepted state and increment a diagnostic rejection counter. Source and view
+snapshot allocations remain separately reserved.
+
+The managed wire test also exposed a supervision upgrade bug: a retained owner
+used `current_exe()` after its original file had been unlinked. Supervisors now
+launch through `/proc/self/exe`, preserving the loaded owner image instead of
+using a deleted path or accidentally executing its replacement. Private local
+and SSH tests unlink an owner copy before opening supervised sources.
+
+This stage's source and validation identities are in
+`checkpoints/native-metadata/`. It remains uninstalled; broader owner-loss/adoption,
+attention forwarding, graphics compatibility, current application/UI rebasing and
+canonical release/Nix gates remain before activation.
+
+### Candidate unstarted-launch recovery — November 14
+
+The isolated stage after terminal metadata adds optional `launch-fence-v1` for a
+saved intent whose owner is still live. Explicit recovery first discovers any
+existing source. If none exists or is initializing, the owner can durably seal
+an unstarted launch ID before a fresh shell is assigned a new terminal/source
+epoch. Delayed delivery of the old Open then fails exclusive receipt creation.
+Saved commands are not replayed. Existing sources still use guarded discovery
+and verified tree retirement, including compatible owners without the new fence.
+
+Status inspection does not consume the launch ID. Initializers in progress,
+consumed/damaged receipts, mismatched identities and dead/unreachable owners
+refuse cancellation. A fence binds the exact owner, source ID/epoch and digest;
+bounded receipt reads reject links/nonregular files and use nonblocking opens.
+Ordinary startup failure for a saved native reference now retains a read-only
+health monitor, exposing the existing recovery menu/confirmation without another
+attempt to run its command. Termination retains its separate retirement gate.
+
+Source and validation identities are saved in `checkpoints/native-launch-fence/`.
+This remains an uninstalled stage. General owner-loss recovery still needs
+verified process-tree retirement/adoption evidence; absence of a broker or PID
+is not sufficient proof. Remaining migration, presentation rebasing and release
+requirements are unchanged.
+
+### Candidate certified owner-loss recovery — November 14
+
+New native supervisors pin their exact owner with a pidfd and retain a private
+close-on-exec journal directory handle. On owner death they retire their kernel-
+owned process trees, including detached descendants and nested subreapers.
+After every descendant is reaped and `waitpid` reports `ECHILD`, they atomically
+write/fsync a retirement certificate binding owner, source, epoch, launch digest
+and exact directory. Idle supervisors still block without periodic polling.
+Frontend or SSH-connector disconnection leaves the owner alive and does not
+trigger this source-retirement path.
+
+Read-only recovery health accepts only matching certificates and a finished
+supervisor. An explicit graphical/cells confirmation or guarded automation call
+can then discover a compatible replacement owner and open a default shell with
+fresh owner/source/terminal identities, without replaying commands. Lost Open
+replies are supported even when the durable slot alone contains the old source
+reference. Owner-loss panes remain visible for explicit action; they are not
+automatically reaped merely because their owner died.
+
+Missing/corrupt records, wrong identities, active or unverified supervisors and
+unsupported owners refuse replacement. Supervisor loss does not become safe
+merely because the broker and PTY also disappeared. Verification sends no signals;
+existing live owners are never killed or upgraded to satisfy a new client.
+
+Source/evidence identities are in `checkpoints/native-owner-loss/`. The stage is
+still uninstalled. Missing-certificate and pre-supervisor startup uncertainty,
+broader adoption, remaining attention/graphics/history/network cases, current
+UI/core configuration rebasing and canonical release/Nix acceptance remain gates.
+
+### Current-source rebase — November 14
+
+The native candidate is now rebased into `target/native-rebase-workspace` against
+canonical `5a956fdf` plus the current sidebar/grid/toggle edits. The old `72d017696`
+UI baseline is no longer the integration target. Only runtime-config and snapshot
+conflicts needed manual resolution: the native opt-in coexists with global theme
+serialization rules, and snapshots contain both global appearance and native
+metadata. Native palette initialization now reads core settings too.
+
+Current portfolio terminology, global theme behavior, glyph bounds and all
+uncommitted sidebar changes are preserved. Local/SSH graphical/cells theme tests
+with native sources pass; the private Gruvbox Dark reference PNG is byte-identical
+to the installed build's rendering. Native lifecycle/link/metadata and portfolio
+regressions pass on the rebase. The immutable shared pin and Cargo.lock are unchanged.
+
+`checkpoints/native-rebased/` reconstructs this candidate directly from the current
+canonical commit plus its saved UI patch; do not apply earlier native patches on
+top of it. It is still uninstalled. Remaining recovery/adoption, attention,
+graphics/history/network/media and canonical release/Nix gates remain before
+production integration and activation.
+
+### Saved conversations after deliberate recovery — November 14
+
+The uninstalled candidate now retains an explicitly registered conversation when
+native recovery changes its pane generation. A separate durable link records the
+new generation without changing the original provider report, conversation ID or
+resume arguments. Inherited reports remain stale and cannot establish current
+health or admit old heartbeats. Repeated deliberate recovery retains the link;
+an unrelated recycled slot cannot use it, and a newly registered run takes
+precedence. The user can explicitly resume the saved conversation in a new tab.
+
+Native-enabled cold-runtime acceptance verifies real recovery confirmations,
+split restoration, historical screens, exact resume and saved-command non-replay
+locally and over SSH in cells mode. Legacy lifecycle acceptance also passes.
+`checkpoints/native-conversation-recovery/` archives the incremental source and
+fixtures separately from the rebased stage. The complete release gate and the
+new increment's Nix checks have separate logs; the earlier Nix pass applies only
+to the preceding source. Production integration and the broader unfinished goal
+remain in scope.

@@ -73,6 +73,52 @@ diff --git a/src/native_backend.rs b/src/native_backend.rs
                      );
                      info["pid"] = json!(source.pid);
                      info["pid_start_ticks"] = json!(source.start_ticks);
+diff --git a/src/source_broker/process.rs b/src/source_broker/process.rs
+--- a/src/source_broker/process.rs
++++ b/src/source_broker/process.rs
+@@ -46,7 +46,7 @@
+         .nth(5)
+         .and_then(|s| s.parse::<u32>().ok())
+         .context("Native foreground group unavailable")?;
+-    let command = root
++    let mut command = root
+         .split_once('(')
+         .and_then(|(_, s)| s.rsplit_once(')'))
+         .map(|(s, _)| s.to_owned())
+@@ -72,6 +72,15 @@
+         let fields = fields.split_whitespace().collect::<Vec<_>>();
+         let ticks = fields.get(19).and_then(|s| s.parse().ok());
+         if fields.get(2).and_then(|s| s.parse::<u32>().ok()) == Some(foreground) {
++            let comm = stat
++                .split_once('(')
++                .and_then(|(_, s)| s.rsplit_once(')'))
++                .map(|(s, _)| s.to_owned())
++                .unwrap_or_default();
++            if pid == foreground && ticks.is_some() && start_ticks(pid).ok() == ticks {
++                command = comm.clone();
++                cwd = fs::read_link(path.join("cwd")).ok();
++            }
+             let mut file = fs::File::open(path.join("cmdline"))?;
+             let mut bytes = Vec::new();
+             (&mut file).take(32769).read_to_end(&mut bytes)?;
+@@ -81,15 +90,11 @@
+                     .filter(|b| !b.is_empty())
+                     .map(|b| String::from_utf8_lossy(b).into_owned())
+                     .collect::<Vec<_>>();
+-                let comm = stat
+-                    .split_once('(')
+-                    .and_then(|(_, s)| s.rsplit_once(')'))
+-                    .map(|(s, _)| s.to_owned())
+-                    .unwrap_or_default();
+-                if let Some(family) = family(&argv).or_else(|| family(&[comm]))
++                if let Some(family) = family(&argv).or_else(|| family(std::slice::from_ref(&comm)))
+                     && let Some(ticks) = ticks
+                     && start_ticks(pid).ok() == Some(ticks)
+                 {
++                    command = comm;
+                     agent = Some(Agent {
+                         pid,
+                         start_ticks: ticks,
 diff --git a/src/source_broker/supervision.rs b/src/source_broker/supervision.rs
 new file mode 100644
 --- /dev/null

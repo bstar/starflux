@@ -2173,3 +2173,494 @@ PIDs survived. Evidence: `target/sidebar-navigation-{tests,clippy,local,ssh}.log
 the private rendered inspection is `target/sidebar-navigation-preview.png`.
 This is a UI refinement, not completion of the remaining parity requirements.
 No live user frontend, agent, terminal source or App Space was restarted.
+
+### Native supervision and foreground identity acceptance (November 14)
+
+Resumed the isolated native-source candidate without replacing the installed
+executable or refreshing a live frontend. Completed the previously paused
+supervision acceptance matrix: stubborn PTY holders, detached children with
+closed stdio, nested subreapers, children forked during retirement, natural exit,
+operation replay, source/slot reuse and unrelated-source preservation. Actual
+Bash foreground job control, Ctrl+C and background-job cleanup pass.
+
+Forced supervisor loss leaves descendant retirement unverified. Both local and
+SSH fixtures observe final EOF but prove that the source binding stays unchanged,
+recovery is refused and no duplicate shell is launched. Older owners advertising
+only exit/EOF retain read/input and have unsupported retirement controls disabled.
+Idle sampling confirms that supervisors do not periodically poll.
+
+Fixed a metadata gap introduced by the supervisor layer: foreground program and
+working-directory inspection now follows the verified program rather than the
+supervisor. Private local/SSH checks cover a recognized agent and a plain source
+which changes directory; agent PID and source/supervisor PID remain separate.
+
+Graphical and cells UI lifecycle fixtures pass locally and over SSH. They cover
+real recovery/termination dialogs, both views following the new epoch, obsolete
+monitors being fenced, final natural exit staying empty, and explicit reopening
+creating one shared source. Strict workspace Clippy and release tests pass:
+259 root tests plus 4 client tests with all features, 258 root plus 4 client
+without defaults (4 root tests ignored in each matrix).
+
+Evidence: `target/native-tree-resumed-{clippy,unit,minimal,build}.log`,
+`target/native-tree-resumed-{loss-local,loss-ssh,tree-ssh,shell}.log`,
+`target/native-tree-resumed-ui-{local,ssh,cells,ssh-cells}.log`, and
+`target/native-tree-resumed-older-{local,ssh}.log`. Updated source/fixture patches
+and checksums are in `checkpoints/native-process-supervision/`. The installed
+binary SHA-256 and all 5 original PID/start identities are unchanged; see
+`target/native-tree-resumed-live-safety.json`.
+
+Remaining work is still substantial. Broker/owner-loss and never-delivered intent
+recovery, broader existing-source adoption, metadata/links/clipboard/title/attention,
+graphics/history/placement compatibility, constrained-network/media stress and
+canonical release/Nix gates are unproven. Inspection confirms that the owner
+retains OSC 8 attributes but native view reconstruction currently rebuilds only
+text/styles; it needs bounded link metadata forwarding, including link-only
+deltas, review, cleanup and reconnect tests. Before activation, rebase the native
+candidate onto current global settings, portfolio/UI changes and glyph fixes;
+never replace current code or manifests with the staging baseline wholesale.
+Every other unchecked requirement in `docs/plan.md` remains in scope.
+
+### November 14 — bounded native OSC 8 projection and retained review
+
+Implemented the hyperlink gap identified above in the isolated candidate, without
+changing the immutable shared KIT dependency or the production backend. Every
+cells projection includes a complete target dictionary and disjoint spans, even
+when no visible text changed. New views preflight counts/strings before owned
+decode, reserve metadata memory and replace annotations without repainting text
+or styles. Older owners can omit the optional table.
+
+Limits are 1,024 targets, 4,096 spans and 256 KiB target text, with existing parser
+limits of 8 KiB per URI and 1 KiB per parameter string. Invalid control characters,
+parameter separators, overlaps and geometry are rejected. Excess fails visibly
+rather than dropping targets or redirecting links. Repeated targets share entries.
+
+The actual two-view UI test exposed a second gap: native history export retained
+styles but discarded hidden destinations. Fixed the bounded exporter to preserve
+OSC 8 transitions, including wide/combining labels and wrapped rows, without
+changing the retained source. Frozen review now retains its original targets
+while another view receives new live destinations.
+
+Strict all-target/all-feature Clippy and release workspace build pass. Release
+tests pass with all features (264 root plus 4 client) and without defaults
+(263 root plus 4 client); 4 root tests remain ignored in each matrix. Private
+real-controller tests pass in graphical/cells modes locally and over SSH, covering
+hidden targets, semicolon-containing URIs, identical labels with new/cleared
+destinations, frontend copy responses and pointer regions, independent frozen
+review, resize, connector reconnection and explicit source recovery clearing old
+targets across both views. Older-owner local/SSH checks preserve read/input and
+refuse unsupported lifecycle commands.
+
+Evidence is in `target/native-links-{clippy,unit,minimal,build}.log`,
+`target/native-links-ui-{local,ssh,cells,ssh-cells}.log` and
+`target/native-links-older-{local,ssh}.log`. The separate
+`checkpoints/native-hyperlinks/` source patch and receipt preserve reconstruction
+and evidence hashes. All 5 original production PID/start identities and the
+installed executable are unchanged relative to this stage's baseline.
+
+This completes the tested OSC 8 forwarding slice, not native migration or full
+Herdr parity. General clipboard/title/bell/attention forwarding, owner-loss and
+never-delivered intent recovery, broader source adoption, graphics/history and
+placement compatibility, network/media stress, current application/UI rebasing
+and canonical release/Nix gates remain. Every other unchecked requirement in
+`docs/plan.md` remains in scope; the goal stays active.
+
+### November 14 — native titles, clipboard writes and metadata diagnostics
+
+Implemented source-owned bounded metadata in the isolated native candidate.
+OSC 0/1/2 values survive native reconstruction and feed default tab labels, while
+explicit user names, agent labels and imported names retain precedence. Empty
+titles restore generated labels. Audible/visual bell counters are retained and
+forwarded for diagnostics; they do not fabricate lifecycle or attention events.
+
+OSC 52 UTF-8 clipboard writes now reach existing frontend clipboard responses.
+A source-scoped counter and per-watch attachment/acknowledgement baseline prevent
+replay on late attachment, hidden-tab reveal, resize and reconnect. Source recovery
+resets the metadata with the new source; both views accept its new copy sequence.
+Slow views have independent credit and coalesce to the latest retained write.
+Subsequent frames omit acknowledged clipboard text, avoiding a retained 64 KiB
+payload being sent repeatedly during animation. Read-only snapshots omit copy
+payloads, and clipboard read requests are never serviced or forwarded.
+
+Limits are 4 KiB per title/icon and 64 KiB UTF-8 clipboard text. Accepted metadata
+lazily reserves 192 KiB from the shared owner retained budget; invalid values leave
+accepted state intact and increment rejection diagnostics. Incoming metadata is
+preflighted before owned decode and charged to the existing snapshot budget.
+State-file diagnostics expose titles/counters/sequences, not copied text.
+
+The managed wire fixture found an additional supervision bug: a loaded owner
+whose executable had been unlinked could no longer launch sources because
+`current_exe()` returned a deleted filename. Fixed supervisor launch to use the
+loaded `/proc/self/exe` image. The local/SSH managed wire tests explicitly unlink
+an owner copy before opening supervised sources, and verify clipboard-only empty
+text deltas, independent acknowledgement floors, payload omission, stale-ack
+rejection and read-only snapshot behavior.
+
+Strict all-target/all-feature Clippy, the release workspace build and release
+unit matrices pass: 270 root plus 4 client with all features, 269 root plus 4
+client without defaults, with 4 root tests ignored in each matrix. Real graphical
+and cells UI tests pass locally and over SSH, using three views to cover retained
+titles/icons, explicit tab-name precedence, bell diagnostics, Unicode and a 60 KiB
+payload, empty writes, invalid/oversized/binary rejection, query suppression,
+late attachment, hidden reveal, resize, connector recovery and explicit source
+recovery. Existing hyperlink and older-owner checks pass locally and over SSH.
+
+Evidence is `target/native-metadata-{clippy,unit,minimal,build}.log`,
+`target/native-metadata-ui-{local,ssh,cells,ssh-cells}.log`,
+`target/native-metadata-wire-{local,ssh}.log`,
+`target/native-metadata-links-{local,ssh,cells,ssh-cells}.log`, and
+`target/native-metadata-older-{local,ssh}.log`. The separate
+`checkpoints/native-metadata/` preserves the incremental source patch, fixtures
+and evidence hashes. Original production PID/start identities and the installed
+executable remain unchanged relative to this stage's recorded baseline.
+
+Remaining native gates include attention/OS notification delivery, owner-loss
+and never-delivered intent recovery, broader source adoption, graphics/history
+and placement compatibility, constrained-network/media stress, application/UI
+rebasing and canonical release/Nix acceptance. Clipboard delivery is bounded
+latest-value delivery, not durable offline event history; separate primary/cut
+buffer selection and system clipboard reads remain outside the existing text
+clipboard interface. Every other unchecked requirement in `docs/plan.md` remains
+in scope, and the goal stays active.
+
+### November 14 — guarded recovery of never-delivered native intents
+
+Added live-owner cancellation for a saved launch intent that was never accepted.
+The owner serializes launch-status resolution with its active/initializing maps.
+Explicit recovery durably consumes an unstarted ID with an owner/source/epoch/
+digest-bound fence before assigning a fresh terminal epoch and launching a default
+shell. A delayed original Open is rejected by exclusive receipt creation; saved
+commands and one-shot launch hints are cleared for the recovered pane. Inspection
+alone does not consume the ID. Opening, consumed/uncertain, malformed and identity-
+mismatched cases remain unavailable for cancellation.
+
+Existing lost-Open-reply recovery still resolves the retained source through
+read-only discovery before guarded tree retirement. It does not require the new
+fence capability merely to discover an already-existing source. Pending-slot
+checks compare complete launch intent while allowing a durable ready source to
+have been recorded before its view received the reply.
+
+A real UI fixture found that startup failure stopped the health monitor before
+pending recovery could appear. Saved native references now retain a read-only
+monitor after startup failure, so graphical/cells recovery remains accessible
+without another launch attempt. The menu and confirmation explain cancellation
+of an unstarted command and opening a fresh shell. Explicit termination controls
+retain their separate retirement requirements.
+
+Receipt reads are bounded, reject linked/nonregular files and use nonblocking
+opens. Unit coverage verifies idempotent sealing, mismatched identities, damaged
+records, an initializer held at its queue boundary, refusal of a delayed spawn,
+and a FIFO receipt returning promptly rather than freezing the broker.
+
+Strict all-target/all-feature Clippy, release workspace build and unit matrices
+pass: 271 root plus 4 client with all features, 270 root plus 4 client without
+defaults; 4 root tests remain ignored in both matrices. Private local/SSH automation
+checks cover read-only health, a durable fence, one fresh shell, operation replay,
+a delayed old Open, lost-reply discovery and sibling survival. Graphical/cells
+UI fixtures locally and over SSH use the real menu and confirmation and attach
+two independent views to the fresh source. Metadata and older-owner regressions
+remain passing. One earlier full unit run observed the pre-existing PTY fixture's
+file-creation/write race; its isolated retry and subsequent full matrices pass.
+
+Evidence: `target/native-launch-fence-{clippy,unit,minimal,build}.log`,
+`target/native-launch-fence-{local,ssh}.log`,
+`target/native-launch-fence-ui-{local,ssh,cells,ssh-cells}.log`,
+`target/native-launch-fence-metadata-{local,ssh}.log`, and
+`target/native-launch-fence-older-{local,ssh}.log`. The separate
+`checkpoints/native-launch-fence/` contains the incremental patch, fixtures and
+validation identities. Original production PID/start identities and the installed
+executable remain unchanged relative to this stage's baseline.
+
+This resolves the tested live-owner never-delivered case, not general owner loss.
+Durable supervisor retirement/adoption proof after broker death, broader source
+adoption, remaining attention/graphics/history/network cases, current UI/core
+configuration rebasing and canonical release/Nix gates remain. Every other
+unchecked requirement in `docs/plan.md` remains in scope; the goal stays active.
+
+### November 14 — certified native recovery after broker loss
+
+Added a durable retirement journal to new native supervisors. It binds the exact
+owner, source reference, source epoch, launch digest and receipt-directory device/
+inode. The single-threaded supervisor pins its actual parent with a pidfd,
+retains only close-on-exec handles, and on owner death retires its owned tree.
+Only after all descendants are reaped and the kernel reports `ECHILD` can it
+atomically write/fsync a certificate. The owner pidfd is disabled in the poll set
+after observation, avoiding a retirement busy loop; idle supervisors still have
+no periodic timer.
+
+Read-only owner-loss health verifies that certificate and supervisor completion.
+Explicit recovery uses the same real graphical/cells menu and confirmation, then
+finds a compatible replacement owner and assigns fresh source/terminal epochs for
+a default shell. Saved commands and stale input are never replayed. Lost Open
+replies are handled even when only the durable slot records the source reference;
+remote slot intent and full known-source identities remain checked. Explicit
+termination can remove a certified dead source without creating an owner, while
+automatic reap leaves owner-loss panes visible for the user's decision.
+
+Missing/damaged proof, identity/directory mismatch, a still-finishing supervisor,
+unsupported owners and supervisor death with unverified descendants remain
+unavailable for replacement. Unit checks cover certificate identity/digest/
+directory binding, unfinished records and live-supervisor rejection. A private
+negative runtime case kills a supervisor, preserves its unverified descendants,
+and proves that recovery changes neither binding nor owner and launches nothing.
+
+Strict all-target/all-feature Clippy, release workspace build and unit matrices
+pass: 272 root plus 4 client with all features; 271 root plus 4 client without
+defaults, with 4 root tests ignored in both matrices. Local/SSH automation kills
+only private owners of stubborn detached descendants/nested subreapers, proves
+all descendants reaped before accepting the certificate, rejects corrupt proof,
+and recovers one new owner/shell. An unrelated live process survives. Real
+UI menu/confirmation checks pass in graphical/cells modes locally and over SSH,
+including shared post-recovery input. Unstarted-intent, metadata, older-owner,
+Bash job-control and idle/process-tree regressions pass.
+
+Evidence: `target/native-owner-loss-{clippy,unit,minimal,build}.log`,
+`target/native-owner-loss-{local,ssh,pending-local,pending-ssh,guardian-local,guardian-ssh}.log`,
+`target/native-owner-loss-ui-{local,ssh,cells,ssh-cells}.log`,
+`target/native-owner-loss-{fence-local,fence-ssh,metadata-local,metadata-ssh,older-local,older-ssh,shell,tree-ssh}.log`.
+The separate `checkpoints/native-owner-loss/` saves incremental source, fixtures
+and reconstruction/validation identities. Original production PID/start identities
+and the installed executable remain unchanged relative to this stage's baseline.
+
+This establishes the tested certificate-backed owner-loss case, not unrestricted
+owner-loss recovery or source adoption. Pre-supervisor startup uncertainty,
+missing/lost journals, unsupported legacy sources and broader adoption still
+refuse replacement. Remaining attention, graphics/history/placement and network/
+media cases, application/UI rebasing and canonical release/Nix gates remain;
+every other unchecked requirement in `docs/plan.md` stays in scope. The candidate
+is uninstalled and the full Herdr parity goal remains active.
+
+### November 14 — native candidate rebased onto current code and UI
+
+Reconstructed and hash-checked the entire saved native checkpoint chain, then
+three-way merged it with canonical `5a956fdf` and the user's current uncommitted
+source edits into `target/native-rebase-workspace`. Canonical source and installed
+binaries were not overwritten. The rebase has unique executable/example names
+and a fresh `target/native-rebase-build` directory, avoiding shared-parser artifact
+reuse across workspaces.
+
+Resolved two conflicts: runtime keeps the native opt-in alongside ignored legacy
+project-theme serialization, and snapshots keep global appearance plus native
+metadata. Two native-only palette initializers now use core application settings
+rather than the legacy project field. Current portfolio/coordinator terminology,
+glyph fixes, dark Gruvbox sidebar, diagonal grid, hover/gutter and 11px boxes with
+3px disclosure marks remain intact. The canonical Cargo.lock is byte-identical;
+no immutable shared dependency was replaced.
+
+Strict all-target/all-feature Clippy and the release workspace build pass. Release
+unit matrices pass: 276 main plus 4 client with all features; 275 main plus 4
+client without defaults, with 4 main tests ignored in both matrices. Native-enabled
+theme/session tests pass locally and over SSH in graphical/cells modes, including
+stale project palettes, rename, global preference changes and session switches.
+A private Gruvbox Dark reference render is PNG-byte-identical to the installed
+build's same-model render, proving preservation in that reference case.
+
+Rebased lifecycle/menu, OSC 8, clipboard/title, unstarted recovery and portfolio
+create/assign/drag/collapse/order checks pass locally in graphical mode and over
+SSH in cells mode. Owner-loss and missing-supervisor-proof automation also pass
+over SSH. All fixtures use private namespaces and fake programs. Evidence is in
+`target/native-rebase-{clippy,unit,minimal,build,chrome}.log`,
+`target/native-rebase-theme-{local,cells,ssh,ssh-cells}.log`,
+`target/native-rebase-{owner-ui-local,owner-ui-ssh-cells,owner-api-ssh,guardian-api-ssh}.log`,
+`target/native-rebase-{links-local,links-ssh-cells,metadata-local,metadata-ssh-cells,fence-local,fence-ssh-cells}.log`,
+and `target/native-rebase-portfolio-{local,ssh-cells}.log`.
+
+The separate `checkpoints/native-rebased/` archives a patch against the current
+canonical commit and a saved canonical UI patch, replacing the earlier base for
+integration. Its reconstruction/validation receipt verifies all controlled source
+files and original production PID/start identities. The installed executable and
+five tracked production processes remain unchanged.
+
+The candidate remains uninstalled. Remaining uncertified recovery/adoption,
+attention, graphics/history/placement and constrained-network/media cases,
+canonical release/Nix acceptance and production integration remain. This completes
+the current-code rebase slice, not the Herdr parity goal; every unchecked item in
+`docs/plan.md` remains in scope.
+
+### November 14 — production-layout release acceptance started
+
+Created an independent release checkout outside the canonical Cargo workspace
+from the rebased candidate, reversing only its isolated executable/example and
+vendored-workspace manifest changes. All three production manifests and
+`Cargo.lock` match canonical byte for byte. This checks the shipping names and
+helper lookup paths without installing the candidate or changing live views.
+
+The unmodified `scripts/check-release` is running there. Version/pin consistency,
+AppRun relocation/argument handling, both formatting checks and strict
+all-target/all-feature Clippy have passed. Both shipping release test matrices
+passed (276 main plus 4 client with all features; 275 plus 4 without defaults;
+4 main ignored in each). Dependency policy and executable/example builds passed.
+Private behavioral checks remain pending until that command finishes; the gate
+is not yet a pass.
+
+A separate source snapshot, excluding build outputs, is running `nix flake check`
+with package and installed-executable smoke checks. That command passed on local
+Linux x86_64, including 276 main plus 4 client tests and all three installed
+executables. ARM64 was not built by this workstation run. Logs are
+`target/native-release-gate.log` and `target/native-release-nix-gate.log`.
+`target/native-release-gate-state.json` records both workspaces, runner PID/start
+identities, execution handles and exit-file paths so a later turn can inspect the
+same runs rather than restart them after an observation timeout. A current safety
+check preserves all five tracked production process identities and the installed
+executable hash. No production integration or default-backend change occurred.
+
+The shared `test-session-manager.py` now accepts `--native-sources`, selects the
+native backend explicitly for fixture projects and verifies that both frontends
+share its durable source binding. This prevents passing native acceptance by
+silently using the existing default backend. Cleanup authenticates a shutdown of
+the fixture's private source owner, checks its boot/process/directory/environment
+identity and waits for retirement before deleting its namespace. Ordinary runs
+retain their existing default-backend coverage. The tmux-specific startup-failure
+injection rejects this native mode rather than claiming the wrong coverage.
+
+Running a copy of that fixture against the production-named candidate passed
+nested pane layouts and searchable history locally in graphical mode and over
+SSH in cells mode. Coverage includes split/resize/zoom/focus/move, stale
+termination confirmation, independent views, frozen Unicode history search/copy
+and preserved pre-attachment tmux history. Native lifecycle, automation,
+cold-start, background screens and notification cases are running separately;
+their per-case exits are retained in `target/native-release-ui-matrix.json`.
+These fixtures start no real agents and do not change production App Space.
+
+### November 14 — saved conversation references survive native recovery
+
+Extended native acceptance beyond the earlier theme/portfolio checks. Pane
+layouts, searchable history, structured lifecycle and automation pass locally in
+graphical mode and over SSH in cells mode. Background screen collection and
+notification/inbox behavior also pass in those two presentations. These checks
+assert native source bindings; imported tmux sources retain their original
+ownership. The background fixture now removes project-bound native identities
+when constructing a different imported project, instead of transplanting them.
+
+Cold-start acceptance found an actual integration gap: native recovery replaces
+the terminal epoch, which hid the registered conversation and rejected explicit
+resume. The candidate now saves a separate link from the recovered epoch to its
+original registered run. The report's epoch, boot/process identity, provider,
+conversation and exact resume vector remain unchanged. Inherited reports are
+stale and never establish live health, even if process observations happen to
+match; old heartbeats and unrelated recycled slots remain rejected. A new
+registered run supersedes the inherited reference. Repeated deliberate recovery
+retains it. Publishing the link under the project transaction before the new
+epoch does not grant permission to replay saved program launches.
+
+The same-boot cold-runtime fixture now shuts down the actual private native owner
+and uses real recovery confirmations after removing runtime state. It checks
+both restored panes, split persistence, styled Unicode/historical screen review,
+exact registered conversation resume in a new tab, corrupt archives, screen
+pause/clear/resume, command non-replay and an unrelated imported source. This does
+not establish all reboot/missing-certificate cases. Final-binary checks pass
+locally in graphical mode and over SSH in cells mode. Legacy lifecycle checks
+also pass in both cases. Strict Clippy passes; release tests pass with all
+features (277 main plus 4 client) and without defaults (276 plus 4), with four
+main tests ignored in each matrix.
+
+The two-file source increment, shared-fixture changes, reconstruction verifier
+and eight validation log identities are saved in
+`checkpoints/native-conversation-recovery/`. It follows the rebased checkpoint;
+the older patch and its evidence have not been rewritten to claim this fix.
+Logs use `target/native-conversation-recovery-final-*.log`. The increment's own
+Nix package/smoke check is running separately in
+`target/native-conversation-recovery-nix.log`; the earlier Nix pass proves only
+the preceding source. All five tracked production processes and the installed
+executable hash still match the release-validation baseline.
+
+The production-layout release run stopped at `test-agent-activity.py`: its
+`exec -a codex python3` spoofed Python's executable identity, loaded the system
+standard library under Nix and failed importing `_ctypes`. Launching the fixture
+with `sys.executable` fixes this without changing its `prctl` agent identity or
+activity expectations. The corrected check passes. The original failed log and
+exit remain intact; `target/native-release-gate-resume.log` continues from that
+check, retaining completed packaging/build/plugin evidence. The complete release
+gate is still pending. Six obsolete source owners from earlier private rebase
+fixtures with already-removed namespaces were identified by exact executable and
+private environment and retired; no production owners were touched.
+
+The candidate remains uninstalled and has not been promoted into canonical Rust
+source. Broader adoption/uncertified recovery, attention forwarding, graphics/
+placement/network/media compatibility, production integration and every other
+unchecked requirement in `docs/plan.md` remain in scope. Full Herdr parity is not
+complete.
+
+### November 14 — requested program startup is acknowledged before publication
+
+The saved-conversation increment's Linux x86_64 Nix package, 277 main plus 4
+client tests and all three installed-executable smoke checks passed. Its receipt
+now verifies the complete reconstructed source against that exact Nix snapshot.
+This acceptance applies to that increment, before the startup work below.
+
+The production-layout release continuation found another product regression in
+the streamed source-broker fixture: `Open` returned a live source for a nonexistent
+requested executable because starting the supervisor itself succeeded. The
+supervisor now atomically records the actual command exec result. The initializer
+validates its full owner/source/digest/directory identity and waits for that
+acknowledgement before publishing the source. The wait is bounded and off the
+render/input path. Missing acknowledgement consumes the launch and retires the
+guardian rather than authorizing replay or leaving its executed children behind.
+
+Verified failed exec can be resolved only with matching startup failure and
+ECHILD retirement records and a dead supervisor. Missing proof remains unknown;
+wrong identity or directory is rejected; a successfully executed program cannot
+be labeled never started. Explicit pending recovery then uses the existing real
+confirmation and a fresh shell, without replaying the saved command. Owners
+advertise the additive `supervised-startup-v1` capability.
+
+Strict Clippy and binary/example builds pass. Release unit matrices pass: 278
+main plus 4 client with all features, 277 plus 4 without defaults, with 4 main
+ignored in each. Standalone and managed-service streamed broker checks pass
+locally and over SSH. The actual failed-exec UI menu/confirmation and shared fresh
+source pass locally in graphical mode and over SSH in cells mode, preserving the
+sibling pane and never running its saved launch hint. The reconstructed four-file
+increment, fixture changes and ten validation log identities are in
+`checkpoints/native-startup/`; logs are `target/native-startup-*.log`.
+
+The release checkout now contains both increments. Its separate continuation,
+`target/native-release-gate-startup-resume.log`, reruns formatting, strict Clippy,
+both unit matrices and binary/example builds, then retries the failing streamed
+broker command and the remaining release checks. The previous failed command/log
+is retained. The startup increment also has a fresh Nix package/smoke run in
+`target/native-startup-nix.log`; both jobs remain pending at this checkpoint.
+Their handles, source identities and workspaces are recorded under `target/`.
+
+The user emphasized that AI sessions must resume. Preserving a shell or launching
+a mock exact-ID resume vector is not sufficient evidence that a real provider's
+conversation resumed. Provider-confirmed identity capture, thread-switch handling,
+native resume and missing-metadata diagnostics remain priority acceptance work.
+No provider identity will be guessed from a directory, title, recent activity or
+`--last`. The installed Codex 0.169.0 CLI/schema and official hook documentation
+were inspected read-only; no real agents were prompted, restarted, reconfigured
+or migrated. This work is still uninstalled, all original production process
+identities and the installed executable remain unchanged, and the full goal
+remains active.
+
+### November 14 — pause at the launch-authority checkpoint
+
+The user requested a pause at a sensible point. Completed the already-running
+startup-revision Nix package/smoke and production-layout release continuation;
+both exited successfully. Their source identities and original failed logs are
+preserved. Additional native cold-start checking reproduced a cross-frontend
+race: one view consumed the resume permission while another published a default
+shell before the resume intent. Private diagnostics establish the wrong-shell
+outcome; this was not accepted as AI recovery.
+
+The latest staged fix derives the command from shared pending metadata and
+combines one-shot permission consumption, pending-state removal and native
+intent publication in one project transaction. Discovery/default-shell RPCs stay
+outside that transaction. The pane generation and selected command are checked
+again before publication; an identical already-ready reference from another view
+is accepted. Legacy/imported/plugin permission handling is retained.
+
+This two-file increment reconstructs exactly in
+`checkpoints/native-launch-authority/`. Strict Clippy, all-feature release tests
+(278 main plus 4 client; 4 main ignored), binary build and private final-binary
+cold-runtime/saved-vector resume locally in graphical mode and over SSH in cells
+mode pass. Deterministically forcing the handoff race, further repetition,
+minimal-feature and Nix checks on this exact increment remain necessary. Earlier
+startup acceptance must not be relabeled as validation of this later change.
+
+The complete pause handoff is [parity-handoff-2026-11-14.md](parity-handoff-2026-11-14.md).
+It preserves the full remaining Herdr parity scope and prioritizes real provider
+identity capture/resume. A fake program executing a saved vector does not prove
+that Codex/Claude restored an AI conversation. No native increment was installed
+or promoted into canonical Rust source, no live sessions were migrated and all
+five tracked production process identities plus the installed executable hash
+remain unchanged. All validation jobs started in this turn have finished; no new
+work should run until the user resumes the goal.

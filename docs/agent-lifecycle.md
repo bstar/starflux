@@ -48,3 +48,27 @@ This interface is implemented and tested with disposable agent fixtures. Automat
 A saved report from a previous boot cannot establish that a current agent is the same process, even if its PID and start ticks coincide. Legacy records without a boot identity remain readable and retain their explicit conversation/resume references, but are never authoritative live lifecycle reports. New reports must include the current boot identity; missing or stale identities are rejected.
 
 Explicit resume uses a durable one-shot launch receipt. A later missing backend opens a shell rather than executing the saved resume hint again. See [cold-start recovery and saved screens](cold-start.md).
+
+## AI-session recovery acceptance
+
+AI-session recovery must establish the provider's exact conversation identity
+after reconnect/resume. Restoring a shell is a separate operation and must not
+be reported as successful AI recovery. Missing or ambiguous provider references
+must be visible; directory/title matching, newest-file selection and `--last`
+are not identity evidence. Recovery must preserve model/provider/authentication
+choices and avoid resubmitting the previous prompt or pending approvals.
+
+The staged native backend preserves registered references across deliberate
+recovery and has private local/SSH tests for the exact saved resume vector. Those
+fixtures use disposable fake agents: they do not yet prove native Codex/Claude
+conversation resumption or automatic identity capture for arbitrary existing
+agents. These remain required before claiming provider-complete recovery.
+
+Codex 0.169.0's exported experimental schema includes session-start lifecycle
+events. The official [hook guide](https://learn.chatgpt.com/docs/hooks) documents
+the event's current session ID and startup/resume/fork sources. It also states
+that switching away does not immediately end a session. Thus a hook's thread
+reference alone is insufficient to infer which STAR/FLUX pane currently displays
+that thread. The adapter must bind registration to the pane/launch incarnation
+and handle thread switches and delayed callbacks. Existing hooks and provider
+trust settings must be preserved. No hooks have been installed in live agents.

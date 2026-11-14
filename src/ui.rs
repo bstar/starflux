@@ -309,6 +309,7 @@ pub struct Workspace {
     settings: Settings,
     terminal_fps: u32,
     native_terminal_cells: bool,
+    pub(crate) native_skins: bool,
     native_layout_key: String,
     fonts: font_ui::Fonts,
     native_font_points: Option<u32>,
@@ -559,6 +560,7 @@ impl Workspace {
             settings,
             terminal_fps,
             native_terminal_cells: false,
+            native_skins: false,
             native_layout_key: String::new(),
             fonts: Default::default(),
             native_font_points: None,
@@ -4824,6 +4826,7 @@ impl Workspace {
             .or_else(|| self.panel_hint())
             .or_else(|| self.terminal_review_hint());
         let model = crate::shelf::Model {
+            native_skins: self.native_skins,
             app_view: self.app_view_available,
             project: &self.config.workspace,
             project_label: self
@@ -5104,6 +5107,7 @@ impl Controller for Workspace {
     ) {
         self.close_audio();
         self.cells = capabilities.cell_presentation.unwrap_or(false);
+        self.native_skins = capabilities.native_skins;
         self.app_view_available = crate::features::app_view(&capabilities);
         if !self.app_view_available && self.state.space == Space::Apps {
             self.state.space = Space::Terminals;

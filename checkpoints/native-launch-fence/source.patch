@@ -1,0 +1,567 @@
+diff --git a/src/native_backend.rs b/src/native_backend.rs
+--- a/src/native_backend.rs
++++ b/src/native_backend.rs
+@@ -182,6 +182,32 @@
+     Ok(())
+ }
+ #[cfg(target_os = "linux")]
++fn same_launch_intent(
++    a: &crate::native_protocol::Binding,
++    b: &crate::native_protocol::Binding,
++) -> bool {
++    let mut a = a.clone();
++    let mut b = b.clone();
++    a.source = None;
++    b.source = None;
++    a == b
++}
++#[cfg(target_os = "linux")]
++fn check_pending_slot(target: &Pane) -> Result<()> {
++    let expected = &target.binding;
++    let saved = crate::source_broker::service::read_slot(
++        &target.namespace,
++        &expected.project,
++        expected.pane,
++    )?
++    .context("Native pending slot disappeared")?;
++    ensure!(
++        same_launch_intent(&saved, expected),
++        "Native pending slot changed"
++    );
++    Ok(())
++}
++#[cfg(target_os = "linux")]
+ fn dispatch(request: Value) -> Result<Value> {
+     use crate::source_broker::{self, service};
+     match request["op"].as_str().context("Missing native operation")? {
+@@ -248,6 +274,69 @@
+                 binding: record,
+                 previous: None,
+             })?)
++        }
++        "resolve-pending" => {
++            let target: Pane = serde_json::from_value(request["target"].clone())?;
++            target.validate()?;
++            let expected = &target.binding;
++            ensure!(expected.source.is_none(), "Native source is already known");
++            check_pending_slot(&target)?;
++            // Preserve discovery-only recovery with older owners: a lost Open
++            // reply can already have a known retained source and needs no fence.
++            if let Ok(record) = service::reattach_slot(
++                &target.namespace,
++                &expected.project,
++                expected.pane,
++                &expected.terminal_epoch,
++            ) {
++                ensure!(
++                    same_launch_intent(&record, expected),
++                    "Native pending intent changed during discovery"
++                );
++                return Ok(
++                    json!({"sealed":false,"target":Pane{namespace:target.namespace,binding:record,previous:None}}),
++                );
++            }
++            let handle = service::existing(&target.namespace, &expected.owner)?;
++            let mut connection = handle.connect()?;
++            let hello = connection.call(source_broker::Action::Hello)?;
++            ensure!(
++                hello["capabilities"]
++                    .as_array()
++                    .is_some_and(|caps| caps.iter().any(|cap| cap == "launch-fence-v1")),
++                "Existing owner cannot cancel an unstarted launch safely"
++            );
++            let resolved = connection.call(source_broker::Action::ResolveLaunch {
++                id: expected.source_id.clone(),
++                epoch: expected.source_epoch.clone(),
++                digest: expected.launch_digest.clone(),
++                seal: true,
++            })?;
++            ensure!(
++                service::read_slot(&target.namespace, &expected.project, expected.pane)?.as_ref()
++                    == Some(expected),
++                "Native pending slot changed during discovery"
++            );
++            if resolved["status"] == "sealed" {
++                return Ok(json!({"sealed":true}));
++            }
++            ensure!(
++                resolved["status"] == "ready",
++                "Native launch is still opening or has an uncertain outcome; no replacement launched"
++            );
++            let record = service::reattach_slot(
++                &target.namespace,
++                &expected.project,
++                expected.pane,
++                &expected.terminal_epoch,
++            )?;
++            ensure!(
++                same_launch_intent(&record, expected),
++                "Native pending intent changed during discovery"
++            );
++            Ok(
++                json!({"sealed":false,"target":Pane{namespace:target.namespace,binding:record,previous:None}}),
++            )
+         }
+         "retire" => {
+             use std::time::{Duration, Instant};
+@@ -373,6 +462,30 @@
+         "call" => {
+             let target: Pane = serde_json::from_value(request["target"].clone())?;
+             target.validate()?;
++            if target.binding.source.is_none() && request["action"] == "inspect" {
++                let expected = &target.binding;
++                check_pending_slot(&target)?;
++                let handle = service::existing(&target.namespace, &expected.owner)?;
++                let mut connection = handle.connect()?;
++                let hello = connection.call(source_broker::Action::Hello)?;
++                let supported = hello["capabilities"]
++                    .as_array()
++                    .is_some_and(|caps| caps.iter().any(|cap| cap == "launch-fence-v1"));
++                if supported {
++                    let status = connection.call(source_broker::Action::ResolveLaunch {
++                        id: expected.source_id.clone(),
++                        epoch: expected.source_epoch.clone(),
++                        digest: expected.launch_digest.clone(),
++                        seal: false,
++                    })?;
++                    if status["status"] != "ready" {
++                        return Ok(
++                            json!({"backend":"native","alive":false,"state":"unknown","native_retirement_available":false,
++                            "native_pending_recovery_available":status["status"]=="not_started"||status["status"]=="sealed","launch_status":status["status"],"error":"Native launch is pending; explicit recovery never replays the saved command"}),
++                        );
++                    }
++                }
++            }
+             let record = service::reattach_slot(
+                 &target.namespace,
+                 &target.binding.project,
+@@ -683,27 +796,34 @@
+         (config, target)
+     };
+     let _worktree = crate::worktrees::ensure_allowed(&config)?;
++    let launch = launch_spec(&config, pane, None)?;
++    let mut sealed = false;
+     if target.binding.source.is_none() {
+-        let ready: Pane = serde_json::from_value(rpc(
++        let resolved = rpc(
+             &config,
+             pane,
+-            json!({"op":"reattach","target":target}),
+-        )?)?;
+-        let _lock = crate::project_sync::transaction(&config)?;
+-        let mut state = ProjectState::load(&config)?;
+-        ensure!(
+-            state.native_sources.get(&pane) == Some(&target),
+-            "Native intent changed during recovery discovery"
+-        );
+-        state.native_sources.insert(pane, ready.clone());
+-        state.save(&config)?;
+-        target = ready;
++            json!({"op":"resolve-pending","target":target}),
++        )?;
++        sealed = resolved["sealed"] == true;
++        if !sealed {
++            let ready: Pane = serde_json::from_value(resolved["target"].clone())?;
++            let _lock = crate::project_sync::transaction(&config)?;
++            let mut state = ProjectState::load(&config)?;
++            ensure!(
++                state.native_sources.get(&pane) == Some(&target),
++                "Native intent changed during recovery discovery"
++            );
++            state.native_sources.insert(pane, ready.clone());
++            state.save(&config)?;
++            target = ready;
++        }
+     }
+     // Resolve shell/home before touching the old source. No saved agent command
+     // is ever reused by recovery, including after an interrupted request.
+-    let launch = launch_spec(&config, pane, None)?;
+-    let retired = rpc(&config, pane, json!({"op":"retire","target":target}))?;
+-    ensure!(retired["retired"] == true, "Native source is not retired");
++    if !sealed {
++        let retired = rpc(&config, pane, json!({"op":"retire","target":target}))?;
++        ensure!(retired["retired"] == true, "Native source is not retired");
++    }
+     let pending = {
+         let _lock = crate::project_sync::transaction(&config)?;
+         let latest: crate::runtime::Config = serde_json::from_slice(&std::fs::read(&config_path)?)?;
+diff --git a/src/source_broker/launch_fence.rs b/src/source_broker/launch_fence.rs
+new file mode 100644
+--- /dev/null
++++ b/src/source_broker/launch_fence.rs
+@@ -0,0 +1,79 @@
++//! Durable cancellation of an intent not yet accepted by this live owner.
++use super::*;
++const LIMIT: u64 = 4096;
++#[derive(Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++struct Fence {
++    version: u8,
++    id: String,
++    epoch: String,
++    digest: String,
++    sealed: bool,
++    owner: crate::native_protocol::Identity,
++}
++pub(super) fn resolve(
++    receipts: &Path,
++    id: &str,
++    epoch: &str,
++    digest: &str,
++    seal: bool,
++    owner: &crate::native_protocol::Identity,
++) -> Result<bool> {
++    let path = receipts.join(format!("{id}.json"));
++    match fs::OpenOptions::new()
++        .read(true)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
++        .open(&path)
++    {
++        Ok(file) => {
++            let metadata = file.metadata()?;
++            ensure!(
++                metadata.is_file()
++                    && metadata.uid() == unsafe { libc::geteuid() }
++                    && metadata.nlink() == 1
++                    && metadata.mode() & 0o077 == 0
++                    && metadata.len() <= LIMIT,
++                "Invalid launch receipt"
++            );
++            let mut bytes = Vec::new();
++            file.take(LIMIT + 1).read_to_end(&mut bytes)?;
++            // Existing spawn receipts, damaged records and mismatched fences
++            // are uncertainty, never evidence that a process did not start.
++            let Ok(fence) = serde_json::from_slice::<Fence>(&bytes) else {
++                return Ok(false);
++            };
++            ensure!(
++                fence.version == 1
++                    && fence.id == id
++                    && fence.epoch == epoch
++                    && fence.digest == digest
++                    && fence.sealed
++                    && fence.owner == *owner,
++                "Launch cancellation identity changed"
++            );
++            return Ok(true);
++        }
++        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
++        Err(error) => return Err(error.into()),
++    }
++    if !seal {
++        return Ok(false);
++    }
++    let fence = Fence {
++        version: 1,
++        id: id.into(),
++        epoch: epoch.into(),
++        digest: digest.into(),
++        sealed: true,
++        owner: owner.clone(),
++    };
++    let mut file = fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(&path)?;
++    file.write_all(&serde_json::to_vec(&fence)?)?;
++    file.sync_all()?;
++    fs::File::open(receipts)?.sync_all()?;
++    Ok(true)
++}
+diff --git a/src/source_broker.rs b/src/source_broker.rs
+--- a/src/source_broker.rs
++++ b/src/source_broker.rs
+@@ -28,6 +28,8 @@
+     path::{Path, PathBuf},
+     time::{Duration, Instant},
+ };
++#[path = "source_broker/launch_fence.rs"]
++mod launch_fence;
+ #[path = "source_broker/process.rs"]
+ pub mod process;
+ #[path = "source_broker/render.rs"]
+@@ -156,6 +158,13 @@
+     Hello,
+     Open {
+         launch: Launch,
++    },
++    ResolveLaunch {
++        id: String,
++        epoch: String,
++        digest: String,
++        #[serde(default)]
++        seal: bool,
+     },
+     Inspect {
+         source: Reference,
+@@ -797,7 +806,7 @@
+         }
+         match action {
+             Action::Hello => Ok(
+-                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1","osc8-spans-v1","terminal-metadata-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
++                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1","osc8-spans-v1","terminal-metadata-v1","launch-fence-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
+             ),
+             Action::List => Ok(json!(
+                 self.sources.values().map(Source::info).collect::<Vec<_>>()
+@@ -805,6 +814,50 @@
+             Action::Open { .. } => Err(anyhow::anyhow!(
+                 "Source opening must use the bounded initializer"
+             )),
++            Action::ResolveLaunch {
++                id,
++                epoch,
++                digest,
++                seal,
++            } => {
++                canonical_uuid(&id)?;
++                canonical_uuid(&epoch)?;
++                ensure!(
++                    digest.len() == 64
++                        && digest
++                            .bytes()
++                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
++                    "Invalid launch digest"
++                );
++                if let Some(source) = self.sources.get(&id) {
++                    ensure!(
++                        source.digest == digest && source.reference.epoch == epoch,
++                        "Launch identity changed"
++                    );
++                    return Ok(json!({"status":"ready","info":source.info()}));
++                }
++                if let Some(opening) = self.opening.get(&id) {
++                    ensure!(opening.digest == digest, "Launch identity changed");
++                    return Ok(json!({"status":"opening"}));
++                }
++                ensure!(!self.stopping, "Broker is stopping");
++                let owner = crate::native_protocol::Identity {
++                    instance: self.instance.clone(),
++                    boot: self.boot.clone(),
++                    pid: std::process::id(),
++                    start_ticks: start_ticks(std::process::id())?,
++                };
++                let sealed =
++                    launch_fence::resolve(&self.receipts, &id, &epoch, &digest, seal, &owner)?;
++                let status = if sealed {
++                    "sealed"
++                } else if self.receipts.join(format!("{id}.json")).try_exists()? {
++                    "unknown"
++                } else {
++                    "not_started"
++                };
++                Ok(json!({"status":status}))
++            }
+             Action::Inspect { source } => Ok(self.source(&source)?.info()),
+             Action::Input { source, data } => {
+                 ensure!(
+@@ -1806,6 +1859,17 @@
+         broker.begin_open(2, 1, launch.clone()).unwrap();
+         assert_eq!(receiver.len(), 1);
+         assert_eq!(broker.opening[&launch.id].waiters.len(), 2);
++        assert_eq!(
++            broker
++                .action(Action::ResolveLaunch {
++                    id: launch.id.clone(),
++                    epoch: launch.epoch.clone(),
++                    digest: launch.digest().unwrap(),
++                    seal: true
++                })
++                .unwrap()["status"],
++            "opening"
++        );
+         let mut changed = launch.clone();
+         changed.argv.push("different".into());
+         assert!(broker.begin_open(3, 1, changed).is_err());
+@@ -1816,6 +1880,100 @@
+                 .join("receipts")
+                 .join(format!("{}.json", launch.id))
+                 .exists()
++        );
++    }
++    #[test]
++    fn fencing_an_unstarted_launch_is_durable_identity_bound_and_never_spawns_it() {
++        use std::os::unix::fs::PermissionsExt;
++        let root = tempfile::tempdir().unwrap();
++        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
++        let receipts = root.path().join("receipts");
++        let mut broker =
++            Broker::bind(&root.path().join("source.sock"), &receipts, "a".repeat(64)).unwrap();
++        let launch = Launch {
++            id: uuid::Uuid::new_v4().to_string(),
++            epoch: uuid::Uuid::new_v4().to_string(),
++            argv: vec![
++                "/usr/bin/touch".into(),
++                root.path()
++                    .join("MUST_NOT_RUN")
++                    .to_string_lossy()
++                    .into_owned(),
++            ],
++            directory: root.path().into(),
++            size: Size {
++                rows: 24,
++                columns: 80,
++                cell: [8, 16],
++            },
++            palette: Palette {
++                foreground: [255; 3],
++                background: [0; 3],
++                ansi: [[0; 3]; 16],
++            },
++        };
++        let action = |seal| Action::ResolveLaunch {
++            id: launch.id.clone(),
++            epoch: launch.epoch.clone(),
++            digest: launch.digest().unwrap(),
++            seal,
++        };
++        assert_eq!(
++            broker.action(action(false)).unwrap()["status"],
++            "not_started"
++        );
++        let receipt = receipts.join(format!("{}.json", launch.id));
++        assert!(!receipt.exists());
++        assert_eq!(broker.action(action(true)).unwrap()["status"], "sealed");
++        assert_eq!(broker.action(action(true)).unwrap()["status"], "sealed");
++        assert!(
++            broker
++                .action(Action::ResolveLaunch {
++                    id: launch.id.clone(),
++                    epoch: uuid::Uuid::new_v4().to_string(),
++                    digest: launch.digest().unwrap(),
++                    seal: true
++                })
++                .is_err()
++        );
++        assert!(
++            Source::launch(
++                &launch,
++                &broker.boot,
++                &receipts,
++                broker.resources.clone(),
++                broker.io_limits.clone()
++            )
++            .is_err()
++        );
++        assert!(!root.path().join("MUST_NOT_RUN").exists());
++        fs::write(&receipt, b"partial receipt").unwrap();
++        assert_eq!(broker.action(action(true)).unwrap()["status"], "unknown");
++        assert_eq!(fs::read(&receipt).unwrap(), b"partial receipt");
++        // Invalid receipt types must not block the live owner's event loop.
++        fs::remove_file(&receipt).unwrap();
++        use std::os::unix::ffi::OsStrExt;
++        let path = std::ffi::CString::new(receipt.as_os_str().as_bytes()).unwrap();
++        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
++        let owner = crate::native_protocol::Identity {
++            instance: broker.instance.clone(),
++            boot: broker.boot.clone(),
++            pid: std::process::id(),
++            start_ticks: start_ticks(std::process::id()).unwrap(),
++        };
++        let id = launch.id.clone();
++        let epoch = launch.epoch.clone();
++        let digest = launch.digest().unwrap();
++        let (tx, rx) = std::sync::mpsc::channel();
++        std::thread::spawn(move || {
++            let _ = tx.send(launch_fence::resolve(
++                &receipts, &id, &epoch, &digest, true, &owner,
++            ));
++        });
++        assert!(
++            rx.recv_timeout(Duration::from_secs(1))
++                .expect("FIFO receipt blocked metadata control")
++                .is_err()
+         );
+     }
+     #[test]
+diff --git a/src/ui.rs b/src/ui.rs
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -769,6 +769,19 @@
+         }
+         self.pane_drag = None;
+     }
++    fn native_pending_recovery_supported(&self, pane: usize) -> bool {
++        self.state
++            .native_sources
++            .get(&pane)
++            .is_some_and(|target| target.binding.source.is_none())
++            && self
++                .health
++                .get(&(
++                    self.config.workspace.clone(),
++                    self.config.canonical_pane(pane),
++                ))
++                .is_some_and(|health| health["native_pending_recovery_available"] == true)
++    }
+     fn native_retirement_supported(&self, pane: usize) -> bool {
+         !self.state.native_sources.contains_key(&pane)
+             || self
+@@ -1174,13 +1187,24 @@
+                     }
+                     Ok(false) => return,
+                     Err(e) => {
+-                        let _ = tx.send(Event::EnsureFailed(
+-                            config.workspace.clone(),
+-                            pane,
+-                            format!("{e:#}"),
+-                            stopped,
+-                        ));
+-                        return;
++                        if matches!(crate::native_backend::reference(&config, pane), Ok(Some(_))) {
++                            // A saved native intent can be safely inspected even
++                            // when startup cannot reattach it. Keep diagnostics
++                            // and explicit recovery available without relaunching.
++                            let _ = tx.send(Event::Status(format!(
++                                "{} / terminal {}: {e:#}",
++                                config.workspace,
++                                pane + 1
++                            )));
++                        } else {
++                            let _ = tx.send(Event::EnsureFailed(
++                                config.workspace.clone(),
++                                pane,
++                                format!("{e:#}"),
++                                stopped,
++                            ));
++                            return;
++                        }
+                     }
+                 }
+                 let mut captured_at = Instant::now() - Duration::from_secs(10);
+@@ -2636,8 +2660,12 @@
+                 "Stops owned terminals/apps; preserves tmux/Herdr sources. Type DELETE",
+                 String::new(),
+             )],
+-            Prompt::RecoverTerminal(_, _, _) => vec![field(
+-                "Stops this pane's program. Type RECOVER to return to a shell",
++            Prompt::RecoverTerminal(_, pane, _) => vec![field(
++                if self.native_pending_recovery_supported(*pane) {
++                    "Cancels the unstarted launch. Type RECOVER to open a fresh shell"
++                } else {
++                    "Stops this pane's program. Type RECOVER to return to a shell"
++                },
+                 String::new(),
+             )],
+             Prompt::TerminateTerminal(_, pane, _, _) => vec![field(
+@@ -3644,7 +3672,11 @@
+                     ),
+                     item(
+                         "Recover to shell…",
+-                        "Stop program",
++                        if self.native_pending_recovery_supported(id) {
++                            "Start fresh shell"
++                        } else {
++                            "Stop program"
++                        },
+                         format!("recover-terminal:{id}"),
+                     ),
+                 ]
+@@ -3652,6 +3684,7 @@
+                 .filter(|item| {
+                     !item.action.starts_with("recover-terminal:")
+                         || self.native_retirement_supported(id)
++                        || self.native_pending_recovery_supported(id)
+                 })
+                 .filter(|i| {
+                     self.desktop.is_none()

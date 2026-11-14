@@ -93,7 +93,7 @@ while True:
   wait(listening,'private SSH daemon unavailable')
   host_config=root/'ssh_config';host_config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {root}/client-key\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {root}/known_hosts\n')
   ssh=['ssh','-F',str(host_config),'-T','proof']
- def command(*argv):return [*ssh,shlex.join([str(wrapper),*argv])] if args.ssh else [str(wrapper),*argv]
+ def command(*argv):return [*ssh,shlex.join(['env','SHELL='+env['SHELL'],str(wrapper),*argv])] if args.ssh else [str(wrapper),*argv]
  def api(method,params=None,write=False,ok=True,operation=None):
   request=dict(version=1,id=1,method=method,params=params or {},operation_id=(operation or str(uuid.uuid4())) if write else None)
   r=subprocess.run(command('--api-stdio'),env=env,input=(json.dumps(request)+'\n').encode(),capture_output=True,timeout=30)
@@ -116,6 +116,14 @@ while True:
   assert info['status']['agent']=='codex' and info['status']['pid']==source['pid'],info
   assert info['target']['agent_pid'] in [int(p) for p in (root/'starts').read_text().splitlines()]
   assert info['target']['agent_pid']!=source['pid'], 'guardian and foreground agent identities were conflated'
+  assert native(dict(op='call',target=target,action='inspect'))['command']=='codex'
+  def guardian_usage():
+   fields=Path('/proc',str(source['pid']),'stat').read_text().rsplit(')',1)[1].split()
+   status=Path('/proc',str(source['pid']),'status').read_text().splitlines()
+   switches=sum(int(line.split(':')[1]) for line in status if line.startswith(('voluntary_ctxt_switches:','nonvoluntary_ctxt_switches:')))
+   return int(fields[11])+int(fields[12]),switches
+  idle_before=guardian_usage();time.sleep(.5);idle_after=guardian_usage()
+  assert idle_after[0]-idle_before[0]<=1 and idle_after[1]-idle_before[1]<=2,(idle_before,idle_after)
   native(dict(op='call',target=target,action='guarded-input',data=base64.b64encode(b'MUST_NOT_REACH').decode(),agent=None),ok=False)
   api('panes.send',dict(target=info['target'],text='hello café',submit=True),True)
   wait(lambda:'SUBMIT 1 hello café' in screen(target)['text'],'native API input missing')
@@ -233,6 +241,26 @@ while True:
    if mode=='FORK_RACE':
     assert race.exists(),'race handler was not exercised';pid=int(race.read_text());assert stamp(pid) is None,'child forked during retirement survived'
    assert stamp(fresh_source['pid'])==fresh_source['start_ticks'] and stamp(owner['pid'])==owner['start_ticks']
+  # Foreground metadata belongs to the user's program, not the supervisor.
+  changed_directory=root/'changed-directory';changed_directory.mkdir()
+  plain=root/'plain-source';plain.write_text('#!/usr/bin/python3\nimport os,tty\ntty.setraw(0)\nos.chdir('+repr(str(changed_directory))+')\nos.write(1,b"PLAIN_SOURCE_READY\\r\\n")\nwhile os.read(0,65536):pass\n');plain.chmod(0o700)
+  original_shell=env['SHELL'];env['SHELL']=str(plain)
+  remote_launcher=forced.read_text() if args.ssh else None
+  try:
+   if args.ssh:forced.write_text(remote_launcher.replace('export SHELL='+shlex.quote(original_shell),'export SHELL='+shlex.quote(str(plain))))
+   plain_slot=api('panes.create',dict(project=project,label='Plain source metadata'),True)['pane']
+  finally:
+   env['SHELL']=original_shell
+   if args.ssh:forced.write_text(remote_launcher)
+  plain_target=lookup(project,plain_slot-1);sources.append(plain_target['binding']['source'])
+  wait(lambda:'PLAIN_SOURCE_READY' in screen(plain_target)['text'],'plain shell did not attach')
+  plain_info=api('panes.get',dict(project=project,pane=plain_slot))
+  guardian=plain_target['binding']['source']['pid'];children=Path('/proc',str(guardian),'task',str(guardian),'children').read_text().split()
+  assert len(children)==1;actual=Path('/proc',children[0],'stat').read_text().split('(',1)[1].rsplit(')',1)[0]
+  plain_metadata=native(dict(op='call',target=plain_target,action='inspect'))
+  assert plain_metadata['command']==actual and plain_metadata['command']!='starflux-graphics',plain_metadata
+  assert plain_metadata['cwd']==str(changed_directory) and plain_info['status']['agent'] is None,plain_metadata
+  api('panes.terminate',dict(target=plain_info['target'],confirm='TERMINATE'),True)
   if args.guardian_loss:
    Path(str(root/'starts')+'.detached').unlink(missing_ok=True)
    slot=api('panes.create',dict(project=project,label='Guardian loss'),True)['pane']
@@ -250,7 +278,7 @@ while True:
    assert lookup(project,slot-1)==lost and (root/'starts').read_text()==before
    assert stamp(fresh_source['pid'])==fresh_source['start_ticks']
    print(json.dumps(dict(result='PASS',ssh=args.ssh,guardian_loss_blocks_replacement=True,final_eof_is_not_tree_proof=True,source_binding_preserved=True,no_duplicate_launch=True)))
-  print(json.dumps(dict(result='PASS',ssh=args.ssh,stubborn_pty_child=True,detached_closed_stdio_child=True,nested_subreapers=True,fork_during_retirement=True,natural_exit_tree_cleanup=True,guardian_identity_separate_from_agent=True,no_test_side_kills=not args.guardian_loss,unrelated_sources_preserved=True,recovery=True,termination=True,natural_exit_reap=True,safe_slot_reuse=True,operation_replay_safe=True)))
+  print(json.dumps(dict(result='PASS',ssh=args.ssh,stubborn_pty_child=True,detached_closed_stdio_child=True,nested_subreapers=True,fork_during_retirement=True,natural_exit_tree_cleanup=True,guardian_identity_separate_from_agent=True,idle_supervisor_does_not_poll=True,no_test_side_kills=not args.guardian_loss,foreground_command_and_cwd=True,unrelated_sources_preserved=True,recovery=True,termination=True,natural_exit_reap=True,safe_slot_reuse=True,operation_replay_safe=True)))
 
  finally:
   for fd in extra_children:

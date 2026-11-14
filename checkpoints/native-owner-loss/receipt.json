@@ -1,0 +1,143 @@
+{
+  "saved_at": 1794680736.5439663,
+  "canonical_base_commit": "72d01769695fae0245b293fc86b0cebecf6430d8",
+  "prior_launch_fence_patch_sha256": "0441316c6e363568f9d641184d3c26b4b8a5f68fdcf85c8a5825f374369ac2e1",
+  "source_patch_sha256": "9ec5437c670adb61028d364fdabc0f53998ce9edb832559c7a48fbebafd0bb90",
+  "files": {
+    "src/native_backend.rs": {
+      "before": "a8ab6634e8d6b2cc05dfe4b26f065a29c18dd36d57c47696faa54166a29329af",
+      "after": "45ffa2dca24bb4d2193975706b5af8227947496f7b9235dfbc52fa0692727d66"
+    },
+    "src/source_broker/retirement.rs": {
+      "before": null,
+      "after": "1a5074ce195ff538017633e544e4d7557b8e441cb6544f64d15c9df4cfa80e7c"
+    },
+    "src/source_broker/service.rs": {
+      "before": "d31daf424163ffa30106195fbe0639d81efd2925c17bf8133d3aeea75fd230bc",
+      "after": "1f592cd3ccda5b6d382f00924ec8fe745908349461642d20b1ebca1e11651905"
+    },
+    "src/source_broker/supervision.rs": {
+      "before": "5fe73fbd9cc32ae13699cf5aff583bd725a9b5655c4c7674295a06d1f83a2451",
+      "after": "7abbc9465c331470fcc92b343e67ca8b99022bf60ef67a162817fd052331c692"
+    },
+    "src/source_broker.rs": {
+      "before": "eb8cc46dda5996389e615e8357ee4b9e33a8d5637b2838f6817ad1c322932327",
+      "after": "b173a45e4658bda4ac34fb393f90200509d365f363ed2eb3c795501b93e77635"
+    },
+    "src/ui.rs": {
+      "before": "7bddc8376746f6e5fbb79950865a52118fe23d37d22ad371a6f63be45ac2ebc1",
+      "after": "840b052460deff44154378f1962a1b6f30967a1abb0ce1051a65e7d422b2326c"
+    }
+  },
+  "validation_evidence": {
+    "clippy": {
+      "sha256": "223db1e6d7cff4661fa1acbce38d44020458a40568334b3c33286937899ba27e",
+      "mtime": 1794679803.2514753
+    },
+    "unit": {
+      "sha256": "f3627d4a327b1b789f1daf20df8d854d63dc4ac9d1bfae74be081f7d29b77238",
+      "mtime": 1794679834.4008517
+    },
+    "minimal": {
+      "sha256": "4ef13126628c86cf81febdb6ad8304eda015623b703495ad3a8e433fc233594a",
+      "mtime": 1794679866.0372336
+    },
+    "build": {
+      "sha256": "81f60b66c59f0322a18501c9c1791f3028aa06e9426b772bcfe6892ae43fa80c",
+      "mtime": 1794679905.9697149
+    },
+    "local": {
+      "sha256": "d20da8ef1f988e572230e18680c6eda34414cf9064e6d4920178b4add087dd77",
+      "mtime": 1794680089.1669157
+    },
+    "ssh": {
+      "sha256": "84d970c2ddf478fdd2559445a881af8ac82352dc2e5fadf8ffaf0e8c05ad6fdc",
+      "mtime": 1794680090.3899302
+    },
+    "pending-local": {
+      "sha256": "864ffbe98b2d980897e6f7518a74d0947a48519202a4a268ded452eda311cfe8",
+      "mtime": 1794680089.1669157
+    },
+    "pending-ssh": {
+      "sha256": "ee8805106ff20dc3f12a1bfd6b16f1eae09b856620c05b54a54c5565b93db3c6",
+      "mtime": 1794680090.3899302
+    },
+    "guardian-local": {
+      "sha256": "daedb7b69814e2c0c7ce28e17c6c7dff7f3627d22266d7412555f38038fa6721",
+      "mtime": 1794680088.6999102
+    },
+    "guardian-ssh": {
+      "sha256": "1bd88f90555b5e1c89e3d7d5c9ceb41f448d2bc9b7e24f97b946a9866bd3b050",
+      "mtime": 1794680089.365918
+    },
+    "ui-local": {
+      "sha256": "42284ce42d73b6b951b6be2468048c9bc489dd46993775d78bda9ecf2360a3ce",
+      "mtime": 1794680094.8279834
+    },
+    "ui-ssh": {
+      "sha256": "06b1d8f0c513850a550c4c55379617bddd228b1440dad7bb9bd3b75d8460cf9a",
+      "mtime": 1794680095.952997
+    },
+    "ui-cells": {
+      "sha256": "2508d4d832b763b68b937c05a4988d43fec5500275ac4f3a7dc065318794d863",
+      "mtime": 1794680094.8269835
+    },
+    "ui-ssh-cells": {
+      "sha256": "d3386b693dc30d1a0bcc984d351017437d2baef06f1784e9959fdfe830636564",
+      "mtime": 1794680095.9699972
+    },
+    "fence-local": {
+      "sha256": "7f1f5e1960b7c8d9f90fb00f477e71077d6c6235d01c86af7934902795dbd073",
+      "mtime": 1794680209.86336
+    },
+    "fence-ssh": {
+      "sha256": "d8d432a8fdf3b144b2375bb38a7a433c7eaccc22dd221673fdd34b9af908851a",
+      "mtime": 1794680211.1423752
+    },
+    "metadata-local": {
+      "sha256": "939d1820ea09d73ebba46d9a073bcdaae30d9aa874af068b1c4f0712d8ae0be2",
+      "mtime": 1794680222.932516
+    },
+    "metadata-ssh": {
+      "sha256": "fb33784fdd58f469fb6fb0fc7b4a1e45ab761be747d2d28758499d521aa3b6ed",
+      "mtime": 1794680224.08053
+    },
+    "older-local": {
+      "sha256": "b6f663d3f4a077be98a60614401a5a7b4e7eb4e93be089a05012fecc939677be",
+      "mtime": 1794680210.4183667
+    },
+    "older-ssh": {
+      "sha256": "82eab7368a3ac197eca815c20b69855e59b0d08105d4be0529555f221256e3ae",
+      "mtime": 1794680212.9493968
+    },
+    "shell": {
+      "sha256": "d7d4f8f749102dbe11408a6d5f68bdf318db25f28af8679257f17d78ae737a5d",
+      "mtime": 1794680209.5813565
+    },
+    "tree-ssh": {
+      "sha256": "17fd718a379a765a740e41c5f7b1ca933a131a31260db4d1eeef34aa7ce91a02",
+      "mtime": 1794680235.5046663
+    }
+  },
+  "candidate_binary_sha256": "2f3187fdc70f14c299290c179647df106ce3e3fd30a0cdae364520ea2941ed62",
+  "candidate_lock_sha256": "c66c76d0baea0c6a350031ae157ce349b2978bd301047a4cfe75ddbbaafb36ef",
+  "fixtures": {
+    "test-native-owner-loss.py": "517efe137395ba55f2b249cec7e08c454793926c3f6ebdbad37dac34c690190c",
+    "test-native-owner-loss-ui.py": "622ce65db963674539a3ff276b2d67f17fc6fd4c8ed30f00b5b6507dd4456690",
+    "run-native-tree-candidate": "6b910cf289303fa01b3bf8f311c3da6b5f5f4ff65bd3656836344087db180a39"
+  },
+  "live_safety_sha256": "2ca92b278ee975851441988e0f52785c0565fb6f4729487599ec3274f9002a7e",
+  "original_processes_preserved": 5,
+  "installed_binary_unchanged": true,
+  "shipping_activation": false,
+  "retained_titles_and_icons": true,
+  "certified_owner_loss_recovery": true,
+  "owner_pidfd_lifetime_monitor": true,
+  "certificate_requires_echild": true,
+  "missing_or_corrupt_evidence_refused": true,
+  "lost_open_reference_recovered": true,
+  "supervisor_loss_refuses_replacement": true,
+  "general_owner_loss_recovery_complete": false,
+  "rich_terminal_metadata_complete": false,
+  "canonical_promotion": false
+}

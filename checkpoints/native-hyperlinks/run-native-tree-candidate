@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+source /home/bstar/projects/star/starflux/target/run-env.sh
+exec /home/bstar/projects/star/starflux/target/native-supervision-build/release/starflux-graphics "$@"

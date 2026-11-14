@@ -1,0 +1,60 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,4 +1,6 @@
+ [package]
++autobins = false
++autoexamples = false
+ name = "starflux"
+ version = "0.2.0"
+ edition = "2024"
+@@ -59,3 +61,27 @@
+ opt-level = 2
+ debug = 1
+ overflow-checks = true
++
++[[bin]]
++name = "starflux-native-rebased"
++path = "src/main.rs"
++
++[[example]]
++name = "rebased-graphics-authority-proof"
++path = "examples/graphics-authority-proof.rs"
++
++[[example]]
++name = "rebased-graphics-owner-proof"
++path = "examples/graphics-owner-proof.rs"
++
++[[example]]
++name = "rebased-graphics-presenter-proof"
++path = "examples/graphics-presenter-proof.rs"
++
++[[example]]
++name = "rebased-graphics-stream-proof"
++path = "examples/graphics-stream-proof.rs"
++
++[[example]]
++name = "rebased-native-source-broker"
++path = "examples/native-source-broker.rs"
+diff --git a/terminal-client/Cargo.toml b/terminal-client/Cargo.toml
+--- a/terminal-client/Cargo.toml
++++ b/terminal-client/Cargo.toml
+@@ -5,7 +5,7 @@
+ license = "MIT"
+ 
+ [[bin]]
+-name = "starflux-terminal-client"
++name = "starflux-terminal-client-rebased"
+ path = "src/main.rs"
+ 
+ [dependencies]
+diff --git a/vendor/vt100/Cargo.toml b/vendor/vt100/Cargo.toml
+--- a/vendor/vt100/Cargo.toml
++++ b/vendor/vt100/Cargo.toml
+@@ -15,3 +15,6 @@
+ unicode-width = "0.2.1"
+ vte = "0.15.0"
+ memchr = "2.7.4"
++
++# Standalone staging workspace beneath the canonical workspace.
++[workspace]

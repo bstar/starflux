@@ -1,0 +1,146 @@
+# Herdr parity pause handoff — November 14, 2026
+
+The user requested a pause at a sensible point. The full goal is unfinished.
+The current recovery changes are frozen in reconstructable, uninstalled
+checkpoints; no production backend was switched. AI conversation resumption is
+the user's explicit priority. Restoring a shell is not successful AI recovery.
+
+## Current source and safety
+
+- Canonical HEAD: `5a956fdf6bcf58ded14d03498c4ecf72cd3e804a`.
+- Canonical sidebar/grid/toggle edits in `src/{main,ui,shelf,graphical}.rs` are
+  preserved. They are distinct from the native candidate.
+- Native source: `target/native-rebase-workspace`; builds:
+  `target/native-rebase-build`; private launcher:
+  `target/run-native-rebase-candidate`.
+- The installed `~/.local/bin/starflux` wrapper and executable were not replaced
+  during native work. All five tracked production PID/start identities still
+  match the baseline. `target/parity-pause-safety.json` records the final check.
+  App Space and live agent processes were not migrated, refreshed or stopped.
+- Canonical test fixtures and documentation have uncommitted changes. No commit
+  or push was made during this work. Preserve the user's existing worktree edits.
+- Shared dependency pins and canonical `Cargo.lock` are unchanged. Do not edit
+  the immutable Cargo KIT checkout or a sibling KIT project to continue this.
+
+## Reconstruct the latest candidate
+
+Start with a disposable archive of the canonical commit, outside any enclosing
+Cargo workspace. Apply these patches, in order:
+
+1. `checkpoints/native-rebased/canonical-ui.patch`
+2. `checkpoints/native-rebased/source.patch`
+3. `checkpoints/native-conversation-recovery/source.patch`
+4. `checkpoints/native-startup/source.patch`
+5. `checkpoints/native-launch-authority/source.patch`
+
+The rebased source already contains the older supervision/link/metadata/fence/
+owner-loss chain. Do not apply those older patches again. Each later checkpoint
+is an increment against its predecessor; its receipt records source/evidence
+identities. Fixture patches accompany the conversation and startup increments.
+For private staging only, the rebased `isolated-build-layout.patch` gives unique
+binary/example names. Production integration must retain canonical manifests
+and executable names instead. The source and installed executable are separate.
+
+## Last completed work
+
+Saved conversation references now survive explicit native recovery without
+rewriting the original provider report or granting old reports health authority.
+Repeated recovery retains that reference; recycled unrelated slots and stale
+heartbeats are rejected. Explicit resume starts the saved argument vector in a
+new tab and retains the recovered shell.
+
+The release gate caught a supervisor-start regression. Native startup now waits
+for the actual requested program's exec result before publishing a live source.
+Matching failed-exec and ECHILD retirement records permit explicit fresh-shell
+recovery; missing or mismatched proof remains uncertain. Consumed IDs cannot be
+replayed. Standalone/managed streamed worker and real menu/confirmation tests
+pass locally and over SSH.
+
+Further repeated cold-start checking exposed a separate race: one frontend
+consumed a resume permission, while another could create a default shell before
+native intent publication. The latest two-file launch-authority increment moves
+shared command selection, one-shot consumption and intent publication into one
+project transaction. It also tolerates another view publishing the same ready
+source before the opener's final save. Discovery RPCs stay outside the lock.
+
+## Evidence and its limits
+
+- **Latest launch-authority increment:** strict all-target/all-feature Clippy,
+  release all-feature tests (278 main + 4 client; 4 main ignored), binary build,
+  and private cold-runtime/saved-vector resume locally in graphical mode and
+  over SSH in cells mode pass. Logs: `target/native-launch-authority-*.log`.
+  No-default-feature, Nix and deterministic handoff-race coverage for this exact
+  increment remain outstanding.
+- **Previous startup increment:** strict Clippy, release matrices (278/277 main
+  + 4 client, with 4 main ignored), binary/example builds, all four standalone/
+  managed local/SSH source-broker scenarios and two failed-exec UI scenarios
+  pass. Its Linux x86_64 Nix package and installed-executable smoke check passed.
+  ARM64 and physical desktop/media acceptance were not established by this run.
+- **Production-named release checkout:**
+  `/home/bstar/.cache/starflux-release-gate-n6vyxviv`. Initial checks stopped at
+  a Python test fixture's `exec -a` interpreter-path bug. The corrected
+  `sys.executable` fixture passed; a continuation later found the supervisor
+  startup bug. A final continuation on the startup/conversation source revision
+  reran formatting, strict Clippy, both release matrices and executable/example
+  builds, then passed the remaining source-worker and behavioral checks through
+  local/SSH actual cells acceptance. Its exit is **0**. Original failed logs
+  remain intact; this is segmented evidence across revisions, not a claim that
+  one unchanged `scripts/check-release` invocation passed on the latest source.
+- Release logs/state: `target/native-release-gate{,-resume,-startup-resume}.log`
+  and `target/native-release-gate-state.json`. Nix startup logs/state:
+  `target/native-startup-nix{.log,.exit,-state.json}`. These runs have completed.
+- The earlier native cold-start failure is preserved in
+  `target/native-startup-cold-local.log` and
+  `target/native-startup-cold-repeat-local-0.log`. A private fake-agent diagnostic
+  under `target/native-startup-cold-debug-starflux-session-proof-*.json` captures
+  the wrong-shell outcome. Do not erase the failure or treat a single retry as
+  proof the race never existed.
+- All conversation-resume UI fixtures use disposable fake programs. They verify
+  registered identity persistence and exact-vector execution, **not actual
+  Codex/Claude conversation resumption**. No real agent was prompted to obtain
+  these results.
+
+## Resume work in this order
+
+1. Add a deterministic two-frontend regression that stalls the resume-owning
+   frontend between command claim and native intent publication. The other view
+   must launch the same authorized resume command exactly once, never a default
+   shell. A private host-helper wrapper can gate the initiating controller's
+   old-backend probe while the other frontend proceeds. Preserve ordinary input
+   and independently responsive views during the gate.
+2. Repeat native cold-start/recovery tests with the latest launch-authority fix,
+   including local/SSH and both presentations. Complete its minimal-feature,
+   Nix and production-layout checks. Revalidate source/evidence hashes rather
+   than relabeling previous-stage logs.
+3. Implement provider-confirmed identity capture and verified native AI resume.
+   Follow session/thread switches, delayed callbacks and pane generations.
+   Preserve provider/model/authentication choices. Never guess an ID from cwd,
+   titles, newest transcripts or `--last`, and never replay old prompts/approvals.
+   Missing or ambiguous identity must be visible to the user.
+4. Codex 0.169.0's local exported schema is at
+   `target/codex-protocol-schema-0.169.0/`. Its CLI help and schema were inspected
+   read-only. The official [hook guide](https://learn.chatgpt.com/docs/hooks)
+   supplies current session IDs but does not establish pane focus: switching
+   away does not immediately end a session. A launch/pane binding and explicit
+   thread-switch handling are needed. Preserve existing hooks and trust policy;
+   no live hook installation or provider inference has been performed.
+5. Finish remaining native ownership/adoption, uncertainty, graphics/history/
+   placement, network/media and old-owner acceptance. Integrate canonical Rust
+   source only after validating the exact revision; keep existing tmux/Herdr/
+   transferred sources on their current owners. Do not install or refresh live
+   windows merely because compilation or a narrow private fixture passes.
+
+## Entire remaining goal
+
+Every unchecked requirement in `docs/plan.md` remains in scope: provider lifecycle
+adapters and broader same-conversation recovery; layered lifecycle diagnostics;
+SSH OS-notification forwarding; cross-project/separate-tab-group pane movement;
+remaining automation/session/input workflows; combined saved-machine agent view
+and controller switching; legacy pixel/inline-graphics cold restoration; remaining
+plugin workflows and graphics compatibility. Preserve completed worktree,
+keyboard, history and narrow-screen behavior when integrating the native source.
+Native-source migration does not replace the full Herdr parity objective.
+
+The goal should remain **paused**, not complete or blocked, until the user asks
+to resume. No feature work or new background validation should continue while
+paused.
