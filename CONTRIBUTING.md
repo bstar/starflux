@@ -63,3 +63,14 @@ the actual application worker/connector in private data/runtime namespaces and
 checks durable discovery, concurrent pane intents, read-only uncertain-launch
 recovery, runtime loss and loaded-owner upgrades. It does not enable the normal
 workspace backend. See `docs/native-sources.md` for the integration boundary.
+
+The staged native backend's two-frontend resume handoff is exercised with
+`STARFLUX_TEST_APP=/absolute/path/to/private-launcher python3 scripts/test-session-manager.py --native-launch-race`.
+Repeat with `--cells`, `--ssh`, and both together. The private Python helper
+blocks one opener before native intent publication while the other view must
+execute the exact saved resume vector once. Both views must retain ordinary
+terminal input, then attach to the same resumed source. An older build without
+the launch-authority fix must fail this regression. The launcher override is
+test-only; it does not install a binary or change a normal workspace's backend.
+These checks send input through private protocol pipes, never the desktop mouse
+or keyboard. They use fake agents and do not establish real provider recovery.

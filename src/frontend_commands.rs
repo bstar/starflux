@@ -32,6 +32,16 @@ pub enum Direction {
     Up,
     Down,
 }
+impl Direction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Space {
@@ -64,6 +74,43 @@ pub enum Command {
         project: String,
         pane: u8,
         epoch: Option<String>,
+    },
+    ResumeConversation {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+        run_id: String,
+    },
+    SplitPane {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+        axis: crate::panes::Axis,
+    },
+    SplitExistingTab {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+        tab: u8,
+        tab_epoch: Option<String>,
+        axis: crate::panes::Axis,
+    },
+    CloseSplitPane {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+    },
+    MovePane {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+        direction: Direction,
+    },
+    MovePaneToEdge {
+        project: String,
+        pane: u8,
+        epoch: Option<String>,
+        direction: Direction,
     },
     SelectSpace {
         project: String,
@@ -129,12 +176,62 @@ impl Command {
                 project,
                 pane,
                 epoch,
+            }
+            | Self::CloseSplitPane {
+                project,
+                pane,
+                epoch,
+            }
+            | Self::ResumeConversation {
+                project,
+                pane,
+                epoch,
+                ..
+            }
+            | Self::SplitPane {
+                project,
+                pane,
+                epoch,
+                ..
+            }
+            | Self::SplitExistingTab {
+                project,
+                pane,
+                epoch,
+                ..
+            }
+            | Self::MovePane {
+                project,
+                pane,
+                epoch,
+                ..
+            }
+            | Self::MovePaneToEdge {
+                project,
+                pane,
+                epoch,
+                ..
             } => {
                 valid_project(project)
                     && (1..=32).contains(pane)
                     && epoch.as_ref().is_none_or(|s| {
                         !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)
                     })
+                    && match self {
+                        Self::ResumeConversation { run_id, .. } => {
+                            uuid::Uuid::parse_str(run_id).is_ok()
+                        }
+                        Self::SplitExistingTab { tab, tab_epoch, .. } => {
+                            tab != pane
+                                && (1..=32).contains(tab)
+                                && tab_epoch.as_ref().is_none_or(|s| {
+                                    !s.is_empty()
+                                        && s.len() <= 128
+                                        && !s.chars().any(char::is_control)
+                                })
+                        }
+                        _ => true,
+                    }
             }
         };
         if !valid {
@@ -260,7 +357,7 @@ fn observe(view: &crate::frontend::View) -> Result<Value> {
         "Frontend heartbeat is stale"
     );
     Ok(
-        json!({"frontend":view.id,"workspace":view.workspace,"project":snapshot["active_project"],"session":snapshot["collection"].as_str().unwrap_or("default"),"commands_available":snapshot["frontend_commands"]==1,"plugin_pane_commands":snapshot["frontend_plugin_panes"]==1,"plugin_popup_commands":snapshot["frontend_plugin_popups"]==true,"busy":snapshot["frontend_command_busy"],"presentation":snapshot["presentation"],"app_space_available":snapshot["app_view_available"],"target":target}),
+        json!({"frontend":view.id,"workspace":view.workspace,"project":snapshot["active_project"],"session":snapshot["collection"].as_str().unwrap_or("default"),"commands_available":snapshot["frontend_commands"]==1,"move_pane_to_edge_commands":snapshot["frontend_move_pane_to_edge"]==true,"close_split_pane_commands":snapshot["frontend_close_split_pane"]==true,"split_existing_tab_commands":snapshot["frontend_split_existing_tab"]==true,"plugin_pane_commands":snapshot["frontend_plugin_panes"]==1,"plugin_popup_commands":snapshot["frontend_plugin_popups"]==true,"busy":snapshot["frontend_command_busy"],"presentation":snapshot["presentation"],"app_space_available":snapshot["app_view_available"],"target":target}),
     )
 }
 pub fn list(project: Option<&str>) -> Result<Value> {
@@ -434,6 +531,30 @@ pub fn submit(request: &crate::automation::Request, params: Params) -> Result<Va
         ));
     }
     let observed = target_snapshot(&params.target)?;
+    if matches!(params.command, Command::MovePaneToEdge { .. })
+        && observed["move_pane_to_edge_commands"] != true
+    {
+        return Err(fault(
+            "unsupported_capability",
+            "Refresh this frontend to enable moving panes to an edge",
+        ));
+    }
+    if matches!(params.command, Command::CloseSplitPane { .. })
+        && observed["close_split_pane_commands"] != true
+    {
+        return Err(fault(
+            "unsupported_capability",
+            "Refresh this frontend to enable closing a split pane",
+        ));
+    }
+    if matches!(params.command, Command::SplitExistingTab { .. })
+        && observed["split_existing_tab_commands"] != true
+    {
+        return Err(fault(
+            "unsupported_capability",
+            "Refresh this frontend to enable splitting with an existing tab",
+        ));
+    }
     if matches!(params.command, Command::PresentPluginPane { .. })
         && observed["plugin_pane_commands"] != true
     {

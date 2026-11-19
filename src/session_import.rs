@@ -32,7 +32,7 @@ fn socket_stamp(path: &std::path::Path) -> Result<Value> {
 fn hash(value: &Value) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
 }
-fn herdr_server_stamp(socket: &std::path::Path) -> Result<Value> {
+pub(crate) fn herdr_server_stamp(socket: &std::path::Path) -> Result<Value> {
     use std::os::fd::AsRawFd;
     let stamp = socket_stamp(socket)?;
     let connection = std::os::unix::net::UnixStream::connect(socket)?;

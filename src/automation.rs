@@ -55,9 +55,7 @@ pub fn error(id: Value, code: &str, message: &str, outcome: &str) -> Value {
     json!({"version":1,"id":id,"ok":false,"error":{"code":code,"message":message,"outcome":outcome}})
 }
 pub(crate) fn failed(id: Value, e: anyhow::Error) -> Value {
-    let code = e
-        .downcast_ref::<Fault>()
-        .map_or("operation_failed", |e| e.code);
+    let code = fault_code(&e).unwrap_or("operation_failed");
     error(
         id,
         code,
@@ -68,6 +66,9 @@ pub(crate) fn failed(id: Value, e: anyhow::Error) -> Value {
             "not_applied"
         },
     )
+}
+pub(crate) fn fault_code(error: &anyhow::Error) -> Option<&'static str> {
+    error.downcast_ref::<Fault>().map(|fault| fault.code)
 }
 fn success(id: Value, result: Value) -> Value {
     json!({"version":1,"id":id,"ok":true,"result":result})
@@ -87,6 +88,8 @@ fn mutating(method: &str) -> bool {
     matches!(
         method,
         "sessions.create"
+            | "sessions.rename"
+            | "sessions.delete"
             | "category_agent.configure"
             | "category_agent.start"
             | "category_agent.cancel"
@@ -117,6 +120,7 @@ fn mutating(method: &str) -> bool {
             | "worktrees.create"
             | "worktrees.open"
             | "worktrees.remove"
+            | "worktrees.set_lock"
             | "sessions.default"
             | "panes.create"
             | "panes.rename"
@@ -164,6 +168,7 @@ const METHODS: &[&str] = &[
     "plugins.cancel",
     "plugins.service",
     "attention.query",
+    "attention.forward",
     "attention.mark_read",
     "notifications.settings",
     "notifications.configure",
@@ -173,15 +178,19 @@ const METHODS: &[&str] = &[
     "machines.save",
     "machines.remove",
     "machines.test",
+    "machines.agents",
     "machines.project",
     "worktrees.list",
     "worktrees.create",
     "worktrees.open",
     "worktrees.remove",
+    "worktrees.set_lock",
     "capabilities",
     "operations.get",
     "sessions.list",
     "sessions.create",
+    "sessions.rename",
+    "sessions.delete",
     "sessions.external",
     "sessions.import",
     "sessions.default",
@@ -189,6 +198,7 @@ const METHODS: &[&str] = &[
     "panes.list",
     "panes.get",
     "panes.capture",
+    "panes.search_history",
     "panes.saved_screen",
     "snapshots.status",
     "panes.create",
@@ -197,6 +207,7 @@ const METHODS: &[&str] = &[
     "panes.terminate",
     "panes.wait",
     "agents.report",
+    "agents.live",
     "attention.list",
     "attention.dismiss",
     "frontends.list",
@@ -362,6 +373,8 @@ struct Target {
 struct Pane {
     project: String,
     pane: u8,
+    #[serde(default)]
+    allow_unavailable: bool,
 }
 fn pane(config: &Config, state: &ProjectState, pane: u8) -> Result<usize> {
     if !(1..=32).contains(&pane) {
@@ -377,7 +390,12 @@ fn pane(config: &Config, state: &ProjectState, pane: u8) -> Result<usize> {
     Ok(id)
 }
 fn inspect(config: &Config, id: usize) -> Result<Value> {
-    let mut health = config.call(id, &config.request(id, "inspect"))?;
+    let request = config.request(id, "inspect");
+    let mut health = if id == 0 && config.tmux.is_some() {
+        config.guarded_tmux_call(&request)?
+    } else {
+        config.call(id, &request)?
+    };
     agent_state::enrich(config, id, &mut health);
     if !config.remote(id)
         && let Some(pid) = health["pid"].as_u64().and_then(|p| u32::try_from(p).ok())
@@ -391,8 +409,28 @@ fn current_run(health: &Value) -> Option<&str> {
         .then(|| health["agent_record"]["run_id"].as_str())
         .flatten()
 }
+fn saved_conversation(health: &Value) -> Value {
+    let record = &health["agent_record"];
+    let Some(conversation_id) = record["conversation_id"].as_str() else {
+        return Value::Null;
+    };
+    json!({
+        "conversation_id": conversation_id,
+        "run_id": record["run_id"],
+        "harness": record["harness"],
+        "source": record["source"],
+        "report_epoch": record["epoch"],
+        "resume_available": record["resume_argv"].is_array(),
+    })
+}
+fn input_transport_available(health: &Value, adopted: bool) -> bool {
+    health["health"]["transport"] != "disconnected"
+        && (!adopted || health["bridge_connected"] == true)
+}
 fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) -> Value {
-    let target = if let Ok((pid, start, boot)) = config.terminal_identity(id, health) {
+    let target = if health["source"] != "herdr"
+        && let Ok((pid, start, boot)) = config.terminal_identity(id, health)
+    {
         json!(Target {
             project: config.workspace.clone(),
             pane: (id + 1) as u8,
@@ -421,6 +459,12 @@ fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) ->
         "agent_start_ticks",
         "state",
         "source",
+        "pane_id",
+        "terminal_id",
+        "foreground_process_group",
+        "identity_error",
+        "error",
+        "bridge_connected",
         "health",
     ] {
         if let Some(value) = health.get(key) {
@@ -429,8 +473,9 @@ fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) ->
     }
     let guardable =
         target.is_object() && (!health["agent"].is_string() || health["agent_pid"].is_number());
-    json!({"project":config.workspace,"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id),"target":target,
-        "capabilities":{"input":guardable && !config.externally_owned(id) && (config.adopted_terminal(id).is_none() || health["bridge_connected"]==true),"terminate":guardable && !config.externally_owned(id)},"status":public})
+    let input_available = input_transport_available(health, config.adopted_terminal(id).is_some());
+    json!({"project":config.workspace,"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id),"target":target,"saved_conversation":saved_conversation(health),
+        "capabilities":{"input":guardable && (!config.externally_owned(id) || (id == 0 && config.tmux.is_some())) && input_available,"terminate":guardable && !config.externally_owned(id)},"status":public})
 }
 fn guarded(target: &Target) -> Result<(Config, ProjectState, usize, Value)> {
     let config = project(&target.project)?;
@@ -440,6 +485,12 @@ fn guarded(target: &Target) -> Result<(Config, ProjectState, usize, Value)> {
         return Err(fault("stale_target", "Terminal generation changed"));
     }
     let health = inspect(&config, id)?;
+    if health["source"] == "herdr" {
+        return Err(fault(
+            "unsupported_capability",
+            "Imported Herdr process identities are read-only",
+        ));
+    }
     let identity = config
         .terminal_identity(id, &health)
         .map_err(|e| fault("stale_target", format!("{e:#}")))?;
@@ -561,15 +612,97 @@ fn pane_resource(config: &Config, state: &ProjectState, id: usize) -> Value {
 fn agent_resource(config: &Config, record: &agent_state::Record) -> Value {
     json!({"project":config.workspace,"pane":record.pane+1,"epoch":record.report.epoch,"run_id":record.report.run_id,"state":record.report.state,"harness":record.report.harness,"source":record.report.source,"conversation_id":record.report.conversation_id})
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LiveAgentPage {
+    #[serde(default)]
+    offset: usize,
+    limit: Option<usize>,
+    project: Option<String>,
+    session: Option<String>,
+}
+
+fn live_agents(page: LiveAgentPage) -> Result<Value> {
+    let limit = page.limit.unwrap_or(8);
+    ensure!((1..=16).contains(&limit), "limit must be 1..16");
+    let mut candidates = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(session) = &page.session {
+        session_catalog::valid(session)?;
+    }
+    let projects = if let Some(id) = &page.project {
+        vec![project(id)?]
+    } else {
+        session_catalog::projects()
+    };
+    for config in projects.into_iter().filter(|config| {
+        page.session
+            .as_ref()
+            .is_none_or(|session| *session == session_catalog::group(config))
+    }) {
+        match ProjectState::load(&config) {
+            Ok(state) => candidates.extend(
+                state
+                    .terminal_ids()
+                    .into_iter()
+                    .filter(|pane| config.canonical_pane(*pane) == *pane)
+                    .map(|pane| {
+                        (
+                            config.clone(),
+                            pane,
+                            state.terminal_epochs.get(&pane).cloned(),
+                        )
+                    }),
+            ),
+            Err(error) => {
+                warnings.push(json!({"project":config.workspace,"error":format!("{error:#}")}))
+            }
+        }
+    }
+    let next_offset = page.offset.saturating_add(limit);
+    let next = (next_offset < candidates.len()).then_some(next_offset);
+    let mut agents = Vec::new();
+    for (config, pane, epoch) in candidates.into_iter().skip(page.offset).take(limit) {
+        match inspect(&config, pane) {
+            Ok(health) if health["agent"].is_string() => agents.push(json!({
+                "project":config.workspace, "project_label":config.label, "pane":pane+1,
+                "session":session_catalog::group(&config), "epoch":epoch,
+                "harness":health["agent"], "state":health["state"], "health":health["health"],
+                "saved_conversation":saved_conversation(&health)
+            })),
+            Ok(_) => {}
+            Err(error) => warnings.push(
+                json!({"project":config.workspace,"pane":pane+1,"error":format!("{error:#}")}),
+            ),
+        }
+    }
+    Ok(json!({"agents":agents,"warnings":warnings,"next_offset":next}))
+}
 fn attention_resource(config: &Config, item: &agent_state::Attention) -> Value {
     json!({"project":config.workspace,"pane":item.pane+1,"epoch":item.epoch,"id":item.id,"source":item.source,"run_id":item.run_id,"sequence":item.sequence,"state":item.state,"observed_ms":item.observed_ms,"dismissed":item.dismissed})
 }
 fn dispatch(request: &Request) -> Result<Value> {
     let p = &request.params;
     match request.method.as_str() {
-        "attention.query" => Ok(serde_json::to_value(crate::notifications::query(
-            &params(p)?,
-        )?)?),
+        "attention.query" => {
+            let sampled_ms = crate::notifications::now_ms();
+            let mut page = serde_json::to_value(crate::notifications::query(&params(p)?)?)?;
+            page["sampled_ms"] = json!(sampled_ms);
+            Ok(page)
+        }
+        "attention.forward" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                workspace: String,
+                frontend: String,
+            }
+            let p: P = params(p)?;
+            Ok(serde_json::to_value(crate::notifications::forward_page(
+                &p.workspace,
+                &p.frontend,
+            )?)?)
+        }
         "attention.mark_read" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -603,6 +736,8 @@ fn dispatch(request: &Request) -> Result<Value> {
             let _: Empty = params(p)?;
             crate::notifications::delivery_status()
         }
+        "machines.agents" => Ok(crate::machines::agent_overview(params(p)?)?),
+        "agents.live" => Ok(live_agents(params(p)?)?),
         "machines.list" => {
             let _: Empty = params(p)?;
             Ok(json!({"machines":crate::machines::list()?}))
@@ -685,6 +820,24 @@ fn dispatch(request: &Request) -> Result<Value> {
                 json!({"project":opened.workspace,"origin":crate::worktrees::link(&opened)?.map(|l|l.origin),"directory":opened.directory}),
             )
         }
+        "worktrees.set_lock" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                project: String,
+                target: Value,
+                locked: bool,
+                reason: Option<String>,
+            }
+            let p: P = params(p)?;
+            let result = crate::worktrees::set_lock(
+                &project(&p.project)?,
+                &p.target,
+                p.locked,
+                p.reason.as_deref(),
+            )?;
+            Ok(json!({"repository":result.catalog.repository,"worktree":result.worktree}))
+        }
         "worktrees.remove" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -764,12 +917,123 @@ fn dispatch(request: &Request) -> Result<Value> {
                 json!({"project":p.project,"panes":state.terminal_ids().into_iter().filter(|id|config.canonical_pane(*id)==*id).map(|id|json!({"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id)})).collect::<Vec<_>>()}),
             )
         }
-        "panes.get" | "panes.capture" => {
-            let p: Pane = params(p)?;
+        "panes.search_history" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                project: String,
+                pane: u8,
+                query: String,
+                limit: Option<usize>,
+                cursor: Option<String>,
+                #[serde(default)]
+                ignore_case: bool,
+            }
+            let p: P = params(p)?;
+            let limit = p.limit.unwrap_or(30);
+            if p.query.is_empty()
+                || p.query.chars().count() > 128
+                || p.query.chars().any(char::is_control)
+                || !(1..=100).contains(&limit)
+            {
+                return Err(fault(
+                    "invalid_params",
+                    "Search needs 1–128 printable characters and a limit of 1–100",
+                ));
+            }
+            let page = p
+                .cursor
+                .as_deref()
+                .map(|cursor| {
+                    let (offset, hash) = cursor
+                        .split_once(':')
+                        .ok_or_else(|| fault("invalid_params", "Invalid history cursor"))?;
+                    let offset = offset
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| (1..=2 * 1024 * 1024).contains(n))
+                        .ok_or_else(|| fault("invalid_params", "Invalid history cursor offset"))?;
+                    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        return Err(fault("invalid_params", "Invalid history cursor digest"));
+                    }
+                    Ok((offset, hash))
+                })
+                .transpose()?;
             let config = project(&p.project)?;
             let state = ProjectState::load(&config)?;
             let id = pane(&config, &state, p.pane)?;
-            let health = inspect(&config, id)?;
+            let (bytes, source) = config.terminal_history(id)?;
+            let latest = ProjectState::load(&config)?;
+            let epoch = state.terminal_epochs.get(&id);
+            if latest.terminal_epochs.get(&id) != epoch || !latest.terminal_ids().contains(&id) {
+                return Err(fault("stale_target", "Pane changed while reading"));
+            }
+            let mut identity = Sha256::new();
+            identity.update(serde_json::to_vec(&(
+                &p.project,
+                p.pane,
+                epoch,
+                source,
+                &p.query,
+                p.ignore_case,
+            ))?);
+            identity.update(&bytes);
+            let digest = format!("{:x}", identity.finalize());
+            let offset = if let Some((offset, expected)) = page {
+                if expected != digest {
+                    return Err(fault(
+                        "stale_history",
+                        "History capture changed; start the search again",
+                    ));
+                }
+                offset
+            } else {
+                0
+            };
+            let (total, matches) = crate::terminal_history::search_capture(
+                &bytes,
+                &p.query,
+                offset,
+                limit,
+                p.ignore_case,
+            );
+            let end = offset + matches.len();
+            let next_cursor = (end < total).then(|| format!("{end}:{digest}"));
+            Ok(
+                json!({"project":p.project,"pane":p.pane,"epoch":epoch,"source":source,
+                      "read_only":true,"total":total,"matches":matches,"next_cursor":next_cursor}),
+            )
+        }
+        "panes.get" | "panes.capture" => {
+            let p: Pane = params(p)?;
+            ensure!(
+                !p.allow_unavailable || request.method == "panes.get",
+                "allow_unavailable applies only to panes.get"
+            );
+            let config = project(&p.project)?;
+            let state = ProjectState::load(&config)?;
+            let id = pane(&config, &state, p.pane)?;
+            let health = if let Some(source) = config
+                .herdr
+                .as_ref()
+                .filter(|source| source.panes.contains_key(&id))
+            {
+                source.inspect_identity(id).map(|mut health| {
+                    agent_state::enrich(&config, id, &mut health);
+                    health
+                })
+            } else {
+                inspect(&config, id)
+            };
+            let health = match health {
+                Ok(health) => health,
+                Err(error) if p.allow_unavailable => {
+                    let mut health = json!({"state":"disconnected","error":format!("{error:#}")});
+                    agent_state::enrich(&config, id, &mut health);
+                    health
+                }
+                Err(error) => return Err(error),
+            };
             let mut result = observed(&config, &state, id, &health);
             if request.method == "panes.capture" {
                 let (bytes, source) = config.terminal_history(id)?;
@@ -797,6 +1061,39 @@ fn dispatch(request: &Request) -> Result<Value> {
             let config = session_catalog::create(&p.name, &p.directory, &p.theme)?;
             config.ensure(0, None)?;
             Ok(json!({"session":session_catalog::group(&config),"project":config.workspace}))
+        }
+        "sessions.rename" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                session: String,
+                expected_name: String,
+                name: String,
+            }
+            let p: P = params(p)?;
+            Ok(serde_json::to_value(session_catalog::rename(
+                &p.session,
+                &p.expected_name,
+                &p.name,
+            )?)?)
+        }
+        "sessions.delete" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                session: String,
+                expected_projects: std::collections::BTreeSet<String>,
+                fallback_project: String,
+                confirm: String,
+            }
+            let p: P = params(p)?;
+            ensure!(
+                p.confirm == "DELETE",
+                "Type DELETE to stop owned programs and delete the session"
+            );
+            let fallback = project(&p.fallback_project)?;
+            session_catalog::delete_checked(&p.session, "", &fallback, Some(&p.expected_projects))?;
+            Ok(json!({"session":p.session,"deleted":true,"fallback_project":p.fallback_project}))
         }
         "sessions.default" => {
             if p.get("session").is_none() {
@@ -885,11 +1182,18 @@ fn dispatch(request: &Request) -> Result<Value> {
             let t = target(&p.target)?;
             let config = project(&t.project)?;
             let _lock = project_sync::transaction(&config)?;
-            let (config, _, id, _) = guarded(&t)?;
-            if config.externally_owned(id) {
+            let (config, _, id, health) = guarded(&t)?;
+            let imported_tmux = id == 0 && config.tmux.is_some();
+            if config.externally_owned(id) && !imported_tmux {
                 return Err(fault(
                     "unsupported_capability",
                     "Imported terminals retain their source input ownership",
+                ));
+            }
+            if !input_transport_available(&health, config.adopted_terminal(id).is_some()) {
+                return Err(fault(
+                    "input_transport_unavailable",
+                    "Terminal input transport is disconnected",
                 ));
             }
             let mut req = config.request(id, "input");
@@ -905,7 +1209,18 @@ fn dispatch(request: &Request) -> Result<Value> {
                 req["expected_terminal_key"] = json!(terminal.key);
                 req["expected_proxy"] = json!(terminal.proxy);
             }
-            config.call(id, &req)
+            if imported_tmux {
+                let response = config.guarded_tmux_call(&req)?;
+                if response["delivered"] == false {
+                    return Err(fault(
+                        "source_input_rejected",
+                        "Imported tmux pane changed or is in copy mode",
+                    ));
+                }
+                Ok(response)
+            } else {
+                config.call(id, &req)
+            }
         }
         "panes.terminate" => {
             #[derive(Deserialize)]
@@ -1593,6 +1908,41 @@ pub fn remote(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn input_requires_transport_and_a_confirmed_adopted_bridge() {
+        assert!(input_transport_available(&json!({}), false));
+        assert!(!input_transport_available(&json!({}), true));
+        assert!(input_transport_available(
+            &json!({"bridge_connected":true}),
+            true
+        ));
+        assert!(!input_transport_available(
+            &json!({"bridge_connected":false}),
+            true
+        ));
+        assert!(!input_transport_available(
+            &json!({"health":{"transport":"disconnected"}}),
+            false
+        ));
+    }
+    #[test]
+    fn saved_conversation_is_visible_without_exposing_launch_arguments_or_authority() {
+        let health = json!({
+            "agent_record": {
+                "conversation_id": "exact-thread", "run_id": "archived",
+                "harness": "codex", "source": "fixture:provider", "epoch": "previous",
+                "resume_argv": ["codex", "resume", "exact-thread"],
+            },
+            "health": {"report_process_matches": false},
+        });
+        let saved = saved_conversation(&health);
+        assert_eq!(saved["conversation_id"], "exact-thread");
+        assert_eq!(saved["report_epoch"], "previous");
+        assert_eq!(saved["resume_available"], true);
+        assert!(saved.get("resume_argv").is_none());
+        assert_eq!(current_run(&health), None);
+        assert!(saved_conversation(&json!({"agent_record":null})).is_null());
+    }
     #[test]
     fn writes_require_operation_ids_and_identity_fields_are_explicit() {
         let mut health =

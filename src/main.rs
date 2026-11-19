@@ -107,6 +107,12 @@ struct Args {
     /// Identity of this presentation; retained across UI refreshes
     #[arg(long, hide = true)]
     frontend: Option<String>,
+    /// Focus an existing terminal by its one-based pane number on launch
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=32), conflicts_with_all = ["action", "refresh", "stop", "close", "capture", "deliver", "api", "api_stdio"])]
+    focus_pane: Option<u8>,
+    /// Require a specific generation of the terminal selected by --focus-pane
+    #[arg(long, requires = "focus_pane")]
+    focus_pane_epoch: Option<String>,
     /// List saved workspace names for reattachment
     #[arg(long)]
     sessions: bool,
@@ -133,6 +139,9 @@ struct Args {
     /// Render locally while attaching to a saved STAR/FLUX workspace over SSH
     #[arg(long, conflicts_with = "host")]
     ssh: Option<String>,
+    /// Forward new SSH workspace attention to this machine's desktop
+    #[arg(long)]
+    ssh_notifications: bool,
     /// Connect to a saved machine by identity or label
     #[arg(long, conflicts_with_all = ["host", "ssh", "ssh_config"])]
     machine: Option<String>,
@@ -157,6 +166,9 @@ struct Args {
     /// Inspect layered agent health and saved conversation references as JSON
     #[arg(long)]
     agent_status: bool,
+    /// Limit --agent-status to one terminal and its saved records (1-based)
+    #[arg(long, requires = "agent_status", value_parser = clap::value_parser!(u8).range(1..=32))]
+    agent_status_pane: Option<u8>,
     /// Execute one versioned JSON automation request
     #[arg(long, conflicts_with = "api_stdio")]
     api: Option<String>,
@@ -205,7 +217,12 @@ struct Args {
     png: Option<PathBuf>,
 }
 fn terminal_event(event: &starkit::crossterm::event::Event) -> Option<Input> {
-    presentation::event(event)
+    match event {
+        starkit::crossterm::event::Event::FocusLost => Some(Input::Notice {
+            message: "window-focus:lost".into(),
+        }),
+        _ => presentation::event(event),
+    }
 }
 
 fn saved(name: &str) -> Result<Config> {
@@ -257,12 +274,62 @@ fn relay(route: &str) -> Result<()> {
         session::relay(&path)
     }
 }
+fn prepare_pane_launch(view: &frontend::View, pane: u8, expected: Option<&str>) -> Result<()> {
+    ensure!(
+        (1..=32).contains(&pane),
+        "Pane number must be between 1 and 32"
+    );
+    let pane = usize::from(pane - 1);
+    let config = saved(&view.workspace)?;
+    let state = project_state::ProjectState::load(&config)?;
+    ensure!(
+        state.terminal_ids().contains(&pane) && config.canonical_pane(pane) == pane,
+        "Requested pane no longer exists"
+    );
+    let epoch = state.terminal_epochs.get(&pane).map(String::as_str);
+    ensure!(
+        expected.is_none() || expected == epoch,
+        "Requested pane generation changed"
+    );
+    view.ensure()?;
+    let epoch = epoch.unwrap_or("");
+    frontend::action(
+        view,
+        &format!("launch-pane:{}:{pane}:{epoch}", view.workspace),
+    )
+}
+
 fn main() -> Result<()> {
+    refresh::load_return()?;
     refresh::finish(run())
 }
 fn run() -> Result<()> {
     runtime::initialize_environment()?;
     let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).is_some_and(|arg| arg == "--agent-session-hook") {
+        use std::os::unix::process::CommandExt;
+        let options = &raw[2..];
+        let print_config = options
+            .iter()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--print-config");
+        let mut hook = Command::new("python3");
+        hook.arg("-c")
+            .arg(include_str!("../scripts/agent-session-hook.py"));
+        if !print_config {
+            hook.arg("--starflux").arg(std::env::current_exe()?);
+        }
+        return Err(hook.args(options).exec())
+            .context("Could not run the STAR/FLUX provider hook with python3");
+    }
+    if raw.get(1).is_some_and(|arg| arg == "--prepare-pane-launch") {
+        ensure!(
+            (5..=6).contains(&raw.len()),
+            "Expected workspace, frontend, pane number and optional generation"
+        );
+        let view = frontend::View::new(&raw[2], Some(&raw[3]))?;
+        return prepare_pane_launch(&view, raw[4].parse()?, raw.get(5).map(String::as_str));
+    }
     if raw.get(1).is_some_and(|s| s == "--category-agent-handoffs") {
         return category_agent_runtime::handoffs(
             raw.get(2).context("Missing project")?,
@@ -499,6 +566,10 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
+    ensure!(
+        !a.ssh_notifications || a.ssh.is_some(),
+        "--ssh-notifications requires --ssh or --machine"
+    );
     if let Some(host) = &a.ssh {
         if !a.refresh
             && !machine_workspace
@@ -552,6 +623,41 @@ fn run() -> Result<()> {
             );
         }
         let view = frontend::View::new(&a.workspace, a.frontend.as_deref())?;
+        if let Some(pane) = a.focus_pane {
+            let mut command = Command::new("ssh");
+            if let Some(path) = &a.ssh_config {
+                command.arg("-F").arg(path);
+            }
+            let pane_text = pane.to_string();
+            let mut argv = vec![
+                a.remote_executable.as_str(),
+                "--prepare-pane-launch",
+                &view.workspace,
+                &view.id,
+                &pane_text,
+            ];
+            argv.extend(a.focus_pane_epoch.as_deref());
+            command
+                .args([
+                    "-T",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "ServerAliveInterval=5",
+                    "-o",
+                    "ServerAliveCountMax=3",
+                    "--",
+                    host,
+                ])
+                .arg(shell_words::join(argv))
+                .stdin(std::process::Stdio::null());
+            let output = command.output()?;
+            ensure!(
+                output.status.success(),
+                "Focus remote pane: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
         refresh::register_remote(
             host,
             &a.workspace,
@@ -559,7 +665,19 @@ fn run() -> Result<()> {
             a.ssh_config.as_deref(),
             &view.id,
             mode,
+            a.ssh_notifications,
         )?;
+        let _notifications = if a.ssh_notifications {
+            Some(notifications::SshDelivery::start(
+                host.clone(),
+                a.ssh_config.clone(),
+                a.remote_executable.clone(),
+                a.workspace.clone(),
+                view.id.clone(),
+            )?)
+        } else {
+            None
+        };
         return presentation::run(
             Launch {
                 executable: a.remote_executable.clone(),
@@ -682,6 +800,9 @@ fn run() -> Result<()> {
             .unwrap_or_else(runtime::default_desktop_helper),
     };
     config.validate()?;
+    if a.focus_pane.is_some() {
+        saved(&a.workspace).context("--focus-pane requires an existing workspace")?;
+    }
     let path = config_path(&a.workspace)?;
     if management {
         config = saved(&a.workspace)?;
@@ -702,15 +823,31 @@ fn run() -> Result<()> {
     }
     if a.agent_status {
         let state = project_state::ProjectState::load(&config)?;
-        let panes=state.terminal_ids().into_iter().map(|pane| {
-            let mut health=config.call(pane,&config.request(pane,"inspect")).unwrap_or_else(|e|serde_json::json!({"state":"disconnected","error":format!("{e:#}")}));
-            agent_state::enrich(&config,pane,&mut health);
-            serde_json::json!({"pane":pane+1,"epoch":state.terminal_epochs.get(&pane),"status":health})
-        }).collect::<Vec<_>>();
+        let selected = a.agent_status_pane.map(|pane| usize::from(pane - 1));
+        let panes = state
+            .terminal_ids()
+            .into_iter()
+            .filter(|pane| selected.is_none_or(|selected| *pane == selected))
+            .map(|pane| {
+                let mut health = config.call(pane, &config.request(pane, "inspect")).unwrap_or_else(|error| {
+                    serde_json::json!({"state":"disconnected","error":format!("{error:#}")})
+                });
+                agent_state::enrich(&config, pane, &mut health);
+                serde_json::json!({
+                    "pane": pane + 1,
+                    "epoch": state.terminal_epochs.get(&pane),
+                    "status": health,
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut records = agent_state::records(&config)?;
+        if let Some(pane) = selected {
+            records.retain(|record| record.pane == pane);
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(
-                &serde_json::json!({"workspace":config.workspace,"panes":panes,"records":agent_state::records(&config)?})
+                &serde_json::json!({"workspace":config.workspace,"panes":panes,"records":records})
             )?
         );
         return Ok(());
@@ -897,6 +1034,9 @@ fn run() -> Result<()> {
                 handoff.attached();
             }
             let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
+            if let Some(pane) = a.focus_pane {
+                prepare_pane_launch(&view, pane, a.focus_pane_epoch.as_deref())?;
+            }
             refresh::register_local(&config.workspace, &view.id, mode)?;
             let socket = view.ensure()?;
             if mode == presentation::Mode::Graphical {
@@ -930,6 +1070,9 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let view = frontend::View::new(&config.workspace, a.frontend.as_deref())?;
+    if let Some(pane) = a.focus_pane {
+        prepare_pane_launch(&view, pane, a.focus_pane_epoch.as_deref())?;
+    }
     refresh::register_local(&config.workspace, &view.id, mode)?;
     presentation::run(
         Launch {

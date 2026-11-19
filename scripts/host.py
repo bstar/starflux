@@ -1,6 +1,8 @@
 """One-shot host helper. Payload is base64 JSON, file bytes use stdin."""
 import base64, fcntl, hashlib, json, os, pathlib, re, shlex, signal, subprocess, sys, tempfile, termios, time
 
+import stat as file_stat
+
 def boot_id():
     return pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 
@@ -70,9 +72,15 @@ def main():
     target=pane+':0.0'
     tm=['tmux','-L',server,'-f','/dev/null']
     if req.get('source_socket'):
-        if req['action']!='inspect' or not os.path.isabs(req['source_socket']) or not re.fullmatch(r'\$[0-9]+',req.get('source_session','')):
-            raise ValueError('Imported tmux inspection is read only')
-        tm=['tmux','-u','-S',req['source_socket']]
+        if req['action'] not in ('inspect','input') or not os.path.isabs(req['source_socket']) or not re.fullmatch(r'\$[0-9]+',req.get('source_session','')):
+            raise ValueError('Invalid imported tmux operation')
+        def socket_identity():
+            current=os.lstat(req['source_socket'])
+            if not file_stat.S_ISSOCK(current.st_mode) or current.st_uid!=os.getuid():
+                raise ValueError('Imported tmux socket is unavailable')
+            return (current.st_dev,current.st_ino)
+        source_socket=socket_identity()
+        tm=['tmux','-u','-N','-S',req['source_socket']]
         target=req['source_session']
     def shell_command(argv):
         # The AppImage's tools are private to its controller. Project commands
@@ -118,6 +126,14 @@ def main():
         replaced=False
         cwd=os.path.expanduser(req.get('directory') or '~')
         argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']
+        binding=[]
+        if 'binding_epoch' in req and not req.get('recover_proxy'):
+            epoch=req['binding_epoch']
+            if epoch is not None and (not isinstance(epoch,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}',epoch)):
+                raise ValueError('Invalid terminal binding generation')
+            binding=['-e','STARFLUX_WORKSPACE='+workspace,
+                     '-e','STARFLUX_PANE='+str(int(pane[1:])+1),
+                     '-e','STARFLUX_PANE_EPOCH='+(epoch or '')]
         if req.get('recover_proxy'):
             if len(argv) not in (3,5) or pathlib.Path(argv[0]).name!='starflux-pty-proxy':
                 raise ValueError('Only a transferred PTY proxy can be recovered automatically')
@@ -134,11 +150,11 @@ def main():
             except (OSError,ValueError,UnicodeError):old=[]
             # Never replace a shell or real harness, even in a legacy workspace.
             if len(old)==3 and pathlib.Path(old[0]).name=='starflux' and old[1:]==['--fixture',workspace]:
-                run('respawn-pane','-k','-t',target,'-c',cwd,shell_command(argv))
+                run('respawn-pane','-k','-t',target,'-c',cwd,*binding,shell_command(argv))
                 run('set-option','-p','-u','-t',target,'@starflux_state')
                 replaced=True
         if not exists():
-            run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',shell_command(argv))
+            run('new-session','-d','-s',pane,'-c',cwd,'-x','100','-y','32',*binding,shell_command(argv))
             run('set-option','-g','status','off')
             run('set-option','-g','history-limit','20000')
             run('set-option','-g','allow-passthrough','on')
@@ -289,9 +305,11 @@ def main():
         check_boot(req)
         # API input never traverses a frontend's focus or copy mode. Verify the
         # owner and foreground agent immediately before touching its input.
-        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{pane_tty}\t#{bracket_paste_flag}').decode().strip().split('\t')
+        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}\t#{pane_current_command}\t#{pane_tty}\t#{bracket_paste_flag}\t#{pane_id}\t#{pid}').decode().strip().split('\t')
         proxy_pid=int(fields[0]);pid=int(req.get('original_pid') or proxy_pid)
-        ticks=int(pathlib.Path('/proc/'+str(pid)+'/stat').read_text().rsplit(')',1)[1].split()[19])
+        source_process=pathlib.Path('/proc')/str(pid)/'stat'
+        process_identity=source_process.read_text().rsplit(')',1)[1].split()
+        ticks=int(process_identity[19])
         if fields[1]!='0' or pid!=req['expected_pid'] or ticks!=req['expected_start_ticks']:
             raise ValueError('Terminal identity changed; input rejected')
         if req.get('original_pid'):
@@ -312,6 +330,45 @@ def main():
             raise ValueError('Input contains control characters')
         if ('\n' in text or '\t' in text) and fields[4]!='1':
             raise ValueError('Multiline/tab input requires bracketed paste support')
+        if req.get('source_socket'):
+            pane_id,server_pid=fields[5:7]
+            if not re.fullmatch(r'%[0-9]+',pane_id) or not server_pid.isdecimal():
+                raise ValueError('Imported tmux pane identity is unavailable')
+            source_agent=pathlib.Path('/proc')/str(agent_pid)/'stat' if agent_pid else None
+            name='starflux-'+os.urandom(8).hex()
+            actions=[]
+            if text:actions.append(f'paste-buffer -b {name} -d -p -t {pane_id}')
+            if submit:actions.append(f'send-keys -t {pane_id} Enter')
+            actions.append('display-message -p delivered')
+            guards=[f'#{{==:#{{pane_id}},{pane_id}}}',f'#{{==:#{{pid}},{server_pid}}}',
+                    f'#{{==:#{{pane_pid}},{pid}}}','#{==:#{pane_dead},0}','#{==:#{pane_in_mode},0}']
+            if '\n' in text or '\t' in text:guards.append('#{==:#{bracket_paste_flag},1}')
+            guard=guards[0]
+            for check in guards[1:]:guard=f'#{{&&:{guard},{check}}}'
+            if socket_identity()!=source_socket:
+                raise ValueError('Imported tmux socket changed; input rejected')
+            try:
+                if text:run('load-buffer','-b',name,'-',input=text.encode())
+                if socket_identity()!=source_socket:
+                    raise ValueError('Imported tmux socket changed; input rejected')
+                identity=source_process.read_text().rsplit(')',1)[1].split()
+                if int(identity[19])!=ticks or identity[5]!=process_identity[5]:
+                    raise ValueError('Imported tmux foreground changed; input rejected')
+                if foreground_agent(str(pid),tty,command)!=(agent,agent_pid):
+                    raise ValueError('Imported tmux agent changed; input rejected')
+                if source_agent and int(source_agent.read_text().rsplit(')',1)[1].split()[19])!=agent_ticks:
+                    raise ValueError('Imported tmux agent changed; input rejected')
+                reply=run('if-shell','-F','-t',target,guard,' ; '.join(actions),'display-message -p stale').strip()
+                if reply==b'stale':
+                    print(json.dumps({'delivered':False}))
+                    return
+                if reply!=b'delivered':
+                    raise ValueError('Imported tmux did not acknowledge input')
+            finally:
+                if text and socket_identity()==source_socket:
+                    subprocess.run(tm+['delete-buffer','-b',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            print(json.dumps({'delivered':True,'submitted':submit,'bytes':len(text.encode())}))
+            return
         if text:
             name='starflux-'+os.urandom(8).hex()
             run('load-buffer','-b',name,'-',input=text.encode())

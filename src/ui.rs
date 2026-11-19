@@ -64,6 +64,13 @@ use std::{
 };
 #[derive(Debug)]
 enum Event {
+    MachineSwitch(
+        Instant,
+        String,
+        crate::refresh::MachineSwitch,
+        std::result::Result<(), String>,
+    ),
+    HerdrIdentity(Instant, String, std::result::Result<Value, String>),
     CategoryAgentBadges(BTreeMap<String, String>),
     CategoryAgent(Instant, String, std::result::Result<Value, String>),
     Plugins(Instant, String, std::result::Result<Value, String>),
@@ -72,10 +79,20 @@ enum Event {
         Instant,
         std::result::Result<Value, String>,
     ),
+    MachineAgents(
+        Instant,
+        usize,
+        usize,
+        bool,
+        Option<machine_ui::AgentScope>,
+        std::result::Result<Value, String>,
+    ),
     Worktrees(
         Box<Config>,
         Instant,
         std::result::Result<crate::worktrees::Catalog, String>,
+        Option<String>,
+        Option<Value>,
     ),
     WorktreeOpened(String, Instant, std::result::Result<Box<Config>, String>),
     WorktreeRemoved(Instant, std::result::Result<Value, String>),
@@ -167,6 +184,7 @@ enum Prompt {
     RemoveWorktree(Config, Value),
     Sessions(bool),
     NewSession,
+    RenameSession(String, String),
     DeleteSession(String),
     Deliver,
     Launch,
@@ -247,6 +265,9 @@ pub struct Workspace {
     link_pointer_capture: bool,
     machine_profile: Option<crate::machines::Machine>,
     machine_checks: BTreeMap<String, Value>,
+    machine_agents_token: Option<Instant>,
+    machine_switch_token: Option<Instant>,
+    local_return_available: bool,
     machine_pending: BTreeMap<String, Instant>,
     worktree_token: Option<Instant>,
     worktree_catalog: Option<(Config, crate::worktrees::Catalog)>,
@@ -283,6 +304,7 @@ pub struct Workspace {
     rx: Receiver<Event>,
     tx: Sender<Event>,
     health: BTreeMap<(String, usize), Value>,
+    herdr_identity_request: Option<Instant>,
     registered: BTreeSet<(String, usize)>,
     session_monitors: BTreeMap<(String, usize), Arc<AtomicBool>>,
     session_capture: BTreeMap<(String, usize), Arc<AtomicBool>>,
@@ -321,6 +343,7 @@ pub struct Workspace {
     status: String,
     history: Vec<String>,
     effects: Vec<ServerMessage>,
+    browser: starkit::terminal_graphics::frontend_actions::Requests,
     quit: bool,
     last_inspect: Instant,
     sessions_retry_at: Instant,
@@ -498,6 +521,9 @@ impl Workspace {
             link_pointer_capture: false,
             machine_profile: None,
             machine_checks: BTreeMap::new(),
+            machine_agents_token: None,
+            machine_switch_token: None,
+            local_return_available: false,
             machine_pending: BTreeMap::new(),
             worktree_token: None,
             worktree_catalog: None,
@@ -534,6 +560,7 @@ impl Workspace {
             rx,
             tx: controller_tx,
             health: BTreeMap::new(),
+            herdr_identity_request: None,
             registered: BTreeSet::new(),
             session_monitors: BTreeMap::new(),
             session_capture: BTreeMap::new(),
@@ -572,6 +599,7 @@ impl Workspace {
             status: "Connecting project sessions…".into(),
             history: vec![],
             effects: vec![],
+            browser: Default::default(),
             quit: false,
             last_inspect: Instant::now(),
             sessions_retry_at: Instant::now(),
@@ -639,7 +667,7 @@ impl Workspace {
             self.history.remove(0);
         }
     }
-    fn save(&mut self) {
+    fn publish_notification_focus(&self) {
         self.notification_focus.publish(
             &self.controller_id,
             &self.config,
@@ -650,6 +678,9 @@ impl Workspace {
                 .cloned(),
             self.notification_focused && self.state.space != Space::Apps,
         );
+    }
+    fn save(&mut self) {
+        self.publish_notification_focus();
         if let Err(error) = crate::session_catalog::remember(&self.config) {
             self.note(format!("Save session: {error:#}"));
         }
@@ -773,16 +804,7 @@ impl Workspace {
         if !self.activity_pending && self.activity_at.elapsed() >= Duration::from_secs(2) {
             self.activity_pending = true;
             let started_ms = self.notification_started_ms;
-            self.notification_focus.publish(
-                &self.controller_id,
-                &self.config,
-                self.state.selected(),
-                self.state
-                    .terminal_epochs
-                    .get(&self.state.selected())
-                    .cloned(),
-                self.notification_focused && self.state.space != Space::Apps,
-            );
+            self.publish_notification_focus();
             let projects = self.category_projects.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
@@ -1000,13 +1022,6 @@ impl Workspace {
         }
         result
     }
-    fn agent_command(&self, pane: usize) -> String {
-        let command = self.config.agent.as_deref().unwrap_or("codex");
-        if self.state.agent_ids().first() == Some(&pane) {
-            return command.into();
-        }
-        crate::runtime::fresh_agent_command(command)
-    }
     fn agent_label(&self, pane: usize) -> String {
         self.state
             .agent_labels
@@ -1098,7 +1113,6 @@ impl Workspace {
         Ok(())
     }
     fn ensure_sessions(&mut self) {
-        let agents = self.state.agent_ids();
         let panes: Vec<usize> = self
             .state
             .terminal_ids()
@@ -1122,17 +1136,6 @@ impl Workspace {
                 crate::snapshot_service::endpoint(&self.config).unwrap_or_default(),
             );
             self.session_monitors.insert(key, stopped.clone());
-            let command = self
-                .state
-                .terminal_commands
-                .get(&pane)
-                .cloned()
-                .or_else(|| {
-                    agents
-                        .iter()
-                        .find(|id| self.config.canonical_pane(**id) == pane)
-                        .and_then(|id| self.config.agent.as_ref().map(|_| self.agent_command(*id)))
-                });
             let config = self.config.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
@@ -1146,6 +1149,25 @@ impl Workspace {
                         return Ok(false);
                     }
                     let pending = state.terminal_launch_pending.contains(&pane);
+                    // Read the command from the same durable model as its
+                    // launch permission. A view may have queued this worker
+                    // before another view published a pending command.
+                    let command = pending
+                        .then(|| {
+                            state.terminal_commands.get(&pane).cloned().or_else(|| {
+                                let agents = state.agent_ids();
+                                let agent = agents
+                                    .iter()
+                                    .find(|id| config.canonical_pane(**id) == pane)?;
+                                let command = config.agent.as_ref()?;
+                                Some(if agents.first() == Some(agent) {
+                                    command.clone()
+                                } else {
+                                    crate::runtime::fresh_agent_command(command)
+                                })
+                            })
+                        })
+                        .flatten();
                     let launch = pending
                         && command.is_some()
                         && crate::cold_start::consume_launch(&config, pane, epoch.as_deref())?;
@@ -2613,6 +2635,7 @@ impl Workspace {
                 field("Session name", String::new()),
                 field("First project directory", directory.clone()),
             ],
+            Prompt::RenameSession(_, name) => vec![field("Session name", name.clone())],
             Prompt::DeleteSession(_) => vec![field(
                 "Stops owned terminals/apps; preserves tmux/Herdr sources. Type DELETE",
                 String::new(),
@@ -3010,6 +3033,10 @@ impl Workspace {
                         crate::session_catalog::create(&values[0], &values[1], &self.config.theme)?;
                     self.open_session(config)?;
                 }
+                Prompt::RenameSession(id, expected) => {
+                    crate::session_catalog::rename(id, expected, &values[0])?;
+                    self.note("Session renamed".into());
+                }
                 Prompt::DeleteSession(id) => {
                     ensure!(
                         values[0] == "DELETE",
@@ -3200,11 +3227,18 @@ impl Workspace {
                             .any(|c| c.workspace == config.workspace),
                         "A project with that name already exists"
                     );
-                    let state = ProjectState {
-                        app_command: String::new(),
-                        ..ProjectState::default()
-                    };
-                    state.save(&config)?;
+                    {
+                        let _transaction = crate::project_sync::transaction(&config)?;
+                        let root = project_state::data_root()?;
+                        ensure!(
+                            !config_path.exists()
+                                && ["json", "model.json", "layout.json"].iter().all(|suffix| {
+                                    !root.join(format!("{}.{suffix}", config.workspace)).exists()
+                                }),
+                            "A project with that name already exists"
+                        );
+                        ProjectState::new_owned().save(&config)?;
+                    }
                     starkit::fs::write_private(
                         &crate::runtime::config_path(&config.workspace)?,
                         &serde_json::to_vec_pretty(&config)?,
@@ -3254,6 +3288,10 @@ impl Workspace {
                 }
                 "delete" => {
                     self.session_action("sessions:delete")?;
+                    return Ok(());
+                }
+                "f:2" => {
+                    self.session_action("sessions:rename")?;
                     return Ok(());
                 }
                 "char:d" if modifiers & 2 != 0 => {
@@ -3596,15 +3634,6 @@ impl Workspace {
                         "",
                         format!("pane-target:{id}:swap-next"),
                     ),
-                    item(
-                        if self.state.split {
-                            "Unsplit terminals"
-                        } else {
-                            "Split with another tab"
-                        },
-                        "",
-                        format!("split-tab:{id}"),
-                    ),
                     item("New terminal tab", "+", "terminal:new".into()),
                     item(
                         "Agent status / conversation",
@@ -3630,6 +3659,34 @@ impl Workspace {
                             && !i.action.ends_with(":saved-current")
                             && !i.action.ends_with(":saved-previous")
                 })
+                .chain(
+                    self.state
+                        .split
+                        .then(|| item("Unsplit terminals", "", "terminal:split".into())),
+                )
+                .chain(self.state.unzoomed_tree().and_then(|tree| {
+                    let visible = tree.ids();
+                    (self.state.plugin_overlay.is_none()
+                        && visible.contains(&id)
+                        && self
+                            .state
+                            .terminal_ids()
+                            .iter()
+                            .any(|pane| !visible.contains(pane)))
+                    .then(|| {
+                        item(
+                            "Split with existing tab…",
+                            "",
+                            format!("split-existing:{id}:menu"),
+                        )
+                    })
+                }))
+                .chain(
+                    (self.state.terminal_ids().len() > 1
+                        && (self.state.split || self.state.terminal != id)
+                        && self.state.plugin_overlay.is_none())
+                    .then(|| item("Move pane to edge…", "", format!("pane-edge:{id}:menu"))),
+                )
                 .chain((!self.config.externally_owned(id)).then(|| {
                     item(
                         "Terminate terminal…",
@@ -3721,14 +3778,23 @@ impl Workspace {
         });
     }
     fn menu_key(&mut self, code: &str) -> Result<()> {
-        if code == "char:/"
-            && self
-                .context_menu
-                .as_ref()
-                .is_some_and(|m| m.title == "Attention inbox")
+        if let Some(menu) = self
+            .context_menu
+            .as_ref()
+            .filter(|m| m.title == "Attention inbox")
         {
-            self.open_prompt(Prompt::AttentionSearch);
-            return Ok(());
+            if code == "char:/" {
+                self.open_prompt(Prompt::AttentionSearch);
+                return Ok(());
+            }
+            let page_action = match code {
+                "left" => "attention:previous",
+                "right" => "attention:next",
+                _ => "",
+            };
+            if menu.items.iter().any(|item| item.action == page_action) {
+                return self.action(page_action);
+            }
         }
         let Some(menu) = &mut self.context_menu else {
             return Ok(());
@@ -3905,6 +3971,23 @@ impl Workspace {
         if self.worktree_action(action)? {
             return Ok(());
         }
+        if let Some(target) = action.strip_prefix("launch-pane:") {
+            let (workspace, pane) = target.split_once(':').context("Invalid launch pane")?;
+            let (pane, epoch) = pane.split_once(':').context("Missing pane generation")?;
+            let id = pane.parse::<usize>()?;
+            if self.config.workspace != workspace {
+                self.open_session(crate::saved(workspace)?)?;
+            }
+            ensure!(
+                self.state
+                    .terminal_epochs
+                    .get(&id)
+                    .map_or("", String::as_str)
+                    == epoch,
+                "Requested pane generation changed"
+            );
+            return self.action(&format!("terminal:{id}"));
+        }
         if self.pane_action(action)? {
             return Ok(());
         }
@@ -3925,6 +4008,23 @@ impl Workspace {
                 ))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            let record =
+                serde_json::from_value::<crate::agent_state::Record>(value["agent_record"].clone())
+                    .ok();
+            let (resume_label, resume_action) = match record.as_ref() {
+                Some(record) if record.report.resume_argv.is_some() => (
+                    "Resume saved conversation in new tab",
+                    format!("agent-resume:{pane}:{}", record.report.run_id),
+                ),
+                Some(record) if record.report.conversation_id.is_some() => (
+                    "Resume unavailable · no command registered",
+                    "menu:panel".into(),
+                ),
+                _ => (
+                    "Resume unavailable · no conversation registered",
+                    "menu:panel".into(),
+                ),
+            };
             let mut items = Vec::new();
             for (label, key) in [
                 ("Terminal", "terminal"),
@@ -3944,9 +4044,15 @@ impl Workspace {
                     action: "menu:panel".into(),
                 });
             }
-            if let Ok(record) =
-                serde_json::from_value::<crate::agent_state::Record>(value["agent_record"].clone())
-            {
+            items.insert(
+                1,
+                crate::shelf::MenuItem {
+                    label: resume_label.into(),
+                    hint: String::new(),
+                    action: resume_action,
+                },
+            );
+            if let Some(record) = record {
                 for label in [
                     format!("Integration: {}", record.report.source),
                     format!("Event sequence: {}", record.report.sequence),
@@ -3964,24 +4070,47 @@ impl Workspace {
                         action: "menu:panel".into(),
                     });
                 }
-                if record.report.resume_argv.is_some() {
-                    items.push(crate::shelf::MenuItem {
-                        label: "Resume saved conversation in new tab".into(),
-                        hint: String::new(),
-                        action: format!("agent-resume:{pane}:{}", record.report.run_id),
-                    });
-                }
                 items.push(crate::shelf::MenuItem {
                     label: format!(
                         "Report: {}",
-                        if value["health"]["report_stale"] == true {
-                            "stale"
-                        } else {
-                            "current"
+                        match value["health"]["report_status"].as_str() {
+                            Some("archived") => "archived conversation",
+                            Some("process_mismatch") => "agent process identity changed",
+                            Some("clock_skew") => "timestamp ahead of controller clock",
+                            Some("heartbeat_expired") => "heartbeat expired",
+                            Some("backend_failure_override") => "backend failure shown by terminal",
+                            Some("transport_failure_override") => "terminal transport disconnected",
+                            Some("current") => "current",
+                            _ => "unknown",
                         }
                     ),
                     hint: String::new(),
                     action: "menu:panel".into(),
+                });
+            }
+            self.herdr_identity_request = None;
+            let canonical = self.config.canonical_pane(pane);
+            if let Some(source) = self
+                .config
+                .herdr
+                .as_ref()
+                .filter(|s| s.panes.contains_key(&canonical))
+            {
+                let token = Instant::now();
+                self.herdr_identity_request = Some(token);
+                items.push(crate::shelf::MenuItem {
+                    label: "Checking Herdr process identity…".into(),
+                    hint: String::new(),
+                    action: "menu:panel".into(),
+                });
+                let tx = self.tx.clone();
+                let source = source.clone();
+                let project = self.config.workspace.clone();
+                std::thread::spawn(move || {
+                    let result = source
+                        .inspect_identity(canonical)
+                        .map_err(|e| format!("{e:#}"));
+                    let _ = tx.send(Event::HerdrIdentity(token, project, result));
                 });
             }
             self.release();
@@ -4056,11 +4185,13 @@ impl Workspace {
             if next.as_deref() == Some("menu:panel") {
                 return Ok(());
             }
-            // Link actions validate the originating menu before replacing it.
-            if let Some(next) = next
-                .as_deref()
-                .filter(|a| a.starts_with("terminal-link:") || a.starts_with("terminal-links:"))
-            {
+            // These actions validate the originating menu before replacing it.
+            if let Some(next) = next.as_deref().filter(|a| {
+                a.starts_with("terminal-link:")
+                    || a.starts_with("terminal-links:")
+                    || *a == "plugins:open-browser"
+                    || *a == "attention:mark"
+            }) {
                 return self.action(next);
             }
             self.context_menu = None;
@@ -4161,15 +4292,6 @@ impl Workspace {
         if let Some(id) = action.strip_prefix("split-tab:") {
             self.action(&format!("terminal:{id}"))?;
             return self.action("terminal:split");
-        }
-        if let Some(id) = action.strip_prefix("close-pane:") {
-            let id = id.parse::<usize>()?;
-            ensure!(
-                self.state.terminal_ids().contains(&id),
-                "Terminal is not in this project"
-            );
-            self.state.select_terminal(id);
-            return self.action("terminal:close-pane");
         }
         if let Some(id) = action.strip_prefix("restart-terminal:") {
             self.action(&format!("terminal:{id}"))?;
@@ -4415,12 +4537,15 @@ impl Workspace {
                 self.layout();
                 self.save()
             }
-            "terminal:close-pane" => {
-                self.release();
-                self.state.close_pane();
-                self.cell_ui.terminal_focus = true;
-                self.layout();
-                self.save();
+            a if a == "terminal:close-pane" || a.starts_with("close-pane:") => {
+                let pane = match a.strip_prefix("close-pane:") {
+                    Some(id) => id.parse()?,
+                    None => self.state.terminal,
+                };
+                if !self.close_split_pane_view(pane) {
+                    self.note("Terminal is outside the current split layout".into());
+                    return Ok(());
+                }
                 self.note("Pane closed / terminal still available in its tab".into());
             }
             "launch-app" => {
@@ -4791,6 +4916,7 @@ impl Workspace {
                     }
                 }
                 Prompt::NewSession => "Create session",
+                Prompt::RenameSession(_, _) => "Rename session",
                 Prompt::DeleteSession(_) => "Delete session and stop owned programs",
                 Prompt::Deliver => "Deliver a file",
                 Prompt::RenameProject(_) => "Rename project",
@@ -5105,6 +5231,7 @@ impl Controller for Workspace {
         &mut self,
         capabilities: starkit::terminal_graphics::capabilities::Capabilities,
     ) {
+        self.browser.set_available(capabilities.open_urls_v1);
         self.close_audio();
         self.cells = capabilities.cell_presentation.unwrap_or(false);
         self.native_skins = capabilities.native_skins;
@@ -5293,6 +5420,43 @@ impl Controller for Workspace {
                 Event::PluginPaneOpened(generation, result) => {
                     self.plugin_pane_opened(generation, *result)
                 }
+                Event::MachineAgents(token, machines, panes, more, machine, result) => {
+                    self.machine_agents_result(token, machines, panes, more, machine, result);
+                }
+                Event::MachineSwitch(token, project, destination, result) => {
+                    if self.machine_switch_token != Some(token) {
+                        continue;
+                    }
+                    self.machine_switch_token = None;
+                    if self.config.workspace != project
+                        || self.modal.is_some()
+                        || !self
+                            .context_menu
+                            .as_ref()
+                            .is_some_and(|menu| menu.title == machine_ui::SWITCH_MENU)
+                        || self.transfer.is_some()
+                        || self.receiving.is_some()
+                        || self.popup.is_some()
+                    {
+                        self.note("Machine switch canceled because this view changed".into());
+                        continue;
+                    }
+                    self.context_menu = None;
+                    let result = result.and_then(|()| {
+                        self.release();
+                        self.save();
+                        crate::refresh::request_switch(&self.controller_id, destination)
+                            .map_err(|error| format!("{error:#}"))
+                    });
+                    if let Err(error) = result {
+                        self.note(format!("Machine switch: {error}"));
+                    } else {
+                        self.effects.push(ServerMessage::Error {
+                            message: crate::refresh::SWITCH_SIGNAL.into(),
+                        });
+                        self.quit = true;
+                    }
+                }
                 Event::MachineChecked(machine, token, result) => {
                     if self.machine_pending.get(&machine.id) != Some(&token) {
                         continue;
@@ -5338,15 +5502,20 @@ impl Controller for Workspace {
                         }
                     }
                 }
-                Event::Worktrees(config, token, result) => {
+                Event::Worktrees(config, token, result, lock_error, previous_target) => {
                     if self.worktree_token == Some(token)
                         && self
                             .context_menu
                             .as_ref()
                             .is_some_and(|m| m.title == "Git worktrees")
                     {
+                        if let Some(error) = lock_error {
+                            self.note(format!("Worktree lock: {error}"));
+                        }
                         match result {
-                            Ok(catalog) => self.worktree_menu(*config, catalog),
+                            Ok(catalog) => {
+                                self.worktree_menu(*config, catalog, previous_target.as_ref())
+                            }
                             Err(error) => {
                                 self.note(format!("Worktrees: {error}"));
                                 self.context_menu = None;
@@ -5643,6 +5812,34 @@ impl Controller for Workspace {
                         self.save();
                     }
                     self.note("Terminal terminated / other sessions retained".into());
+                }
+                Event::HerdrIdentity(token, project, result) => {
+                    if self.herdr_identity_request == Some(token)
+                        && self.config.workspace == project
+                        && let Some(menu) = self
+                            .context_menu
+                            .as_mut()
+                            .filter(|m| m.title == "Agent status")
+                    {
+                        self.herdr_identity_request = None;
+                        if let Some(item) = menu.items.last_mut() {
+                            item.label = match result {
+                                Ok(health) if health["pid"].is_number() => format!(
+                                    "Herdr pane {} · shell PID {}",
+                                    health["pane_id"].as_str().unwrap_or("unknown"),
+                                    health["pid"]
+                                ),
+                                Ok(health) => health["identity_error"]
+                                    .as_str()
+                                    .unwrap_or("Herdr process identity unavailable")
+                                    .into(),
+                                Err(error) => {
+                                    format!("Herdr process identity unavailable · {error}")
+                                }
+                            };
+                            item.hint = "Read only".into();
+                        }
+                    }
                 }
                 Event::Health(project, pane, value, stopped) => {
                     if stopped.load(Ordering::Acquire) {
@@ -6092,6 +6289,9 @@ impl Controller for Workspace {
                 snapshot["frontend"] = json!(self.controller_id);
                 snapshot["frontend_commands"] = json!(1);
                 snapshot["frontend_plugin_panes"] = json!(1);
+                snapshot["frontend_split_existing_tab"] = json!(true);
+                snapshot["frontend_close_split_pane"] = json!(true);
+                snapshot["frontend_move_pane_to_edge"] = json!(true);
                 snapshot["frontend_plugin_popups"] =
                     json!(self.desktop.is_none() && self.native_terminal_cells);
                 snapshot["plugin_popup"] = self.popup_snapshot();
@@ -6188,26 +6388,24 @@ impl Controller for Workspace {
             if self.font_notice(message) {
                 return;
             }
-            if message == "window-focus:lost" || message == "focus-canvas:terminals" {
+            if matches!(
+                message.as_str(),
+                "window-focus:lost" | "window-focus:gained" | "focus-canvas:terminals"
+            ) {
                 self.notification_focused = message != "window-focus:lost";
                 if message == "window-focus:lost" {
                     self.release();
                 } else if self.state.space == Space::Apps {
                     self.app_keyboard_released = true;
                 }
-                self.notification_focus.publish(
-                    &self.controller_id,
-                    &self.config,
-                    self.state.selected(),
-                    self.state
-                        .terminal_epochs
-                        .get(&self.state.selected())
-                        .cloned(),
-                    self.notification_focused && self.state.space != Space::Apps,
-                );
-                if message == "window-focus:lost" {
+                self.publish_notification_focus();
+                if message.starts_with("window-focus:") {
                     return;
                 }
+            }
+            if message == "local-return-available" {
+                self.local_return_available = true;
+                return;
             }
             if message == "require-graphical" {
                 self.require_graphical();
@@ -6628,6 +6826,9 @@ impl Controller for Workspace {
         other
     }
     fn detached(&mut self) {
+        self.browser.set_available(false);
+        self.notification_focused = false;
+        self.publish_notification_focus();
         if self.controller_id != self.workspace_id {
             self.quit = true;
         }
@@ -6694,6 +6895,14 @@ impl Controller for Workspace {
             }
         }
     }
+    fn frontend_action(&mut self, message: starkit::terminal_graphics::frontend_actions::ToHost) {
+        if let Some(result) = self.browser.receive(message) {
+            self.note(match result {
+                Ok(()) => "Link sent to the browser on this computer".into(),
+                Err(error) => error.to_string(),
+            });
+        }
+    }
     fn effects(&mut self) -> Vec<ServerMessage> {
         let hidden = self.state.space == Space::Apps
             && self.modal.is_none()
@@ -6714,6 +6923,11 @@ impl Controller for Workspace {
             });
             self.cursor_policy_sent = Some(hidden);
         }
+        self.effects.extend(
+            self.browser
+                .drain()
+                .map(|message| ServerMessage::FrontendAction { message }),
+        );
         std::mem::take(&mut self.effects)
     }
     fn closed(&self) -> bool {

@@ -11,25 +11,7 @@ impl Workspace {
             } else {
                 self.config.clone()
             };
-            let token = Instant::now();
-            self.worktree_token = Some(token);
-            self.release();
-            self.context_menu = Some(crate::shelf::ContextMenu {
-                position: [16, 16],
-                title: "Git worktrees".into(),
-                subtitle: "Loading from project host…".into(),
-                items: vec![crate::shelf::MenuItem {
-                    label: "Loading…".into(),
-                    hint: String::new(),
-                    action: "menu:panel".into(),
-                }],
-                selected: Some(0),
-            });
-            let tx = self.tx.clone();
-            std::thread::spawn(move || {
-                let result = crate::worktrees::list(&config).map_err(|e| format!("{e:#}"));
-                let _ = tx.send(Event::Worktrees(Box::new(config), token, result));
-            });
+            self.load_worktree_catalog(config, None);
             return Ok(true);
         }
         let (config, catalog) = self
@@ -87,11 +69,40 @@ impl Workspace {
                         action: "menu:panel".into(),
                     });
                 }
-                if let Some(reason) = target["locked"].as_str() {
+                if target["main"] != true && target["bare"] != true {
+                    let (label, action) = if target["locked"].is_null() {
+                        ("Lock worktree", "lock")
+                    } else {
+                        ("Unlock worktree", "unlock")
+                    };
+                    items.push(crate::shelf::MenuItem {
+                        label: label.into(),
+                        hint: String::new(),
+                        action: format!("worktrees:{action}:{index}"),
+                    });
+                }
+                if let Some(reason) = target["locked"]
+                    .as_str()
+                    .filter(|reason| !reason.is_empty())
+                {
                     items.push(crate::shelf::MenuItem {
                         label: format!("Locked: {reason}"),
                         hint: String::new(),
                         action: "menu:panel".into(),
+                    });
+                }
+                if target["path"].is_string() {
+                    items.push(crate::shelf::MenuItem {
+                        label: "Copy worktree path".into(),
+                        hint: config.host.as_deref().unwrap_or("Local checkout").into(),
+                        action: format!("worktrees:copy-path:{index}"),
+                    });
+                }
+                if let Some(head) = target["head"].as_str().filter(|head| !head.is_empty()) {
+                    items.push(crate::shelf::MenuItem {
+                        label: format!("Copy HEAD · {}", head.chars().take(12).collect::<String>()),
+                        hint: String::new(),
+                        action: format!("worktrees:copy-head:{index}"),
                     });
                 }
                 if target["available"] != true {
@@ -114,11 +125,68 @@ impl Workspace {
                     selected: Some(1),
                 });
             }
+            "lock" | "unlock" => {
+                self.load_worktree_catalog(config, Some((target, operation == "lock")))
+            }
+            "copy-path" | "copy-head" => {
+                let (field, label) = if operation == "copy-path" {
+                    ("path", "Worktree path copied")
+                } else {
+                    ("head", "Worktree HEAD copied")
+                };
+                let text = target[field]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .context("Worktree detail is unavailable")?;
+                self.effects
+                    .push(ServerMessage::Clipboard { text: text.into() });
+                self.note(label.into());
+            }
             "open" => self.start_worktree_open(config, target),
             "remove" => self.open_prompt(Prompt::RemoveWorktree(config, target)),
             _ => bail!("Unknown worktree action"),
         }
         Ok(true)
+    }
+    fn load_worktree_catalog(&mut self, config: Config, change: Option<(Value, bool)>) {
+        let token = Instant::now();
+        self.worktree_token = Some(token);
+        self.release();
+        self.context_menu = Some(crate::shelf::ContextMenu {
+            position: [16, 16],
+            title: "Git worktrees".into(),
+            subtitle: if change.is_some() {
+                "Updating lock on project host…".into()
+            } else {
+                "Loading from project host…".into()
+            },
+            items: vec![crate::shelf::MenuItem {
+                label: "Loading…".into(),
+                hint: String::new(),
+                action: "menu:panel".into(),
+            }],
+            selected: Some(0),
+        });
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let refresh = || crate::worktrees::list(&config).map_err(|error| format!("{error:#}"));
+            let (result, lock_error) = match &change {
+                Some((target, locked)) => {
+                    match crate::worktrees::set_lock(&config, target, *locked, None) {
+                        Ok(result) => (Ok(result.catalog), None),
+                        Err(error) => (refresh(), Some(format!("{error:#}"))),
+                    }
+                }
+                None => (refresh(), None),
+            };
+            let _ = tx.send(Event::Worktrees(
+                Box::new(config),
+                token,
+                result,
+                lock_error,
+                change.map(|(target, _)| target),
+            ));
+        });
     }
     fn start_worktree_open(&mut self, config: Config, target: Value) {
         let token = Instant::now();
@@ -172,7 +240,20 @@ impl Workspace {
             let _ = tx.send(Event::WorktreeRemoved(token, result));
         });
     }
-    pub(super) fn worktree_menu(&mut self, config: Config, catalog: crate::worktrees::Catalog) {
+    pub(super) fn worktree_menu(
+        &mut self,
+        config: Config,
+        catalog: crate::worktrees::Catalog,
+        previous_target: Option<&Value>,
+    ) {
+        let selected = previous_target
+            .and_then(|target| {
+                catalog
+                    .worktrees
+                    .iter()
+                    .position(|row| crate::worktrees::same_directory(row, target))
+            })
+            .map_or(0, |index| index + 1);
         let mut items = vec![crate::shelf::MenuItem {
             label: "Create & open worktree…".into(),
             hint: String::new(),
@@ -211,7 +292,7 @@ impl Workspace {
                 .unwrap_or("")
                 .into(),
             items,
-            selected: Some(0),
+            selected: Some(selected),
         });
         self.worktree_catalog = Some((config, catalog));
     }

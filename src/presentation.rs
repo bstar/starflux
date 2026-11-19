@@ -9,7 +9,7 @@ use starkit::{
 };
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -35,7 +35,9 @@ impl Mode {
         }
     }
 }
+static ANNOUNCE_LOCAL_RETURN: AtomicBool = AtomicBool::new(false);
 static REQUIRE_GRAPHICAL: AtomicBool = AtomicBool::new(false);
+static FOCUS_NOTICE: AtomicU8 = AtomicU8::new(0);
 static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub fn event(event: &Event) -> Option<Input> {
@@ -56,16 +58,31 @@ pub fn event(event: &Event) -> Option<Input> {
         Event::Osc72(text) => {
             crate::font_frontend::event(text).or_else(|| Some(Input::Osc72 { text: text.clone() }))
         }
-        Event::FocusLost => Some(Input::Notice {
-            message: "window-focus:lost".into(),
-        }),
-        Event::FocusGained => Some(Input::Notice {
-            message: "focus-canvas:terminals".into(),
-        }),
+        Event::FocusLost => {
+            FOCUS_NOTICE.store(1, Ordering::Relaxed);
+            None
+        }
+        Event::FocusGained => {
+            FOCUS_NOTICE.store(2, Ordering::Relaxed);
+            Some(Input::Notice {
+                message: "focus-canvas:terminals".into(),
+            })
+        }
         _ => None,
     }
 }
 fn notice() -> Option<String> {
+    if ANNOUNCE_LOCAL_RETURN.swap(false, Ordering::Relaxed) {
+        return Some("local-return-available".into());
+    }
+
+    // KIT handles pointer cancellation separately from application focus.
+    match FOCUS_NOTICE.swap(0, Ordering::Relaxed) {
+        1 => return Some("window-focus:lost".into()),
+        2 => return Some("window-focus:gained".into()),
+        _ => {}
+    }
+
     if REQUIRE_GRAPHICAL.swap(false, Ordering::Relaxed) {
         Some("require-graphical".into())
     } else {
@@ -87,6 +104,7 @@ fn preference(mode: Mode) -> PresentationPreference {
 }
 pub fn run(launch: Launch, mode: Mode) -> Result<()> {
     let _font_output = crate::font_frontend::LocalOutput::start()?;
+    ANNOUNCE_LOCAL_RETURN.store(crate::refresh::has_local_return(), Ordering::Relaxed);
     REQUIRE_GRAPHICAL.store(mode == Mode::Graphical, Ordering::Relaxed);
     client::run_with_preference(
         launch,

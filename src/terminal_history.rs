@@ -1,5 +1,86 @@
 //! Frontend-local, frozen terminal review. No review key is sent to the PTY.
 use serde::Serialize;
+#[derive(Serialize)]
+pub struct SearchMatch {
+    row: usize,
+    column: usize,
+    excerpt: String,
+}
+
+struct LiteralSearch<'a> {
+    query: &'a str,
+    folded: Option<regex::Regex>,
+}
+impl<'a> LiteralSearch<'a> {
+    fn new(query: &'a str, ignore_case: bool) -> Self {
+        let folded = ignore_case.then(|| {
+            regex::RegexBuilder::new(&regex::escape(query))
+                .case_insensitive(true)
+                .build()
+                .expect("escaped bounded search pattern")
+        });
+        Self { query, folded }
+    }
+
+    fn each(&self, text: &str, mut found: impl FnMut(usize, usize)) {
+        if let Some(pattern) = &self.folded {
+            for hit in pattern.find_iter(text) {
+                found(hit.start(), hit.end());
+            }
+        } else {
+            for (start, literal) in text.match_indices(self.query) {
+                found(start, start + literal.len());
+            }
+        }
+    }
+}
+
+/// Backend history arrives as unwrapped lines, possibly annotated with ANSI
+/// style and hyperlink metadata. Search only the rendered text.
+pub fn search_capture(
+    bytes: &[u8],
+    query: &str,
+    offset: usize,
+    limit: usize,
+    ignore_case: bool,
+) -> (usize, Vec<SearchMatch>) {
+    #[derive(Default)]
+    struct PlainText(String);
+    impl vte::Perform for PlainText {
+        fn print(&mut self, character: char) {
+            self.0.push(character);
+        }
+        fn execute(&mut self, byte: u8) {
+            if matches!(byte, b'\n' | b'\t') {
+                self.0.push(char::from(byte));
+            }
+        }
+    }
+    let mut text = PlainText::default();
+    vte::Parser::new().advance(&mut text, bytes);
+    let mut matches = Vec::new();
+    let mut total = 0;
+    let search = LiteralSearch::new(query, ignore_case);
+    for (row, line) in text.0.lines().enumerate() {
+        search.each(line, |start, _| {
+            total += 1;
+            if total <= offset || matches.len() == limit {
+                return;
+            }
+            let context_start = line[..start]
+                .char_indices()
+                .rev()
+                .nth(39)
+                .map_or(0, |(index, _)| index);
+            matches.push(SearchMatch {
+                row: row + 1,
+                column: line[..start].chars().count() + 1,
+                excerpt: line[context_start..].chars().take(256).collect(),
+            });
+        });
+    }
+    (total, matches)
+}
 type Position = (usize, u16);
 #[derive(Clone)]
 struct Span {
@@ -17,6 +98,8 @@ pub struct History {
     rows: Vec<std::ops::Range<usize>>,
     query: String,
     editing: Option<String>,
+    ignore_case: bool,
+    edit_ignore_case: bool,
     edit_cursor: usize,
     pending_pages: i32,
     matches: Vec<(Position, Position)>,
@@ -29,6 +112,7 @@ pub struct History {
 pub struct Status<'a> {
     pub query: &'a str,
     pub editing: bool,
+    pub ignore_case: bool,
     pub query_cursor: Option<usize>,
     pub matches: usize,
     pub matched: Option<usize>,
@@ -101,6 +185,8 @@ impl History {
             rows: document_rows,
             query: String::new(),
             editing: search.then(String::new),
+            ignore_case: false,
+            edit_ignore_case: false,
             edit_cursor: 0,
             pending_pages: 0,
             matches: Vec::new(),
@@ -132,6 +218,11 @@ impl History {
         Status {
             query: self.editing.as_deref().unwrap_or(&self.query),
             editing: self.editing.is_some(),
+            ignore_case: if self.editing.is_some() {
+                self.edit_ignore_case
+            } else {
+                self.ignore_case
+            },
             query_cursor: self.editing.as_ref().map(|_| self.edit_cursor),
             matches: self.matches.len(),
             matched: self.matched.map(|n| n + 1),
@@ -161,7 +252,14 @@ impl History {
                 .chars()
                 .take(24)
                 .collect::<String>();
-            return format!("Search history: {left}│{right} · Enter: search · Esc: cancel");
+            let case = if self.edit_ignore_case {
+                "ignore case"
+            } else {
+                "match case"
+            };
+            return format!(
+                "Search history: {left}│{right} · Ctrl+T: {case} · Enter: search · Esc: cancel"
+            );
         }
         format!(
             "Copy mode ({}) · row {}/{} · /: search · {}{} · arrows/PgUp/PgDn · Space: select · Enter/y: copy · Esc: exit",
@@ -181,19 +279,33 @@ impl History {
             if self.wrapped { " (wrapped)" } else { "" }
         )
     }
-    pub fn replace_snapshot(&mut self, screen: &vt100::Screen, source: &str) {
+    pub fn replace_snapshot(
+        &mut self,
+        screen: &vt100::Screen,
+        source: &str,
+        saved_cursor: Option<(u16, u16)>,
+    ) {
         let mut next = Self::new(screen, false);
         next.query = std::mem::take(&mut self.query);
         next.editing = self.editing.take();
+        next.ignore_case = self.ignore_case;
+        next.edit_ignore_case = self.edit_ignore_case;
         next.edit_cursor = self.edit_cursor;
         next.source = source.into();
-        next.find();
+        if let Some((row, column)) = saved_cursor {
+            let (rows, columns) = screen.size();
+            next.cursor = (
+                next.top() + usize::from(row.min(rows - 1)),
+                column.min(columns - 1),
+            );
+        }
         if self.pending_pages != 0 {
             let page = i64::from(next.screen.size().0.saturating_sub(1).max(1));
             next.cursor.0 = (next.cursor.0 as i64 + i64::from(self.pending_pages) * page)
                 .clamp(0, next.last() as i64) as usize;
             next.reveal();
         }
+        next.find();
         *self = next;
     }
     pub fn selected(&self, row: u16, col: u16) -> bool {
@@ -229,8 +341,7 @@ impl History {
         if self.query.is_empty() {
             return;
         }
-        for (start, _) in self.text.match_indices(&self.query) {
-            let end = start + self.query.len();
+        LiteralSearch::new(&self.query, self.ignore_case).each(&self.text, |start, end| {
             let first = self.spans.partition_point(|s| s.bytes.end <= start);
             let last = self.spans.partition_point(|s| s.bytes.start < end);
             if let (Some(a), Some(b)) = (
@@ -239,13 +350,10 @@ impl History {
             ) {
                 self.matches.push((a.position, b.end));
             }
-        }
-        if let Some(n) = self
-            .matches
-            .iter()
-            .rposition(|(a, _)| *a <= self.cursor)
-            .or_else(|| self.matches.len().checked_sub(1))
-        {
+        });
+        let preceding = self.matches.iter().rposition(|(a, _)| *a <= self.cursor);
+        if let Some(n) = preceding.or_else(|| self.matches.len().checked_sub(1)) {
+            self.wrapped = preceding.is_none();
             self.matched = Some(n);
             self.cursor = self.matches[n].0;
             self.reveal();
@@ -297,6 +405,7 @@ impl History {
                 }
                 "enter" => {
                     self.query = self.editing.take().unwrap();
+                    self.ignore_case = self.edit_ignore_case;
                     self.find();
                 }
                 "backspace" => {
@@ -328,6 +437,7 @@ impl History {
                 }
                 "home" => self.edit_cursor = 0,
                 "end" => self.edit_cursor = self.editing.as_ref().unwrap().len(),
+                "char:t" if modifiers == 2 => self.edit_ignore_case = !self.edit_ignore_case,
                 "char:u" if modifiers & 2 != 0 => {
                     self.editing.as_mut().unwrap().clear();
                     self.edit_cursor = 0;
@@ -354,6 +464,7 @@ impl History {
             "escape" | "char:q" => return Outcome::Exit,
             "enter" | "char:y" => return self.selected_text().map_or(Outcome::Stay, Outcome::Copy),
             "char:/" => {
+                self.edit_ignore_case = self.ignore_case;
                 self.editing = Some(self.query.clone());
                 self.edit_cursor = self.query.len();
             }
@@ -418,6 +529,24 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_preview_cursor_is_clamped_to_visible_cells() {
+        let screen = vt100::Parser::new(2, 8, 0);
+        let mut review = History::new(screen.screen(), false);
+        review.replace_snapshot(screen.screen(), "saved", Some((7, 40)));
+        assert_eq!(review.status().cursor, (1, 7));
+        assert!(review.selected(1, 7));
+    }
+
+    #[test]
+    fn ignore_case_literal_search_preserves_original_utf8_ranges() {
+        let text = "ſ. S. Sx";
+        let mut hits = Vec::new();
+        LiteralSearch::new("s.", true).each(text, |start, end| hits.push(&text[start..end]));
+        assert_eq!(hits, ["ſ.", "S."]);
+    }
+
     #[test]
     fn snapshot_search_unicode_wrapping_and_cross_page_copy() {
         let mut parser = vt100::Parser::new(3, 10, 100);
@@ -445,6 +574,25 @@ mod tests {
         parser.process(b"\r\nNEW OUTPUT");
         assert!(!h.text.contains("NEW OUTPUT"));
         assert!(parser.screen().contents().contains("NEW OUTPUT"));
+    }
+    #[test]
+    fn search_committed_during_capture_starts_at_queued_review_page() {
+        let mut parser = vt100::Parser::new(3, 20, 10);
+        parser.process(b"HIT old\r\nsecond\r\nHIT recent\r\nfourth\r\nlast");
+        let mut h = History::new(parser.screen(), false);
+        h.loading = true;
+        h.key("pageup", 0);
+        h.key("char:/", 0);
+        h.text_input("HIT");
+        h.key("enter", 0);
+        h.replace_snapshot(parser.screen(), "test", None);
+        assert_eq!(h.matched, Some(0));
+        assert_eq!(h.cursor, h.matches[0].0);
+
+        h.query = "recent".into();
+        h.find();
+        assert_eq!(h.matched, Some(0));
+        assert!(h.wrapped);
     }
     #[test]
     fn repeated_search_wraps_and_failed_search_does_not_copy_stale_match() {

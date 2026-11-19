@@ -174,7 +174,12 @@ impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB> {
                             .screen_cleared(&mut self.screen, crate::ScreenClear::Alternate);
                     }
                 }
-                'l' => self.screen.decrst(params, unhandled),
+                'l' => {
+                    if self.screen.decrst(params, unhandled) {
+                        self.callbacks
+                            .screen_cleared(&mut self.screen, crate::ScreenClear::Alternate);
+                    }
+                }
                 _ => {
                     self.callbacks.unhandled_csi(
                         &mut self.screen,

@@ -24,7 +24,9 @@ The default prefix is **Ctrl+B**. Release it, then press the command key. The st
 | x | Pane menu, including reconnect/recovery |
 | v | Toggle split |
 | % / " | Split right / down |
+| Shift+S | Choose an existing tab to split with |
 | Arrow / Alt+Arrow | Focus / move a pane in that direction |
+| Shift+E | Move the focused pane to an outer edge |
 | z | Zoom / restore focused pane |
 | o / Shift+O | Cycle pane focus / swap with next pane |
 | < / > | Shrink / grow focused pane |

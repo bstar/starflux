@@ -51,7 +51,7 @@ pub struct Reference {
     pub pid: u32,
     pub start_ticks: u64,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Size {
     pub rows: u16,
@@ -808,14 +808,18 @@ impl Broker {
                     !source.exit && source.stopping_at.is_none(),
                     "Source terminal has exited or is closing"
                 );
+                if source.size == size {
+                    return Ok(source.info());
+                }
                 ensure!(
                     source
                         .owner
-                        .resize(geometry)
+                        .resize_ready(geometry)
                         .map_err(|e| anyhow::anyhow!("Resize: {e:?}"))?,
                     "Source output is busy; retry resize"
                 );
                 source.master.resize(size.pty())?;
+                source.owner.apply_resize(geometry);
                 source.size = size;
                 source.revision = source.revision.saturating_add(1);
                 Ok(source.info())

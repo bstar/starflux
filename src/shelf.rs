@@ -224,6 +224,7 @@ impl ContextMenu {
                 | "Machines"
                 | "SSH machine"
                 | "Machine projects"
+                | "Agents on saved machines"
                 | "Notification settings"
                 | "Notification delivery"
                 | "Monospace fonts"
@@ -2217,14 +2218,14 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
     );
     let y = r.y + h.saturating_sub(82);
     p.button(
-        R::new(r.x + 20, y, 104, 30),
+        R::new(r.x + 20, y, 94, 30),
         "New session",
         "sessions:new",
         t,
         false,
     );
     p.button(
-        R::new(r.x + 132, y, 106, 30),
+        R::new(r.x + 122, y, 104, 30),
         if m.external {
             "Saved sessions"
         } else {
@@ -2240,9 +2241,16 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
     );
     if !m.external {
         p.button(
-            R::new(r.x + 246, y, 88, 30),
+            R::new(r.x + 234, y, 68, 30),
             "Delete…",
             "sessions:delete",
+            t,
+            false,
+        );
+        p.button(
+            R::new(r.x + 310, y, 72, 30),
+            "Rename…",
+            "sessions:rename",
             t,
             false,
         );
@@ -2261,7 +2269,7 @@ fn draw_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPicker) {
             w.saturating_sub(40),
             20,
         ),
-        "↑/↓ select · Enter open · Ctrl+N new · Ctrl+I import · Delete remove · Esc close",
+        "↑/↓ select · Enter open · F2 rename · Delete remove · Esc close",
         &t.muted,
         10,
         false,
@@ -2443,17 +2451,19 @@ fn draw_compact_sessions(p: &mut Pen, l: Layout, t: &Appearance, m: &SessionPick
             ("Import", "sessions:choose"),
             ("Close", "modal:cancel"),
             ("", "menu:panel"),
+            ("", "menu:panel"),
         ]
     } else {
         [
             ("New", "sessions:new"),
             ("Import", "sessions:import"),
             ("Delete", "sessions:delete"),
+            ("Rename", "sessions:rename"),
             ("Default", "sessions:default"),
             ("Open", "sessions:choose"),
         ]
     };
-    let count = if m.external { 4 } else { 5 };
+    let count = if m.external { 4 } else { 6 };
     let button_w = w.saturating_sub(20 + (count - 1) * 4) / count;
     for (i, (label, action)) in labels.into_iter().take(count as usize).enumerate() {
         p.button(

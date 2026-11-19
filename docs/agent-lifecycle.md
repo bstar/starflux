@@ -4,7 +4,11 @@ Right-click a terminal tab and choose **Agent status / conversation**. From the 
 
 The known “Automatic reconnect could not restore this session” and “Server connection could not be restored” footers produce `backend_unavailable`, rather than idle. Affected projects get an error marker. Output detection is a heuristic; the inspector labels it accordingly and does not export transcript text.
 
-Integrations can register an exact native conversation reference and a native resume argument vector. **Resume saved conversation in new tab** uses that registered vector and retains the original pane and process. It never guesses a conversation by directory, title, modification time or “last session.” Without a registered resume vector, this action is absent. **Recover to shell…** remains separate and requires the existing confirmation before stopping the foreground program.
+The inspector explains why a registered report lost authority. The JSON health field `report_status` distinguishes an archived record, process identity mismatch, clock skew, heartbeat expiry, and a terminal-observed backend failure overriding a current report. It also identifies current and unregistered reports.
+
+A confirmed terminal transport failure takes precedence over the last reported lifecycle. A disconnected presentation bridge can also appear alongside a running agent and its current lifecycle when the terminal owner remains reachable.
+
+Integrations can register an exact native conversation reference and a native resume argument vector. **Resume saved conversation in new tab** uses that registered vector and retains the original pane and process. It never guesses a conversation by directory, title, modification time or “last session.” When resume is unavailable, the menu explains whether the conversation reference or its command is missing. **Recover to shell…** remains separate and requires the existing confirmation before stopping the foreground program.
 
 ## Structured reports
 
@@ -16,6 +20,8 @@ starflux --workspace PROJECT --pane 1 --agent-report '{...}'
 ```
 
 `--agent-status` lists all project terminals, layered health and archived run records. `--pane` and the status list use one-based pane numbers. Saved records and UI snapshots retain zero-based internal pane IDs. Inspecting status does not start, stop or replace agents.
+
+Add `--agent-status-pane N` to inspect only the named terminal and its saved records. The provider startup adapter uses this scoped form so unrelated panes do not delay registration.
 
 A report contains:
 
@@ -39,13 +45,15 @@ The integration supplies its actual conversation reference and resume arguments.
 
 Supported lifecycle values are `unknown`, `idle`, `working`, `needs_input`, `waiting_for_approval`, `completed`, `failed`, `stopped`, and `backend_unavailable`. Working and approval states require heartbeats at least once per minute to remain authoritative. After 60 seconds, the inspector marks the report stale and falls back to labeled process/screen observations; the saved conversation reference remains available. A live backend-failure footer overrides an older integration heartbeat.
 
-Reports are rejected when the terminal generation, foreground process identity (including process start ticks and host boot UUID), harness or sequence does not match. Updating an older superseded run is rejected. To register a different conversation in the same agent process, start a new run at sequence 1 and set `replaces_run` to the current run UUID; this prevents delayed registrations from silently replacing a newer run.
+Reports are rejected when the terminal generation, foreground process identity (including process start ticks and host boot UUID), harness or sequence does not match. Updating an older superseded run is rejected. To register a different conversation in the same agent process, start a new run at sequence 1 and set `replaces_run` to the current run UUID; this prevents delayed registrations from silently replacing a newer run. Whenever a new run supplies `replaces_run`, that reference must still match the active run for the pane, including after an agent process change. Omit it when registering a fresh run without a predecessor.
 
 Records are private metadata in `$XDG_DATA_HOME/starflux/projects/PROJECT.agents.json` (normally `~/.local/share/starflux/projects/`). Previous runs remain archived when a new run starts. Saved resume commands are shell-quoted argument vectors, scoped to the project's host and directory, and run only after an explicit resume action. They are retained with their new terminal across frontend reattachment.
 
 This interface is implemented and tested with disposable agent fixtures. Automatic provider-specific hook installation and conversation discovery for existing Codex/Claude/etc. processes remain part of the parity work; existing live sessions are not modified to install hooks. STAR/FLUX can detect their process and screen health without a structured report, but cannot promise exact conversation recovery until their identity is registered.
 
 A saved report from a previous boot cannot establish that a current agent is the same process, even if its PID and start ticks coincide. Legacy records without a boot identity remain readable and retain their explicit conversation/resume references, but are never authoritative live lifecycle reports. New reports must include the current boot identity; missing or stale identities are rejected.
+
+When explicit shell recovery replaces an abandoned PTY bridge or an exited plugin terminal, the saved conversation stays available in the recovered pane. Its original report remains stale and cannot establish the health of the replacement process.
 
 Explicit resume uses a durable one-shot launch receipt. A later missing backend opens a shell rather than executing the saved resume hint again. See [cold-start recovery and saved screens](cold-start.md).
 
@@ -72,3 +80,103 @@ reference alone is insufficient to infer which STAR/FLUX pane currently displays
 that thread. The adapter must bind registration to the pane/launch incarnation
 and handle thread switches and delayed callbacks. Existing hooks and provider
 trust settings must be preserved. No hooks have been installed in live agents.
+
+The Linux fixture `scripts/test-codex-resume-offline.py /path/to/codex` verifies
+the installed Codex app-server's exact-ID contract. It uses Bubblewrap to mount
+a disposable profile and disable networking. With Codex 0.169.0, a fresh server
+resumed the persisted thread by ID and rejected an unknown ID.
+
+The same fixture opens `codex resume --no-daemon --no-alt-screen ID` in a
+private PTY and checks that the interactive `/status` output contains the
+original thread ID. A disposable provider configuration keeps the fixture
+independent of sign-in. The test checks conversation identity and does not
+invoke a model or assert that the synthetic history item renders in the TUI.
+
+Pass `--starflux /absolute/path/to/private-launcher` to exercise the STAR/FLUX
+Agent Status resume action with the real Codex executable. The fixture registers
+the provider-confirmed ID and the exact launch arguments, opens a new tab, and
+checks the ID reported by Codex. It also checks process retention on frontend
+refresh and explicit recovery to a shell. Local graphical, local cells and
+loopback SSH cells passed using Codex 0.169.0 with the disposable profile.
+Automatic registration, the daemon-backed Codex path and Claude recovery
+remain unverified.
+
+An opt-in local adapter is available at `scripts/agent-session-hook.py`. Add it
+as a **synchronous** Codex `SessionStart` command for the bound launch and
+review it through Codex's hook trust UI. New owned terminal launches pass
+`STARFLUX_WORKSPACE`, `STARFLUX_PANE`, and `STARFLUX_PANE_EPOCH` to their
+processes. New sessions, projects, and worktree workspaces also assign a
+generation to their first owned pane. The adapter uses this binding and an
+explicit resume argument
+template that preserves the launch's provider and model choices.
+
+```sh
+starflux --agent-session-hook -- /path/to/codex resume --no-daemon '{session_id}'
+```
+
+The installed STAR/FLUX executable includes the hook and runs it with `python3`.
+Add `--print-config` before `--` to print a JSON fragment for the provider's
+hook configuration. Review and merge the fragment with existing hooks.
+The generated command uses `starflux` from the provider's PATH by default.
+Use `--starflux /path/to/starflux` to choose a stable launcher path explicitly.
+The resume template starts with an executable and contains exactly one
+`{session_id}` argument. It accepts up to 64 nonempty arguments of up to
+4096 UTF-8 bytes each. Control characters are rejected.
+See the [Codex hook configuration reference](https://developers.openai.com/de-DE/docs/hooks)
+and the [Claude Code hook reference](https://code.claude.com/docs/en/hooks).
+The hook accepts the provider's session ID from stdin and checks the foreground
+process's ancestry and start time before registering it. A detached callback,
+recycled pane, or hook running from a shared daemon outside the bound process
+tree cannot register. The adapter skips unbound launches, including legacy
+panes without a generation.
+The `--workspace`, `--pane`, and `--epoch` flags also allow an explicit binding
+for a launch that supplies its own integration. Background hooks can finish
+out of order,
+so the adapter supports synchronous starts and does not infer a thread switch
+from an unrelated or delayed event. A Codex startup callback cannot replace
+a conversation already registered by the same process. The fixture captures the event from the
+real Codex app-server using a managed
+hook confined to the disposable profile's mount namespace. Codex 0.169.0
+emitted the event when the first turn began after resume. The fixture replays
+only the event name, source and session ID from its bound process and verifies
+that the resulting exact command resumes the real Codex thread. On the resumed
+pane's first private turn, Codex also invokes the adapter directly and
+registers the same ID against the new pane's generation. This validates the
+per-pane, daemon-free path. Automatic hook setup and the shared daemon path
+remain separate work.
+
+The same adapter accepts Claude Code `SessionStart` events. Configure it for a
+bound launch with a resume template matching that launch's model and settings.
+
+```sh
+starflux --agent-session-hook --provider claude -- \
+  /path/to/claude --resume '{session_id}'
+```
+
+Claude Code can deliver SessionStart in the background. Once a bound Claude
+process has registered a conversation, the adapter rejects a different ID
+from that process. Use a new bound process to register another conversation.
+See the [Claude Code hook reference](https://code.claude.com/docs/en/hooks).
+
+Run `python3 scripts/test-claude-resume-offline.py /path/to/claude` to verify
+provider startup and exact resume in a disposable profile. Claude Code 2.1.326
+reported the same UUID on startup and when invoked with `--resume` in a new
+process. This probe runs print mode with networking disabled. The interactive
+Claude path through STAR/FLUX still requires end-to-end validation.
+
+Pass `--starflux /absolute/path/to/private-launcher` to the Claude probe to
+verify the STAR/FLUX cells resume action. A fixture supplies the source
+registration, then STAR/FLUX launches real Claude Code by UUID in a new pane.
+Claude's own callback registers the UUID against the new pane. The source
+process remains alive. This test uses print mode. The interactive client
+stopped at its connectivity check in the offline profile.
+
+For an imported Herdr terminal, the tab menu's **Agent status / conversation**
+view checks the live source and displays its pane ID and shell PID. The
+diagnostic is read-only and reports when the source identity is unavailable.
+
+The release gate can also run the offline provider probes. Set
+`STARFLUX_TEST_CODEX_BIN` or `STARFLUX_TEST_CLAUDE_BIN` to the absolute path
+of the provider executable. These opt-in checks use disposable profiles
+and isolated networking. The Codex gate uses cells over loopback SSH.
+The Claude Code gate uses print mode in cells.

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     automation::fault,
-    frontend_commands::{Command, Direction, Space as CommandSpace},
+    frontend_commands::{Command, Space as CommandSpace},
 };
 impl Workspace {
     pub(super) fn frontend_command_busy(&self) -> bool {
@@ -39,6 +39,12 @@ impl Workspace {
             Command::OpenPluginPopup { project, .. }
             | Command::PresentPluginPane { project, .. }
             | Command::SelectPane { project, .. }
+            | Command::ResumeConversation { project, .. }
+            | Command::SplitPane { project, .. }
+            | Command::SplitExistingTab { project, .. }
+            | Command::CloseSplitPane { project, .. }
+            | Command::MovePane { project, .. }
+            | Command::MovePaneToEdge { project, .. }
             | Command::SelectSpace { project, .. }
             | Command::FocusPane { project, .. }
             | Command::SetZoom { project, .. } => Some(project),
@@ -113,7 +119,13 @@ impl Workspace {
                 }
                 self.reopen_project(config)?;
             }
-            Command::SelectPane { pane, epoch, .. } => {
+            Command::SelectPane { pane, epoch, .. }
+            | Command::ResumeConversation { pane, epoch, .. }
+            | Command::SplitPane { pane, epoch, .. }
+            | Command::SplitExistingTab { pane, epoch, .. }
+            | Command::CloseSplitPane { pane, epoch, .. }
+            | Command::MovePaneToEdge { pane, epoch, .. }
+            | Command::MovePane { pane, epoch, .. } => {
                 let id = usize::from(
                     pane.checked_sub(1)
                         .filter(|id| *id < 32)
@@ -131,7 +143,89 @@ impl Workspace {
                         "Pane membership or terminal epoch changed",
                     ));
                 }
-                self.action(&format!("terminal:{id}"))?;
+                match command {
+                    Command::MovePaneToEdge { direction, .. } => {
+                        if self.state.space != Space::Terminals {
+                            return Err(fault(
+                                "wrong_space",
+                                "Pane movement requires terminal space",
+                            ));
+                        }
+                        self.action(&format!("pane-edge:{id}:{}", direction.as_str()))?;
+                    }
+                    Command::CloseSplitPane { .. } => {
+                        if self.state.space != Space::Terminals {
+                            return Err(fault(
+                                "wrong_space",
+                                "Pane closing requires terminal space",
+                            ));
+                        }
+                        if !self.close_split_pane_view(id) {
+                            return Err(fault(
+                                "pane_not_in_layout",
+                                "Terminal is outside the current split layout",
+                            ));
+                        }
+                    }
+                    Command::ResumeConversation { run_id, .. } => {
+                        self.action(&format!("agent-resume:{id}:{run_id}"))?;
+                    }
+                    Command::SplitPane { .. }
+                    | Command::SplitExistingTab { .. }
+                    | Command::MovePane { .. } => {
+                        if self.state.space != Space::Terminals || self.state.selected() != id {
+                            return Err(fault(
+                                "stale_target",
+                                "The named pane is no longer focused",
+                            ));
+                        }
+                        match command {
+                            Command::SplitPane { axis, .. } => {
+                                self.action(match axis {
+                                    crate::panes::Axis::Right => "terminal:split-right",
+                                    crate::panes::Axis::Down => "terminal:split-down",
+                                })?;
+                            }
+                            Command::SplitExistingTab {
+                                tab,
+                                tab_epoch,
+                                axis,
+                                ..
+                            } => {
+                                let tab =
+                                    usize::from(tab.checked_sub(1).ok_or_else(|| {
+                                        fault("invalid_params", "Tab must be 1..32")
+                                    })?);
+                                if !self.state.terminal_ids().contains(&tab)
+                                    || self.config.canonical_pane(tab) != tab
+                                    || self.state.terminal_epochs.get(&tab) != tab_epoch.as_ref()
+                                {
+                                    return Err(fault(
+                                        "stale_target",
+                                        "Existing tab membership or terminal epoch changed",
+                                    ));
+                                }
+                                self.state.split_with_tab(id, tab, *axis)?;
+                                self.release();
+                                self.cell_ui.terminal_focus = true;
+                                self.layout();
+                                self.save();
+                            }
+                            Command::MovePane { direction, .. } => {
+                                let before = self.state.unzoomed_tree();
+                                self.action(&format!("terminal:move-{}", direction.as_str()))?;
+                                if self.state.unzoomed_tree() == before {
+                                    return Err(fault(
+                                        "no_neighbor",
+                                        "No visible pane in that direction",
+                                    ));
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => self.action(&format!("terminal:{id}"))?,
+                }
             }
             Command::SelectSpace { space, .. } => {
                 if *space == CommandSpace::Apps && !self.app_view_available {
@@ -162,13 +256,7 @@ impl Workspace {
                 if self.state.space != Space::Terminals {
                     return Err(fault("wrong_space", "Pane focus requires terminal space"));
                 }
-                let direction = match direction {
-                    Direction::Left => "left",
-                    Direction::Right => "right",
-                    Direction::Up => "up",
-                    Direction::Down => "down",
-                };
-                self.action(&format!("terminal:focus-{direction}"))?;
+                self.action(&format!("terminal:focus-{}", direction.as_str()))?;
             }
             Command::SetZoom { enabled, .. } => {
                 if self.state.space != Space::Terminals {

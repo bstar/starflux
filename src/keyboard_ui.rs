@@ -234,6 +234,12 @@ impl Workspace {
             "split-right" | "split-down" | "resize-less" | "resize-more" | "focus-left"
             | "focus-right" | "focus-up" | "focus-down" | "move-left" | "move-right"
             | "move-up" | "move-down" => self.action(&format!("terminal:{action}"))?,
+            "split-existing" => {
+                self.action(&format!("split-existing:{}:menu", self.state.terminal))?;
+            }
+            "move-pane-to-edge" => {
+                self.action(&format!("pane-edge:{}:menu", self.state.terminal))?;
+            }
             "zoom-pane" => self.action("terminal:zoom")?,
             "swap-pane" => self.action("terminal:swap-next")?,
             "close-pane" => self.action("terminal:close-pane")?,

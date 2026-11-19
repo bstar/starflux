@@ -161,8 +161,12 @@ impl Workspace {
                     }
                 } else if target == "links" {
                     let links = &self.plugin_data["jobs"];
-                    subtitle = "Choose a handler / nothing runs until selected".into();
-                    detail(&mut items, links["url"].as_str().unwrap_or(""), width);
+                    subtitle = "Choose how to open the link".into();
+                    let url = links["url"].as_str().unwrap_or("");
+                    detail(&mut items, url, width);
+                    if self.can_open_browser(url) {
+                        items.push(item("Open in browser", "plugins:open-browser"));
+                    }
                     for h in links["handlers"].as_array().into_iter().flatten() {
                         items.push(item(
                             format!(
@@ -605,6 +609,22 @@ impl Workspace {
                 result["project"] = project;
                 Ok(result)
             });
+            return Ok(true);
+        }
+        if action == "open-browser" {
+            ensure!(
+                self.plugin_view == "links"
+                    && self.context_menu.as_ref().is_some_and(|menu| menu
+                        .items
+                        .iter()
+                        .any(|item| item.action == "plugins:open-browser")),
+                "Resolve a URL first"
+            );
+            let url = self.plugin_data["jobs"]["url"]
+                .as_str()
+                .context("Resolve a URL first")?
+                .to_owned();
+            self.open_browser(&url)?;
             return Ok(true);
         }
         if let Some(tail) = action.strip_prefix("open-link:") {

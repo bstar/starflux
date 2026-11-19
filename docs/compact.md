@@ -22,7 +22,7 @@ Project creation stays at the bottom of the project picker. The terminal picker 
 
 Short dialogs scroll their fields to follow keyboard focus. Tab/Shift+Tab and PageUp/PageDown move between fields, Ctrl+Enter accepts and Escape cancels. The focused field is also a pointer target in cells mode. A field count indicates hidden fields. Long text keeps the editing cursor visible, including UTF-8 paths; data is not truncated when its display is clipped.
 
-Compact session pickers retain search, selection, creation, import, default, deletion and opening controls. Up/Down and Home/End navigate sessions. Ctrl+N creates, Ctrl+I imports, Ctrl+D changes the default, Delete starts the existing deletion confirmation and Enter opens. Ctrl+A/Ctrl+E move the search cursor to its ends. Session list offsets adapt when resizing so the selected row remains visible.
+Compact session pickers retain search, selection, creation, import, default, deletion and opening controls. Up/Down and Home/End navigate sessions. Ctrl+N creates, Ctrl+I imports, Ctrl+D changes the default, F2 renames the selected saved session, Delete starts the existing deletion confirmation and Enter opens. Ctrl+A/Ctrl+E move the search cursor to its ends. Session list offsets adapt when resizing so the selected row remains visible.
 
 Compact Git status combines repository information and changed files in one wrapped, scrollable view. Up/Down and PageUp/PageDown scroll, `r` refreshes and Escape closes. Long paths can be read without widening the window.
 

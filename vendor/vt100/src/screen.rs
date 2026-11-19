@@ -57,9 +57,9 @@ pub struct Screen {
     alternate_grid: crate::grid::Grid,
 
     attrs: crate::attrs::Attrs,
-    saved_attrs: crate::attrs::Attrs,
+    saved_attrs: [crate::attrs::Attrs; 2],
     hyperlink: Option<std::sync::Arc<crate::hyperlink::Hyperlink>>,
-    saved_hyperlink: Option<std::sync::Arc<crate::hyperlink::Hyperlink>>,
+    saved_hyperlink: [Option<std::sync::Arc<crate::hyperlink::Hyperlink>>; 2],
     hyperlink_budget: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     hyperlink_revision: u64,
     hyperlinks_seen: bool,
@@ -114,9 +114,9 @@ impl Screen {
             alternate_grid: crate::grid::Grid::new(size, 0),
 
             attrs: crate::attrs::Attrs::default(),
-            saved_attrs: crate::attrs::Attrs::default(),
+            saved_attrs: Default::default(),
             hyperlink: None,
-            saved_hyperlink: None,
+            saved_hyperlink: Default::default(),
             hyperlink_budget: Default::default(),
             hyperlink_revision: 0,
             hyperlinks_seen: false,
@@ -762,15 +762,23 @@ impl Screen {
     }
 
     fn save_cursor(&mut self) {
+        let buffer = usize::from(self.alternate_screen());
         self.grid_mut().save_cursor();
-        self.saved_attrs = self.attrs;
-        self.saved_hyperlink = self.hyperlink.clone();
+        self.saved_attrs[buffer] = self.attrs;
+        self.saved_hyperlink[buffer] = self.hyperlink.clone();
     }
 
     fn restore_cursor(&mut self) {
+        let buffer = usize::from(self.alternate_screen());
         self.grid_mut().restore_cursor();
-        self.attrs = self.saved_attrs;
-        self.hyperlink = self.saved_hyperlink.clone();
+        self.attrs = self.saved_attrs[buffer];
+        self.hyperlink = self.saved_hyperlink[buffer].clone();
+    }
+
+    fn clear_alternate_grid(&mut self) {
+        self.alternate_grid.clear();
+        self.saved_attrs[1] = Default::default();
+        self.saved_hyperlink[1] = None;
     }
 
     fn set_mode(&mut self, mode: u8) {
@@ -1131,7 +1139,7 @@ impl Screen {
                 [6] => self.grid_mut().set_origin_mode(true),
                 [9] => self.set_mouse_mode(MouseProtocolMode::Press),
                 [25] => self.clear_mode(MODE_HIDE_CURSOR),
-                [47] => self.enter_alternate_grid(),
+                [47] | [1047] => self.enter_alternate_grid(),
                 [1000] => {
                     self.set_mouse_mode(MouseProtocolMode::PressRelease);
                 }
@@ -1145,9 +1153,10 @@ impl Screen {
                 [1006] => {
                     self.set_mouse_encoding(MouseProtocolEncoding::Sgr);
                 }
+                [1048] => self.decsc(),
                 [1049] => {
                     self.decsc();
-                    self.alternate_grid.clear();
+                    self.clear_alternate_grid();
                     self.enter_alternate_grid();
                 }
                 [2004] => self.set_mode(MODE_BRACKETED_PASTE),
@@ -1157,7 +1166,12 @@ impl Screen {
     }
 
     // CSI ? l
-    pub(crate) fn decrst(&mut self, params: &vte::Params, mut unhandled: impl FnMut(&mut Self)) {
+    pub(crate) fn decrst(
+        &mut self,
+        params: &vte::Params,
+        mut unhandled: impl FnMut(&mut Self),
+    ) -> bool {
+        let mut cleared_alternate = false;
         for param in params {
             match param {
                 [1] => self.clear_mode(MODE_APPLICATION_CURSOR),
@@ -1182,6 +1196,14 @@ impl Screen {
                 [1006] => {
                     self.clear_mouse_encoding(MouseProtocolEncoding::Sgr);
                 }
+                [1047] => {
+                    if self.alternate_screen() {
+                        self.clear_alternate_grid();
+                        self.exit_alternate_grid();
+                        cleared_alternate = true;
+                    }
+                }
+                [1048] => self.decrc(),
                 [1049] => {
                     self.exit_alternate_grid();
                     self.decrc();
@@ -1190,6 +1212,7 @@ impl Screen {
                 _ => unhandled(self),
             }
         }
+        cleared_alternate
     }
 
     // CSI m

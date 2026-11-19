@@ -6,6 +6,7 @@ pub struct Parser<CB: crate::callbacks::Callbacks = ()> {
     osc_state: u8,
     osc: Vec<u8>,
     string_kind: u8,
+    utf8_tail: [u8; 3],
 }
 
 impl Parser {
@@ -18,6 +19,7 @@ impl Parser {
             osc_state: 0,
             osc: Vec::new(),
             string_kind: 0,
+            utf8_tail: [0; 3],
             screen: crate::perform::WrappedScreen::new(rows, cols, scrollback_len),
         }
     }
@@ -34,6 +36,7 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
             osc_state: 0,
             osc: Vec::new(),
             string_kind: 0,
+            utf8_tail: [0; 3],
             screen: crate::perform::WrappedScreen::new_with_callbacks(
                 rows,
                 cols,
@@ -45,7 +48,42 @@ impl<CB: crate::callbacks::Callbacks> Parser<CB> {
 
     /// Processes the contents of the given byte string, and updates the
     /// in-memory terminal state.
-    pub fn process(&mut self, bytes: &[u8]) {
+    pub fn process(&mut self, mut bytes: &[u8]) {
+        while let Some(index) = memchr::memchr2(0x9d, 0x9c, bytes) {
+            self.process_span(&bytes[..index]);
+            let byte = bytes[index];
+            if self.utf8_continuation(byte) {
+                self.process_span(&[byte]);
+            } else if byte == 0x9d && self.osc_state == 0 {
+                self.process_span(b"\x1b]");
+            } else if byte == 0x9c && self.string_kind == 1 && matches!(self.osc_state, 2 | 4) {
+                self.process_span(b"\x1b\\");
+            } else {
+                self.process_span(&[byte]);
+            }
+            bytes = &bytes[index + 1..];
+        }
+        self.process_span(bytes);
+    }
+
+    fn utf8_continuation(&self, byte: u8) -> bool {
+        let tail = self.utf8_tail;
+        // Only an unfinished, valid UTF-8 prefix can own a C1-range byte.
+        let Some(lead) = tail.iter().rposition(|b| !(0x80..=0xbf).contains(b)) else {
+            return false;
+        };
+        if tail[lead] < 0xc2 {
+            return false;
+        }
+        let sequence = [tail[0], tail[1], tail[2], byte];
+        std::str::from_utf8(&sequence[lead..])
+            .map_or_else(|error| error.error_len().is_none(), |_| true)
+    }
+
+    fn process_span(&mut self, bytes: &[u8]) {
+        let tail_len = bytes.len().min(self.utf8_tail.len());
+        self.utf8_tail.rotate_left(tail_len);
+        self.utf8_tail[3 - tail_len..].copy_from_slice(&bytes[bytes.len() - tail_len..]);
         let mut index = 0;
         while index < bytes.len() {
             let byte = bytes[index];

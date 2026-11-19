@@ -49,6 +49,7 @@ fn load(path: &std::path::Path) -> Result<Journal> {
 }
 fn entity(resource: &str) -> &'static str {
     match resource.split('/').next().unwrap_or("") {
+        "sessions" => "session",
         "projects" => "project",
         "panes" => "pane",
         "agents" => "agent.reported",
@@ -217,12 +218,28 @@ pub(crate) fn snapshot() -> Result<(Value, String)> {
     let _lock = project_sync::Transaction::acquire(root.join("events.lock"))?;
     let path = root.join("events.json");
     let mut journal = load(&path)?;
-    let metadata = metadata(None)?;
+    let mut metadata = metadata(None)?;
+    let sessions_available = match crate::session_catalog::list() {
+        Ok(sessions) => {
+            metadata["sessions"] = serde_json::to_value(sessions)?;
+            true
+        }
+        Err(error) => {
+            metadata["warnings"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"source":"sessions","error":format!("{error:#}")}));
+            false
+        }
+    };
     let warnings = metadata["warnings"].as_array().unwrap();
-    let resources = ["projects", "panes", "agents", "attention"].map(str::to_owned);
+    let resources = ["projects", "panes", "agents", "attention", "sessions"].map(str::to_owned);
     let changed = journal.update(
         keyed(&metadata, &resources),
         |key| {
+            if key.starts_with("sessions/") {
+                return sessions_available;
+            }
             !warnings
                 .iter()
                 .any(|w| w["project"].as_str() == key.split('/').nth(1))
@@ -233,6 +250,21 @@ pub(crate) fn snapshot() -> Result<(Value, String)> {
         persist(&path, &serde_json::to_vec(&journal)?)?;
     }
     Ok((metadata, journal.cursor()))
+}
+pub(crate) fn sessions_saved() -> Result<()> {
+    let root = root()?;
+    let _lock = project_sync::Transaction::acquire(root.join("events.lock"))?;
+    let path = root.join("events.json");
+    let mut journal = load(&path)?;
+    let current = json!({"sessions":crate::session_catalog::list()?});
+    if journal.update(
+        keyed(&current, &["sessions".into()]),
+        |key| key.starts_with("sessions/"),
+        "domain",
+    )? {
+        persist(&path, &serde_json::to_vec(&journal)?)?;
+    }
+    Ok(())
 }
 pub(crate) fn read(cursor: &str) -> Result<Vec<Change>> {
     let root = root()?;

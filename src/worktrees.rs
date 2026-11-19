@@ -23,6 +23,12 @@ pub struct Catalog {
     pub repository: Value,
     pub worktrees: Vec<Value>,
 }
+#[derive(Deserialize)]
+pub struct LockResult {
+    #[serde(flatten)]
+    pub catalog: Catalog,
+    pub worktree: Value,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum State {
@@ -83,7 +89,7 @@ fn save(link: &Link) -> Result<()> {
 fn same_host(link: &Link, config: &Config) -> bool {
     link.host == config.host && link.ssh_config == config.ssh_config
 }
-fn same_directory(a: &Value, b: &Value) -> bool {
+pub(crate) fn same_directory(a: &Value, b: &Value) -> bool {
     ["path", "device", "inode"].iter().all(|k| a[*k] == b[*k])
         && a["repository"]["common_dir"] == b["repository"]["common_dir"]
 }
@@ -184,16 +190,31 @@ fn host(config: &Config, action: &str, mut request: Value) -> Result<Value> {
     ensure!(status.success(), "Worktree host: {}", message.trim());
     output.rewind()?;
     let response: Value = serde_json::from_reader(output.take(2 * 1024 * 1024))?;
-    ensure!(
-        response["ok"] == true,
-        "{}: {}",
-        response["error"]["code"]
+    if response["ok"] != true {
+        let code = response["error"]["code"]
             .as_str()
-            .unwrap_or("worktree_error"),
-        response["error"]["message"]
+            .unwrap_or("worktree_error");
+        let message = response["error"]["message"]
             .as_str()
-            .unwrap_or("Worktree host failed")
-    );
+            .unwrap_or("Worktree host failed");
+        let api_code = match code {
+            "stale_worktree" => "stale_worktree",
+            "locked_worktree" => "locked_worktree",
+            "dirty_worktree" => "dirty_worktree",
+            "worktree_busy" => "worktree_busy",
+            "primary_worktree" => "primary_worktree",
+            "unreferenced_commit" => "unreferenced_commit",
+            "path_exists" => "path_exists",
+            "unavailable" => "worktree_unavailable",
+            "invalid_base" | "invalid_branch" | "invalid_path" | "invalid_lock" => "invalid_params",
+            "outcome_unknown" => "operation_indeterminate",
+            _ => "operation_failed",
+        };
+        return Err(crate::automation::fault(
+            api_code,
+            format!("{code}: {message}"),
+        ));
+    }
     Ok(response["result"].clone())
 }
 pub fn list(config: &Config) -> Result<Catalog> {
@@ -290,7 +311,7 @@ fn repository_origin(config: &Config) -> Result<String> {
         state: State::Active,
         last_app_launch: 0,
     })?;
-    ProjectState::default().save(&root)?;
+    ProjectState::new_owned().save(&root)?;
     Ok(root.workspace)
 }
 pub fn open(config: &Config, target: &Value) -> Result<Config> {
@@ -362,7 +383,7 @@ pub fn open(config: &Config, target: &Value) -> Result<Config> {
             last_app_launch: 0,
         };
         save(&association)?;
-        ProjectState::default().save(&destination)?;
+        ProjectState::new_owned().save(&destination)?;
         destination
     };
     drop(_group);
@@ -377,6 +398,19 @@ pub fn open(config: &Config, target: &Value) -> Result<Config> {
         destination.ensure(pane, None)?;
     }
     Ok(destination)
+}
+pub fn set_lock(
+    config: &Config,
+    target: &Value,
+    locked: bool,
+    reason: Option<&str>,
+) -> Result<LockResult> {
+    let _group = group(config, &target["repository"])?;
+    Ok(serde_json::from_value(host(
+        config,
+        "set_lock",
+        json!({"target":target,"locked":locked,"reason":reason}),
+    )?)?)
 }
 pub fn remove(config: &Config, target: &Value) -> Result<Value> {
     let _group = group(config, &target["repository"])?;

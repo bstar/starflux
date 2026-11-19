@@ -324,8 +324,8 @@ pub fn inbox(query: &Query) -> Result<Inbox> {
 }
 pub fn query(query: &Query) -> Result<Inbox> {
     let mut result = inbox(query)?;
-    let offset = if query.offset >= result.total && result.total > 0 {
-        (result.total - 1) / query.limit * query.limit
+    let offset = if query.offset >= result.total {
+        result.total.saturating_sub(1) / query.limit * query.limit
     } else {
         query.offset
     };
@@ -430,18 +430,34 @@ pub fn delivery_status() -> Result<Value> {
 }
 /// Claim once before contacting the OS. Uncertain/crashed attempts remain visible, never silently retried.
 pub fn deliver(items: &[Item], started_ms: u64, active: Option<(&str, usize)>) -> Result<usize> {
+    deliver_from(items, started_ms, active, None, None)
+}
+
+fn deliver_from(
+    items: &[Item],
+    started_ms: u64,
+    active: Option<(&str, usize)>,
+    ssh_origin: Option<&str>,
+    remote_focus: Option<&Focus>,
+) -> Result<usize> {
     let settings = settings()?;
-    if settings.delivery != Delivery::System || system_capability()["available"] != true {
+    if settings.delivery != Delivery::System
+        || system_capability()["available"] != true
+        || (ssh_origin.is_some() && settings.suppress_active && remote_focus.is_none())
+    {
         return Ok(0);
     }
-    let path = delivery_root()?.join("deliveries.json");
+    let path = delivery_root()?.join(match ssh_origin {
+        Some(origin) => format!("ssh-{origin}.json"),
+        None => "deliveries.json".into(),
+    });
     let _lock = crate::project_sync::Transaction::acquire(path.with_extension("lock"))?;
     let mut records = if path.exists() {
         read::<BTreeMap<String, Attempt>>(&path, 32 * 1024 * 1024)?
     } else {
         BTreeMap::new()
     };
-    if records.len() > 5000 {
+    if records.len() > 5000 && ssh_origin.is_none() {
         let retained = inbox(&Query {
             read: ReadState::All,
             ..Default::default()
@@ -455,7 +471,11 @@ pub fn deliver(items: &[Item], started_ms: u64, active: Option<(&str, usize)>) -
             records.retain(|id, _| ids.contains(id));
         }
     }
-    let focused = active_panes();
+    let focused = if ssh_origin.is_none() {
+        active_panes()
+    } else {
+        vec![]
+    };
     let mut sent = 0;
     let mut attempted = 0;
     for item in items.iter().filter(|i| {
@@ -471,6 +491,12 @@ pub fn deliver(items: &[Item], started_ms: u64, active: Option<(&str, usize)>) -
         );
         let suppress = settings.suppress_active
             && (active == Some((item.project.as_str(), item.event.pane))
+                || remote_focus.is_some_and(|focus| {
+                    focus.focused
+                        && focus.project == item.project
+                        && focus.pane == item.event.pane
+                        && focus.epoch == item.event.epoch
+                })
                 || focused.iter().any(|f| {
                     f.project == item.project
                         && f.pane == item.event.pane
@@ -521,6 +547,108 @@ pub fn deliver(items: &[Item], started_ms: u64, active: Option<(&str, usize)>) -
         }
     }
     Ok(sent)
+}
+
+/// Opt-in local receiver. It only reads remote attention and never runs the
+/// desktop helper on the SSH host.
+pub struct SshDelivery(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl SshDelivery {
+    pub fn start(
+        host: String,
+        config: Option<PathBuf>,
+        executable: String,
+        project: String,
+        frontend: String,
+    ) -> Result<Self> {
+        use sha2::{Digest, Sha256};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let local = settings()?;
+        ensure!(
+            local.delivery == Delivery::System && system_capability()["available"] == true,
+            "Enable desktop notifications on the presenting machine first"
+        );
+        let origin = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(&host, &config, &executable))?)
+        );
+        let stopped = Arc::new(AtomicBool::new(false));
+        let running = stopped.clone();
+        let request = json!({"version":1,"id":"ssh-attention","method":"attention.forward",
+                             "params":{"workspace":project,"frontend":frontend}})
+        .to_string();
+        std::thread::spawn(move || {
+            let mut baseline = None;
+            while !running.load(Ordering::Acquire) {
+                if let Ok(page) = ssh_attention(&host, config.as_deref(), &executable, &request)
+                    && !running.load(Ordering::Acquire)
+                {
+                    let started = *baseline.get_or_insert(page.sampled_ms);
+                    let _ = deliver_from(
+                        &page.items,
+                        started,
+                        None,
+                        Some(&origin),
+                        page.focus.as_ref(),
+                    );
+                }
+                for _ in 0..40 {
+                    if running.load(Ordering::Acquire) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        Ok(Self(stopped))
+    }
+}
+impl Drop for SshDelivery {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ForwardPage {
+    sampled_ms: u64,
+    items: Vec<Item>,
+    focus: Option<Focus>,
+}
+
+fn ssh_attention(
+    host: &str,
+    config: Option<&std::path::Path>,
+    executable: &str,
+    request: &str,
+) -> Result<ForwardPage> {
+    let mut command = Command::new("ssh");
+    if let Some(config) = config {
+        command.arg("-F").arg(config);
+    }
+    command.args([
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "ConnectTimeout=5",
+        "--",
+        host,
+    ]);
+    command.arg(shell_words::join([executable, "--api", request]));
+    let (ok, stdout, _) = crate::machines::output(command)?;
+    ensure!(ok, "SSH attention query failed");
+    let response: Value = serde_json::from_str(&stdout)?;
+    ensure!(
+        response["version"] == 1 && response["id"] == "ssh-attention" && response["ok"] == true,
+        "Incompatible SSH attention response"
+    );
+    Ok(serde_json::from_value(response["result"].clone())?)
 }
 
 fn system(title: &str, body: &str) -> Result<()> {
@@ -608,6 +736,43 @@ struct Focus {
     start: u64,
     at_ms: u64,
 }
+/// Sample the presenting frontend's current workspace and verified focus
+/// together so an SSH client can suppress only that exact pane generation.
+pub fn forward_page(workspace: &str, frontend: &str) -> Result<ForwardPage> {
+    let expected = crate::frontend::View::new(workspace, Some(frontend))?;
+    let root = crate::runtime::root()?;
+    let registered =
+        read::<crate::frontend::View>(&root.join(format!("{}.frontend.json", expected.id)), 4096)
+            .context("SSH presentation is not registered")?;
+    ensure!(
+        registered.workspace == expected.workspace && registered.id == expected.id,
+        "SSH presentation belongs to another workspace"
+    );
+    let sampled_ms = now_ms();
+    let focus = read::<Focus>(
+        &root.join(format!("{frontend}.notification-focus.json")),
+        4096,
+    )
+    .ok()
+    .filter(|f| focus_is_current(f, sampled_ms));
+    let project = focus
+        .as_ref()
+        .map_or(workspace, |focus| focus.project.as_str());
+    let inbox = query(&Query {
+        project: Some(project.into()),
+        ..Default::default()
+    })?;
+    Ok(ForwardPage {
+        sampled_ms,
+        items: inbox.items,
+        focus,
+    })
+}
+
+fn focus_is_current(focus: &Focus, now: u64) -> bool {
+    now.checked_sub(focus.at_ms).is_some_and(|age| age <= 6000)
+        && crate::agent_state::process_start(focus.pid) == Some(focus.start)
+}
 pub struct FocusWriter {
     tx: crossbeam_channel::Sender<(String, Focus)>,
     rx: crossbeam_channel::Receiver<(String, Focus)>,
@@ -681,12 +846,7 @@ fn active_panes() -> Vec<Focus> {
                 .ends_with(".notification-focus.json")
         })
         .filter_map(|p| read::<Focus>(&p.path(), 4096).ok())
-        .filter(|f| {
-            f.focused
-                && now >= f.at_ms
-                && now - f.at_ms <= 6000
-                && crate::agent_state::process_start(f.pid) == Some(f.start)
-        })
+        .filter(|f| f.focused && focus_is_current(f, now))
         .collect()
 }
 #[derive(Debug)]

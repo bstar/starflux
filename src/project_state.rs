@@ -1,6 +1,6 @@
 //! Durable project metadata. tmux session IDs remain stable across UI migrations.
 use crate::runtime::Config;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,6 +146,16 @@ pub fn data_root() -> Result<PathBuf> {
     Ok(path)
 }
 impl ProjectState {
+    /// Start a newly allocated workspace with an identity for its first pane.
+    /// Loading an existing workspace preserves any legacy null generations.
+    pub fn new_owned() -> Self {
+        let mut state = Self::default();
+        state
+            .terminal_epochs
+            .insert(0, uuid::Uuid::new_v4().to_string());
+        state
+    }
+
     pub fn load(config: &Config) -> Result<Self> {
         let model = data_root()?.join(format!("{}.model.json", config.workspace));
         let path = if model.exists() {
@@ -722,31 +732,94 @@ impl ProjectState {
         self.space = Space::Terminals;
         Ok(())
     }
-    pub fn close_pane(&mut self) {
-        if self.restore_plugin_overlay() {
-            return;
+    pub fn split_with_tab(
+        &mut self,
+        anchor: usize,
+        tab: usize,
+        axis: crate::panes::Axis,
+    ) -> Result<()> {
+        ensure!(
+            self.plugin_overlay.is_none(),
+            "Close the plugin overlay first"
+        );
+        ensure!(
+            self.terminal_ids().contains(&tab),
+            "Terminal tab is missing"
+        );
+        let mut tree = self.unzoomed_tree().context("No terminal layout")?;
+        ensure!(
+            !tree.ids().contains(&tab),
+            "Terminal is already in the split layout"
+        );
+        ensure!(
+            tree.split(anchor, tab, axis),
+            "Target pane is outside the current split layout"
+        );
+        self.install_tree(Some(tree));
+        self.terminal = tab;
+        self.pane_zoom = false;
+        self.space = Space::Terminals;
+        Ok(())
+    }
+    pub fn close_pane(&mut self, pane: usize) -> bool {
+        if let Some(overlay) = &self.plugin_overlay {
+            return overlay.pane == pane && self.restore_plugin_overlay();
         }
-        if !self.split {
-            return;
-        }
-        if let Some(tree) = self.unzoomed_tree() {
-            let ids = tree
-                .ids()
-                .into_iter()
-                .filter(|id| *id != self.terminal)
-                .collect::<Vec<_>>();
-            if let Some(id) = ids.first() {
-                self.terminal = *id;
-            }
-            self.install_tree(tree.retain(&ids));
+        let Some(tree) = self.unzoomed_tree().filter(|_| self.split) else {
+            return false;
+        };
+        let mut ids = tree.ids();
+        let Some(index) = ids.iter().position(|id| *id == pane) else {
+            return false;
+        };
+        ids.remove(index);
+        let Some(&first) = ids.first() else {
+            return false;
+        };
+        if self.terminal == pane {
+            self.terminal = first;
             self.pane_zoom = false;
         }
+        self.install_tree(tree.retain(&ids));
+        true
     }
     pub fn resize_pane(&mut self, path: &[bool], ratio: u16) {
         if let Some(mut tree) = self.unzoomed_tree() {
             tree.set_ratio(path, ratio);
             self.install_tree(Some(tree));
         }
+    }
+    pub fn move_pane_to_edge(
+        &mut self,
+        pane: usize,
+        axis: crate::panes::Axis,
+        leading: bool,
+    ) -> Result<()> {
+        use crate::panes::Tree;
+        let ids = self.terminal_ids();
+        ensure!(ids.contains(&pane), "Terminal no longer exists");
+        ensure!(self.plugin_overlay.is_none(), "Close the plugin pane first");
+        let tree = self.unzoomed_tree().context("No terminal layout")?;
+        let remaining = ids.into_iter().filter(|id| *id != pane).collect::<Vec<_>>();
+        let rest = tree
+            .retain(&remaining)
+            .context("There is no other visible pane")?;
+        let pane_leaf = Tree::leaf(pane);
+        let (first, second, ratio) = if leading {
+            (pane_leaf, rest, 3500)
+        } else {
+            (rest, pane_leaf, 6500)
+        };
+        self.install_tree(Some(Tree::Split {
+            axis,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        }));
+        self.terminal = pane;
+        self.pane_zoom = false;
+        self.space = Space::Terminals;
+        Ok(())
     }
     pub fn swap_panes(&mut self, a: usize, b: usize) {
         if let Some(mut tree) = self.unzoomed_tree() {
@@ -957,7 +1030,7 @@ mod tests {
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(restored.pane_tree, tree);
         restored.validate().unwrap();
-        state.close_pane();
+        assert!(state.close_pane(1));
         assert_eq!(state.visible(), vec![0, 3, 2]);
         assert!(state.terminal_ids().contains(&1));
         state.remove_terminal(1);

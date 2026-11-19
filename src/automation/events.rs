@@ -17,6 +17,7 @@ fn resources() -> Vec<String> {
         .map(str::to_owned)
         .to_vec()
 }
+const SESSION_RESOURCE: &str = "sessions";
 pub(super) fn keyed(
     snapshot: &Value,
     selected: &[String],
@@ -26,6 +27,7 @@ pub(super) fn keyed(
         if let Some(items) = snapshot[resource].as_array() {
             for item in items {
                 let key = match resource.as_str() {
+                    "sessions" => format!("sessions/{}", item["id"].as_str().unwrap()),
                     "projects" => format!("projects/{}", item["id"].as_str().unwrap()),
                     "panes" => format!(
                         "panes/{}/{}",
@@ -47,6 +49,7 @@ pub(super) fn keyed(
                     key,
                     (
                         match resource.as_str() {
+                            "sessions" => "session",
                             "projects" => "project",
                             "panes" => "pane",
                             "agents" => "agent.reported",
@@ -61,14 +64,17 @@ pub(super) fn keyed(
     result
 }
 pub(super) fn subscribe(request: &Request, output: &mut impl Write) -> Result<()> {
-    let setup = (|| -> Result<(Subscribe, Value, String)> {
+    let setup = (|| -> Result<_> {
         let p: Subscribe = params(&request.params)?;
         ensure!(
             (100..=600000).contains(&p.duration_ms),
             "duration_ms must be 100..600000"
         );
         ensure!(
-            !p.resources.is_empty() && p.resources.iter().all(|r| resources().contains(r)),
+            !p.resources.is_empty()
+                && p.resources
+                    .iter()
+                    .all(|r| r == SESSION_RESOURCE || resources().contains(r)),
             "Unknown or empty resource filter"
         );
         ensure!(
@@ -76,26 +82,27 @@ pub(super) fn subscribe(request: &Request, output: &mut impl Write) -> Result<()
             "max_events must be 1..100000"
         );
         if let Some(id) = &p.project {
+            ensure!(
+                !p.resources.iter().any(|r| r == SESSION_RESOURCE),
+                "Session events are global; omit the project filter"
+            );
             crate::runtime::config_path(id)?;
             if p.after.is_none() {
                 project(id)?;
             }
         }
-        let (mut snapshot, latest) = journal::snapshot()?;
-        let cursor = if let Some(after) = &p.after {
-            journal::read(after)?;
-            snapshot = Value::Null;
-            after.clone()
-        } else {
-            latest
-        };
+        if let Some(after) = p.after.clone() {
+            let first_page = journal::read(&after)?;
+            return Ok((p, Value::Null, after, Some(first_page)));
+        }
+        let (mut snapshot, cursor) = journal::snapshot()?;
         if let Some(object) = snapshot.as_object_mut() {
             if let Some(project) = &p.project
                 && let Some(warnings) = object.get_mut("warnings").and_then(Value::as_array_mut)
             {
                 warnings.retain(|warning| warning["project"] == *project);
             }
-            for resource in resources() {
+            for resource in resources().into_iter().chain([SESSION_RESOURCE.into()]) {
                 if !p.resources.contains(&resource) {
                     object.remove(&resource);
                     continue;
@@ -113,9 +120,9 @@ pub(super) fn subscribe(request: &Request, output: &mut impl Write) -> Result<()
                 }
             }
         }
-        Ok((p, snapshot, cursor))
+        Ok((p, snapshot, cursor, None))
     })();
-    let (p, snapshot, mut cursor) = match setup {
+    let (p, snapshot, mut cursor, mut first_page) = match setup {
         Ok(v) => v,
         Err(e) => return transport::write(output, &failed(request.id.clone(), e)),
     };
@@ -132,13 +139,24 @@ pub(super) fn subscribe(request: &Request, output: &mut impl Write) -> Result<()
     let mut heartbeat = Instant::now();
     let mut reconciled = Instant::now();
     while start.elapsed() < Duration::from_millis(p.duration_ms) {
-        if reconciled.elapsed() >= Duration::from_millis(500) {
-            journal::snapshot()?;
-            reconciled = Instant::now();
-        }
-        let changes = match journal::read(&cursor) {
+        let read = (|| {
+            if let Some(events) = first_page.take() {
+                return Ok(events);
+            }
+            if reconciled.elapsed() >= Duration::from_millis(500) {
+                journal::snapshot()?;
+                reconciled = Instant::now();
+            }
+            journal::read(&cursor)
+        })();
+        let changes = match read {
             Ok(events) => events,
-            Err(e) => return transport::write(output, &failed(request.id.clone(), e)),
+            Err(e) => {
+                let mut response = failed(request.id.clone(), e);
+                response["error"]["subscription"] = json!(subscription);
+                response["error"]["cursor"] = json!(cursor);
+                return transport::write(output, &response);
+            }
         };
         let caught_up = changes.len() < 64;
         let journal_id = cursor.rsplit_once(':').unwrap().0.to_string();

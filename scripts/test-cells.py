@@ -23,12 +23,13 @@ import time
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh', action='store_true')
+parser.add_argument('--browser', action='store_true')
 parser.add_argument('--plugin-popup', action='store_true')
 parser.add_argument('--plugin-popup-keyboard', action='store_true')
 args = parser.parse_args()
 if args.plugin_popup_keyboard:args.plugin_popup=True
 root = Path(__file__).resolve().parents[1]
-app = root / 'scripts/run-local.sh'
+app = Path(os.environ.get('STARFLUX_TEST_APP', str(root / 'scripts/run-local.sh'))).resolve()
 report = root / 'target/cells-proof'
 report.mkdir(parents=True, exist_ok=True)
 (report / ('ssh.log' if args.ssh else 'local.log')).write_bytes(b'')
@@ -139,13 +140,33 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
         os.kill(frontend.pid, signal.SIGWINCH)
 
+    presenter_env = env
+    if args.browser:
+        opener_dir = tmp / 'presenter-bin'
+        opener_dir.mkdir()
+        opened = tmp / 'browser-url'
+        opener = opener_dir / 'xdg-open'
+        opener.write_text(
+            '#!/usr/bin/python3\nimport json,sys\nfrom pathlib import Path\n'
+            f'with Path({str(opened)!r}).open("a") as log: print(json.dumps(sys.argv[1:]),file=log)\n'
+        )
+        opener.chmod(0o700)
+        presenter_env = {**env, 'PATH': str(opener_dir) + os.pathsep + env['PATH'],
+                         'DISPLAY': ':starflux-private-browser-fixture'}
+        def browser_calls():
+            return [json.loads(line) for line in opened.read_text().splitlines()] if opened.exists() else []
+        def choose_link_action(action):
+            items = snapshot()['context_menu']['items']
+            index = next(i for i,item in enumerate(items) if item['action']==action)
+            write(b'\x1b[B' * index + b'\r')
+
     def start_frontend(mode='--cells', identity='v-cells-proof'):
         global master, frontend
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         log = (report / ('ssh.log' if args.ssh else 'local.log')).open('ab')
         logs.append(log)
-        frontend = subprocess.Popen([*cli, *([mode] if mode else []), '--workspace', name, '--frontend', identity], stdin=slave, stdout=slave, stderr=log, env=env, start_new_session=True)
+        frontend = subprocess.Popen([*cli, *([mode] if mode else []), '--workspace', name, '--frontend', identity], stdin=slave, stdout=slave, stderr=log, env=presenter_env, start_new_session=True)
         processes.append(frontend)
         os.close(slave)
         fd = master
@@ -241,7 +262,11 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         write(f'\x1b[<2;{link_x+1};{link_y+1}M\x1b[<2;{link_x+1};{link_y+1}m'.encode())
         wait(lambda:(snapshot().get('context_menu')or{}).get('title')=='Terminal link','visible URL right-click menu missing')
         clipboard_offset=len(tty_bytes)
-        write(b'\x1b[B\r')
+        if args.browser:
+            assert browser_calls()==[], 'discovering a visible link opened the browser'
+            choose_link_action('terminal-link:copy')
+        else:
+            write(b'\x1b[B\r')
         expected_link=base64.b64encode(b'https://example.invalid/visible-link')
         wait(lambda:expected_link in tty_bytes[clipboard_offset:],'visible URL copy did not reach actual host clipboard protocol')
         wait(lambda:not snapshot().get('context_menu'),'link copy did not close menu')
@@ -253,6 +278,30 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         wait(lambda:b'\x1b]22;pointer\x1b\\' in tty_bytes[pointer_offset:],'OSC 8 label did not emit local hand pointer')
         before=inputs();write(f'\x1b[<2;{hidden_x+1};{hidden_y+1}M\x1b[<2;{hidden_x+1};{hidden_y+1}m'.encode())
         wait(lambda:(snapshot().get('context_menu')or{}).get('title')=='Terminal link','OSC 8 context menu missing')
+        if args.browser:
+            assert browser_calls()==[], 'displaying the OSC 8 menu opened the browser'
+            choose_link_action('terminal-link:browser')
+            wait(lambda:len(browser_calls())==1,'presenter did not dispatch the link')
+            assert browser_calls()==[['https://example.invalid/hidden-target?q=1;2#osc8']],browser_calls()
+            wait(lambda:'Link sent to the browser' in snapshot().get('status',''),'browser result did not reach the controller')
+            assert not snapshot().get('context_menu') and inputs()==before
+            write(f'\x1b[<16;{link_x+1};{link_y+1}M\x1b[<16;{link_x+1};{link_y+1}m'.encode())
+            wait(lambda:any(item['action']=='plugins:open-browser'
+                            for item in (snapshot().get('context_menu') or {}).get('items',[])),
+                 'link chooser did not offer the browser')
+            assert len(browser_calls())==1, 'reviewing link handlers opened the browser'
+            choose_link_action('plugins:open-browser')
+            wait(lambda:len(browser_calls())==2,'link chooser did not dispatch the link')
+            assert browser_calls()[1]==['https://example.invalid/visible-link'],browser_calls()
+            def chooser_finished():
+                state = snapshot()
+                return not state.get('context_menu') and 'Link sent to the browser' in state.get('status','')
+            wait(chooser_finished,'chooser result did not reach the controller')
+            assert inputs()==before,repr(inputs()[len(before):])
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,local_browser=True,osc8_destination=True,
+                                  explicit_activation=True,link_chooser=True)))
+            raise SystemExit(0)
+        assert not any(i['action']=='terminal-link:browser' for i in snapshot()['context_menu']['items'])
         clipboard_offset=len(tty_bytes);write(b'\x1b[B\r')
         expected_link=base64.b64encode(b'https://example.invalid/hidden-target?q=1;2#osc8')
         wait(lambda:expected_link in tty_bytes[clipboard_offset:],'OSC 8 copy did not preserve hidden destination')

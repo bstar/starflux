@@ -720,7 +720,7 @@ impl Terminal {
         self.review
             .as_mut()
             .unwrap()
-            .replace_snapshot(&screen, &source);
+            .replace_snapshot(&screen, &source, Some(saved.cursor));
         self.native_dirty = true;
         Ok(())
     }
@@ -764,7 +764,7 @@ impl Terminal {
                     }
                     parser.process(line.as_bytes());
                 }
-                history.replace_snapshot(parser.screen(), source);
+                history.replace_snapshot(parser.screen(), source, None);
             }
             Err(error) => {
                 history.loading = false;
@@ -807,10 +807,20 @@ impl Terminal {
         true
     }
     pub fn release(&mut self) {
-        if self.mouse_button.take().is_some()
-            && self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+        let screen = self.parser.screen();
+        if let Some(button) = self.mouse_button.take()
+            && !matches!(
+                screen.mouse_protocol_mode(),
+                vt100::MouseProtocolMode::None | vt100::MouseProtocolMode::Press
+            )
         {
-            let _ = self.writer.send(b"\x1b[<0;1;1m".to_vec());
+            let _ = self.writer.send(mouse_report(
+                screen.mouse_protocol_encoding(),
+                mouse_button_code(button),
+                1,
+                1,
+                true,
+            ));
         }
     }
     pub fn take_clipboard(&mut self) -> Option<String> {
@@ -962,21 +972,8 @@ impl Terminal {
         let mut b = match action {
             "scroll_up" => 64,
             "scroll_down" => 65,
-            "move" => {
-                32 + self
-                    .mouse_button
-                    .map(|b| match b {
-                        1 => 2,
-                        2 => 1,
-                        _ => 0,
-                    })
-                    .unwrap_or(3)
-            }
-            _ => match button {
-                1 => 2,
-                2 => 1,
-                _ => 0,
-            },
+            "move" => 32 + self.mouse_button.map(mouse_button_code).unwrap_or(3),
+            _ => mouse_button_code(button),
         };
         if modifiers & 1 != 0 {
             b += 4;
@@ -987,23 +984,13 @@ impl Terminal {
         if modifiers & 2 != 0 {
             b += 16;
         }
-        let bytes = if screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr {
-            format!(
-                "\x1b[<{b};{x};{y}{}",
-                if action == "up" { 'm' } else { 'M' }
-            )
-            .into_bytes()
-        } else {
-            vec![
-                27,
-                b'[',
-                b'M',
-                32 + if action == "up" { 3 } else { b },
-                (x.min(223) + 32) as u8,
-                (y.min(223) + 32) as u8,
-            ]
-        };
-        self.writer.send(bytes)
+        self.writer.send(mouse_report(
+            screen.mouse_protocol_encoding(),
+            b,
+            x,
+            y,
+            action == "up",
+        ))
     }
     fn copy_selection(&mut self) {
         if let Some((a, b)) = self.selection.filter(|(a, b)| a != b) {
@@ -1213,6 +1200,48 @@ fn color(value: vt100::Color, default: &str, theme: &crate::appearance::Appearan
         }
     }
 }
+fn mouse_button_code(button: u8) -> u8 {
+    match button {
+        1 => 2,
+        2 => 1,
+        _ => 0,
+    }
+}
+
+fn mouse_report(
+    encoding: vt100::MouseProtocolEncoding,
+    button: u8,
+    x: u16,
+    y: u16,
+    released: bool,
+) -> Vec<u8> {
+    use vt100::MouseProtocolEncoding;
+    if encoding == MouseProtocolEncoding::Sgr {
+        let suffix = if released { 'm' } else { 'M' };
+        return format!("\x1b[<{button};{x};{y}{suffix}").into_bytes();
+    }
+    let button = u16::from(if released { 3 } else { button }) + 32;
+    let mut bytes = b"\x1b[M".to_vec();
+    if encoding == MouseProtocolEncoding::Utf8 {
+        for value in [button, x.min(2015) + 32, y.min(2015) + 32] {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(
+                char::from_u32(u32::from(value))
+                    .unwrap()
+                    .encode_utf8(&mut encoded)
+                    .as_bytes(),
+            );
+        }
+    } else {
+        bytes.extend([
+            button as u8,
+            (x.min(223) + 32) as u8,
+            (y.min(223) + 32) as u8,
+        ]);
+    }
+    bytes
+}
+
 pub(super) fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8> {
     let shift = modifiers & 1 != 0;
     let alt = modifiers & 4 != 0;
@@ -1315,6 +1344,18 @@ pub(super) fn key_bytes(code: &str, modifiers: u8, application: bool) -> Vec<u8>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mouse_reports_respect_the_requested_encoding() {
+        use super::mouse_report;
+        use vt100::MouseProtocolEncoding::{Default, Sgr, Utf8};
+        assert_eq!(
+            mouse_report(Utf8, 0, 224, 96, false),
+            b"\x1b[M \xc4\x80\xc2\x80"
+        );
+        assert_eq!(mouse_report(Utf8, 2, 3000, 1, true), b"\x1b[M#\xdf\xbf!");
+        assert_eq!(mouse_report(Default, 2, 224, 1, true), b"\x1b[M#\xff!");
+        assert_eq!(mouse_report(Sgr, 2, 224, 1, true), b"\x1b[<2;224;1m");
+    }
     use super::*;
     #[test]
     fn native_frames_accept_emoji_presentation_and_clipped_wide_cells() {
@@ -1427,6 +1468,56 @@ mod tests {
                 .unwrap()
                 .complete
         );
+    }
+    #[test]
+    fn utf8_mouse_press_and_release_reach_the_pty() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = r#"
+import os, sys, tty
+tty.setraw(0)
+os.write(1, b'\x1b[?1000h\x1b[?1005hREADY\r\n')
+report = sys.stdin.buffer.read(14)
+os.write(1, report.hex().encode() + b'\r\n')
+"#;
+        let mut terminal = Terminal::spawn(
+            &["python3".into(), "-c".into(), program.into()],
+            dir.path().join("mouse.sock"),
+        )
+        .unwrap();
+        terminal
+            .resize_native(
+                starkit::terminal_graphics::protocol::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 240,
+                    height: 100,
+                },
+                [0, 0],
+                [8, 16],
+            )
+            .unwrap();
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while !terminal.text().contains("READY") {
+            terminal.poll().unwrap();
+            assert!(
+                std::time::Instant::now() < end,
+                "mouse fixture never became ready"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        terminal
+            .pointer("down", 1, [223. * 8., 95. * 16.], 0)
+            .unwrap();
+        terminal.release();
+        while !terminal.text().contains("1b5b4d22c480c2801b5b4d232121") {
+            terminal.poll().unwrap();
+            assert!(
+                std::time::Instant::now() < end,
+                "unexpected PTY output: {}",
+                terminal.text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     #[test]
     fn pty_resize_paste_and_native_surface_contract() {

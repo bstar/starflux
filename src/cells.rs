@@ -759,6 +759,20 @@ impl Workspace {
                     "sessions:delete".into(),
                     false,
                 );
+                if area.width >= 64 {
+                    self.cell_button(
+                        b,
+                        Rect {
+                            x: 41,
+                            y,
+                            width: 10,
+                            height: 1,
+                        },
+                        "[Rename…]",
+                        "sessions:rename".into(),
+                        false,
+                    );
+                }
             }
             self.cell_button(
                 b,
@@ -785,7 +799,7 @@ impl Workspace {
                 1,
                 area.height.saturating_sub(1),
                 area.width.saturating_sub(2),
-                "↑/↓ select · Enter open · Ctrl+N new · Ctrl+I import · Del delete · Esc close",
+                "↑/↓ select · Enter open · F2 rename · Del delete · Esc close",
                 accent,
             );
             return;
@@ -812,6 +826,7 @@ impl Workspace {
                 Prompt::RemoveWorktree(_, _) => "Remove Git worktree / retain branch",
                 Prompt::Sessions(_) => "Sessions",
                 Prompt::NewSession => "Create session",
+                Prompt::RenameSession(_, _) => "Rename session",
                 Prompt::DeleteSession(_) => {
                     "Delete session (external tmux/Herdr sessions are preserved)"
                 }
@@ -1174,6 +1189,7 @@ impl Workspace {
             ),
             ("[Del]", "sessions:delete", 11, 5),
             ("[Def]", "sessions:default", 17, 5),
+            ("[Ren]", "sessions:rename", 30, 5),
             (
                 if m.external { "[Imp]" } else { "[Open]" },
                 "sessions:choose",
@@ -1182,7 +1198,13 @@ impl Workspace {
             ),
         ];
         for (label, action, x, width) in actions {
-            if !m.external || !matches!(action, "sessions:delete" | "sessions:default") {
+            if x + width <= a.width
+                && (!m.external
+                    || !matches!(
+                        action,
+                        "sessions:delete" | "sessions:default" | "sessions:rename"
+                    ))
+            {
                 self.cell_button(
                     b,
                     Rect {

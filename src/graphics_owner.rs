@@ -291,7 +291,6 @@ impl Owner {
                     .unwrap_or(limit)
             };
             self.escape = bytes[length - 1] == 0x1b;
-            let alternate = self.parser.screen().alternate_screen();
             self.parser.process(&bytes[..length]);
             self.input.drain(..length);
             processed += length;
@@ -338,9 +337,6 @@ impl Owner {
                 }
             }
             self.parser.callbacks_mut().mutations = mutations;
-            if !alternate && self.parser.screen().alternate_screen() {
-                self.store.clear(true);
-            }
             if let Some(job) = self.parser.callbacks_mut().job.take() {
                 self.sequence = self.sequence.checked_add(1).ok_or(Fault::Sequence)?;
                 let tag = NEXT_JOB
@@ -449,20 +445,31 @@ impl Owner {
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }
-    /// The backend applies the kernel PTY resize only after this accepts it.
-    /// A resize cannot overtake an earlier parsed graphics/cursor operation.
-    pub fn resize(&mut self, geometry: Geometry) -> Result<bool, Fault> {
+    /// Check that a kernel resize can be applied without overtaking earlier
+    /// parsed graphics or cursor operations.
+    pub fn resize_ready(&self, geometry: Geometry) -> Result<bool, Fault> {
         self.check()?;
         Self::validate_geometry(geometry)?;
-        if self.pending.is_some() || !self.input.is_empty() {
+        Ok(self.pending.is_none() && self.input.is_empty())
+    }
+
+    #[cfg(test)]
+    fn resize(&mut self, geometry: Geometry) -> Result<bool, Fault> {
+        if !self.resize_ready(geometry)? {
             return Ok(false);
         }
+        self.apply_resize(geometry);
+        Ok(true)
+    }
+
+    /// Call only after resize_ready and successful kernel resize, in the same
+    /// source-owner turn.
+    pub(crate) fn apply_resize(&mut self, geometry: Geometry) {
         self.parser
             .screen_mut()
             .set_size(geometry.rows, geometry.columns);
         self.geometry = geometry;
         self.parser.callbacks_mut().cell = geometry.cell;
-        Ok(true)
     }
 }
 
@@ -540,6 +547,53 @@ mod tests {
         owner.ingest(bytes).unwrap();
         owner.pump(MAX_INPUT, Instant::now()).unwrap();
     }
+    #[test]
+    fn resize_clips_retained_image_and_expansion_restores_exact_pixels() {
+        use crate::graphics_paint::{Plane, View, compose};
+        let (mut owner, pool, resources) = setup();
+        parse(&mut owner, &[b"\x1b[2;3H".as_slice(), IMAGE].concat());
+        decode(&mut owner, &pool);
+        let render = |owner: &Owner, geometry: Geometry| {
+            compose(
+                owner.store(),
+                View {
+                    origin: [0, 0],
+                    width: u32::from(geometry.columns) * u32::from(geometry.cell[0]),
+                    height: u32::from(geometry.rows) * u32::from(geometry.cell[1]),
+                    cell: geometry.cell,
+                    alternate: false,
+                },
+                &[],
+                &resources,
+            )
+            .unwrap()
+        };
+        let full = geometry();
+        let expected = render(&owner, full);
+        assert_eq!(expected.layers[0].plane, Plane::AboveText);
+        let pixels = expected.layers[0].rgba.clone();
+        let (rgba, remainder) = pixels.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        assert!(rgba.contains(&[17, 34, 51, 255]));
+        drop(expected);
+        let clipped = Geometry {
+            rows: 1,
+            columns: 2,
+            ..full
+        };
+        assert!(owner.resize(clipped).unwrap());
+        let raster = render(&owner, clipped);
+        assert!(raster.layers.is_empty());
+        assert_eq!(owner.store().placements(false).count(), 1);
+        drop(raster);
+        assert!(owner.resize(full).unwrap());
+        let restored = render(&owner, full);
+        assert_eq!(restored.layers.len(), 1);
+        assert_eq!(restored.layers[0].plane, Plane::AboveText);
+        assert_eq!(restored.layers[0].rgba, pixels);
+        assert_eq!(resources.retained.used(), 4);
+    }
+
     #[test]
     fn full_screen_scroll_preserves_signed_image_history_and_visible_raster() {
         let (mut owner, pool, resources) = setup();
@@ -707,6 +761,75 @@ mod tests {
             b"\x1b_Gi=72;EINVAL:Invalid graphics data\x1b\\"
         );
         assert!(!owner.pending());
+    }
+    #[test]
+    fn switching_to_a_retained_alternate_grid_preserves_its_images() {
+        let (mut owner, pool, resources) = setup();
+        parse(&mut owner, IMAGE);
+        decode(&mut owner, &pool);
+        parse(&mut owner, b"\x1b[?47h");
+        parse(&mut owner, IMAGE);
+        decode(&mut owner, &pool);
+        parse(&mut owner, b"\x1b[?47l\x1b[?47h");
+        assert!(owner.screen().alternate_screen());
+        assert_eq!(owner.store().placements(true).count(), 1);
+        assert_eq!(owner.store().placements(false).count(), 1);
+        assert_eq!(resources.retained.used(), 8);
+    }
+    #[test]
+    fn alternate_cursor_save_does_not_replace_main_color_or_link() {
+        let (mut owner, _, _) = setup();
+        parse(
+            &mut owner,
+            b"\x1b[4;6H\x1b[31m\x1b]8;;https://example.test/main\x1b\\\x1b[?1049h",
+        );
+        parse(
+            &mut owner,
+            b"\x1b[34m\x1b]8;;https://example.test/alt\x1b\\\x1b[?1048h\x1b[?1049l",
+        );
+        assert_eq!(owner.screen().cursor_position(), (3, 5));
+        parse(&mut owner, b"M");
+        assert_eq!(
+            owner.screen().cell(3, 5).unwrap().fgcolor(),
+            vt100::Color::Idx(1)
+        );
+        assert_eq!(
+            owner.screen().hyperlink(3, 5),
+            Some("https://example.test/main")
+        );
+    }
+    #[test]
+    fn cursor_mode_1048_restores_the_origin_for_the_next_image() {
+        let (mut owner, pool, _) = setup();
+        parse(&mut owner, b"\x1b[4;6H\x1b[?1048h\x1b[10;12H\x1b[?1048l");
+        assert_eq!(owner.screen().cursor_position(), (3, 5));
+        assert!(!owner.screen().alternate_screen());
+        parse(&mut owner, IMAGE);
+        decode(&mut owner, &pool);
+        assert_eq!(owner.store().placements(false).next().unwrap().row(), 3);
+        assert_eq!(owner.store().placements(true).count(), 0);
+    }
+    #[test]
+    fn clearing_alternate_mode_on_exit_preserves_main_text_and_images() {
+        let (mut owner, pool, resources) = setup();
+        parse(&mut owner, b"MAIN");
+        parse(&mut owner, IMAGE);
+        decode(&mut owner, &pool);
+        parse(&mut owner, b"\x1b[?47hALT");
+        parse(&mut owner, IMAGE);
+        decode(&mut owner, &pool);
+        parse(&mut owner, b"\x1b[?47l\x1b[?1047l\x1b[?1047h");
+        assert!(owner.screen().alternate_screen());
+        assert!(owner.screen().contents().contains("ALT"));
+        assert_eq!(owner.store().placements(true).count(), 1);
+        parse(&mut owner, b"\x1b[?1047l");
+        assert!(!owner.screen().alternate_screen());
+        assert!(owner.screen().contents().contains("MAIN"));
+        assert_eq!(owner.store().placements(false).count(), 1);
+        assert_eq!(resources.retained.used(), 4);
+        parse(&mut owner, b"\x1b[?47h");
+        assert!(owner.screen().contents().is_empty());
+        assert_eq!(owner.store().placements(true).count(), 0);
     }
     #[test]
     fn repeated_alternate_entry_clears_only_alternate_images() {

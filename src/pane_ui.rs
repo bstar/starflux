@@ -1,6 +1,17 @@
 use super::*;
 use crate::panes::{Area, Axis, Layout};
 impl Workspace {
+    pub(super) fn close_split_pane_view(&mut self, pane: usize) -> bool {
+        if !self.state.close_pane(pane) {
+            return false;
+        }
+        self.release();
+        self.cell_ui.terminal_focus = true;
+        self.layout();
+        self.save();
+        true
+    }
+
     pub(super) fn native_pane_geometry(&self) -> Layout {
         let minimum = [
             (self.viewport.width / self.viewport.columns.max(1) as u32)
@@ -297,6 +308,159 @@ impl Workspace {
                         self.save();
                     }
                 }
+            }
+            a if a.starts_with("split-existing:") => {
+                let (anchor, target) = a["split-existing:".len()..]
+                    .split_once(':')
+                    .context("Invalid existing-tab split")?;
+                let anchor = anchor.parse()?;
+                let _lock = crate::project_sync::transaction(&self.config)?;
+                self.sync_project()?;
+                if target == "menu" {
+                    let visible = self
+                        .state
+                        .unzoomed_tree()
+                        .context("No terminal layout")?
+                        .ids();
+                    ensure!(
+                        visible.contains(&anchor),
+                        "Target pane is outside the current split layout"
+                    );
+                    let anchor_epoch = self
+                        .state
+                        .terminal_epochs
+                        .get(&anchor)
+                        .map_or("", String::as_str);
+                    let mut items = Vec::new();
+                    for tab in self
+                        .state
+                        .terminal_ids()
+                        .into_iter()
+                        .filter(|tab| !visible.contains(tab))
+                    {
+                        let tab_epoch = self
+                            .state
+                            .terminal_epochs
+                            .get(&tab)
+                            .map_or("", String::as_str);
+                        for side in ["right", "down"] {
+                            items.push(crate::shelf::MenuItem {
+                                label: format!("{} · {side}", self.terminal_label(tab)),
+                                hint: String::new(),
+                                action: format!("split-existing:{anchor}:{tab}:{side}:{anchor_epoch}:{tab_epoch}"),
+                            });
+                        }
+                    }
+                    ensure!(!items.is_empty(), "No hidden terminal tabs to split with");
+                    self.release();
+                    self.context_menu = Some(crate::shelf::ContextMenu {
+                        position: [16, 16],
+                        title: "Split with existing tab".into(),
+                        subtitle: String::new(),
+                        items,
+                        selected: Some(0),
+                    });
+                    return Ok(true);
+                }
+                let [tab, side, anchor_epoch, tab_epoch] = target
+                    .split(':')
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .ok()
+                    .context("Invalid split target")?;
+                let tab = tab.parse()?;
+                let matches_epoch = |pane, epoch: &str| {
+                    self.state
+                        .terminal_epochs
+                        .get(&pane)
+                        .map_or("", String::as_str)
+                        == epoch
+                };
+                ensure!(
+                    matches_epoch(anchor, anchor_epoch) && matches_epoch(tab, tab_epoch),
+                    "A terminal changed while the split picker was open; reopen the picker"
+                );
+                let axis = match side {
+                    "right" => Axis::Right,
+                    "down" => Axis::Down,
+                    _ => anyhow::bail!("Invalid split direction"),
+                };
+                self.state.split_with_tab(anchor, tab, axis)?;
+                self.release();
+                self.context_menu = None;
+                self.layout();
+                self.save();
+            }
+            a if a.starts_with("pane-edge:") => {
+                let (id, direction) = a["pane-edge:".len()..]
+                    .split_once(':')
+                    .context("Invalid pane placement")?;
+                let id = id.parse()?;
+                let _lock = crate::project_sync::transaction(&self.config)?;
+                self.sync_project()?;
+                if direction == "menu" {
+                    ensure!(
+                        self.state.terminal_ids().contains(&id),
+                        "Terminal no longer exists"
+                    );
+                    self.release();
+                    let project = &self.config.workspace;
+                    let epoch = self
+                        .state
+                        .terminal_epochs
+                        .get(&id)
+                        .map_or("", String::as_str);
+                    self.context_menu = Some(crate::shelf::ContextMenu {
+                        position: [16, 16],
+                        title: "Move pane to edge".into(),
+                        subtitle: String::new(),
+                        items: [
+                            ("Left", "left"),
+                            ("Right", "right"),
+                            ("Top", "up"),
+                            ("Bottom", "down"),
+                        ]
+                        .into_iter()
+                        .map(|(label, edge)| crate::shelf::MenuItem {
+                            label: label.into(),
+                            hint: String::new(),
+                            action: format!("pane-edge:{id}:{edge}:{project}:{epoch}"),
+                        })
+                        .collect(),
+                        selected: Some(0),
+                    });
+                    return Ok(true);
+                }
+                let direction = if let Some((direction, identity)) = direction.split_once(':') {
+                    let (project, epoch) =
+                        identity.split_once(':').context("Invalid pane identity")?;
+                    ensure!(
+                        project == self.config.workspace
+                            && self.state.terminal_ids().contains(&id)
+                            && self
+                                .state
+                                .terminal_epochs
+                                .get(&id)
+                                .map_or("", String::as_str)
+                                == epoch,
+                        "Terminal changed while the edge picker was open; reopen the picker"
+                    );
+                    direction
+                } else {
+                    direction
+                };
+                let (axis, leading) = match direction {
+                    "left" => (Axis::Right, true),
+                    "right" => (Axis::Right, false),
+                    "up" => (Axis::Down, true),
+                    "down" => (Axis::Down, false),
+                    _ => anyhow::bail!("Invalid pane edge"),
+                };
+                self.state.move_pane_to_edge(id, axis, leading)?;
+                self.release();
+                self.context_menu = None;
+                self.layout();
+                self.save();
             }
             a if a.starts_with("pane-target:") => {
                 let _lock = crate::project_sync::transaction(&self.config)?;

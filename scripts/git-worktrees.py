@@ -91,7 +91,7 @@ def main(req):
             created=next((r for r in entries(directory,repo) if r['path']==str(path)),None)
             if not created:raise Refused('outcome_unknown','Git completed without returning the new worktree; refresh the list')
             return dict(repository=repo,worktree=created)
-        if action not in ('validate','directory','remove'):raise Refused('invalid_action','Unknown worktree operation')
+        if action not in ('validate','directory','remove','set_lock'):raise Refused('invalid_action','Unknown worktree operation')
         expected=req['target'];row=next((r for r in rows if r['path']==expected.get('path')),None)
         if action=='directory':
             if row is None or any(row.get(k)!=expected.get(k) for k in ['repository','path','device','inode','available']) or not row['available'] or not inside(directory,pathlib.Path(row['path'])):
@@ -101,6 +101,24 @@ def main(req):
         if action=='validate':
             if not row['available']:raise Refused('unavailable','Worktree directory is unavailable')
             return dict(repository=repo,worktree=row)
+        if action=='set_lock':
+            if row['main'] or row['bare']:
+                raise Refused('primary_worktree','Only linked worktrees support locking')
+            desired,reason=req['locked'],req.get('reason')
+            if type(desired) is not bool or (reason is not None and (
+                not desired or not isinstance(reason,str) or len(reason.encode())>256 or any(ord(c)<32 or 127<=ord(c)<160 for c in reason)
+            )):
+                raise Refused('invalid_lock','Lock reason must be a single line of at most 256 bytes')
+            if desired != (row['locked'] is not None):
+                arguments=['lock' if desired else 'unlock']
+                if reason:arguments.extend(['--reason',reason])
+                path=row['path']
+                git(directory,'worktree',*arguments,'--',path)
+                rows=entries(directory,repo)
+                row=next((r for r in rows if r['path']==path),None)
+                if row is None or desired != (row['locked'] is not None):
+                    raise Refused('outcome_unknown','Could not verify the worktree lock; refresh the list')
+            return dict(repository=repo,worktree=row,worktrees=rows)
         if row['main'] or row['bare']:raise Refused('primary_worktree','The primary/bare worktree cannot be removed')
         if row['locked'] is not None:raise Refused('locked_worktree','Worktree is locked: '+row['locked'])
         if not row['available']:raise Refused('unavailable','Missing worktree metadata needs explicit Git repair/pruning')

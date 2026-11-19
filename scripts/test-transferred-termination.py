@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 
-root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
+root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
 spec=importlib.util.spec_from_file_location('adopt',root/'scripts/adopt-pty.py')
 adopt=importlib.util.module_from_spec(spec);spec.loader.exec_module(adopt)
 # Leave room for AF_UNIX names when Nix adds its own temporary-directory prefix.
@@ -48,14 +48,18 @@ with tempfile.TemporaryDirectory(prefix='starflux-xfer-') as directory:
         projects=tmp/'data/starflux/projects';projects.mkdir(parents=True,mode=0o700)
         (projects/(name+'.json')).write_text(json.dumps(config))
         (projects/(name+'.model.json')).write_text(json.dumps(dict(terminal_first=True,terminals=[0,1],terminal=0,terminal_epochs={str(i):e for i,e in enumerate(epochs)})))
-        log=(tmp/'frontend.log').open('w')
-        process=subprocess.Popen([str(app),'--graphical-relay',name+'@'+frontend],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log)
         messages=queue.Queue();scene=None;serial=0
-        def read():
-            for line in process.stdout:messages.put(json.loads(line))
-        threading.Thread(target=read,daemon=True).start()
+        def start_presenter(inbox):
+            with (tmp/'frontend.log').open('a') as log:
+                presenter=subprocess.Popen([str(app),'--graphical-relay',name+'@'+frontend],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log)
+            def read():
+                for line in presenter.stdout:inbox.put(json.loads(line))
+            threading.Thread(target=read,daemon=True).start()
+            return presenter
         def send(message):process.stdin.write(json.dumps(message).encode()+b'\n');process.stdin.flush()
-        send(dict(type='hello',version=1,client=frontend,viewport=dict(columns=100,rows=35,width=1000,height=700,generation=1),capabilities=dict(image_transport='kitty',pixel_geometry='measured',pointer_precision='cells',native_terminal_cells=True,native_surfaces=True,pixel_layout=True,physical_text=True,keyboard=True,paste=True,presentation_ack=True)))
+        def hello():
+            send(dict(type='hello',version=1,client=frontend,viewport=dict(columns=100,rows=35,width=1000,height=700,generation=1),capabilities=dict(image_transport='kitty',pixel_geometry='measured',pointer_precision='cells',native_terminal_cells=True,native_surfaces=True,pixel_layout=True,physical_text=True,keyboard=True,paste=True,presentation_ack=True)))
+        process=start_presenter(messages);hello()
         def snapshot():
             try:return json.loads((state/(frontend+'.state.json')).read_text())
             except (OSError,ValueError):return {}
@@ -79,11 +83,13 @@ with tempfile.TemporaryDirectory(prefix='starflux-xfer-') as directory:
             global serial
             serial+=1;send(dict(type='input',id=serial,revision=scene['revision'],generation=1,input=value))
         wait(lambda:scene and any(s.get('health',{}).get('pid')==originals[0].pid for s in snapshot().get('sessions',[]) if s.get('health')) and any(t['pane']==0 for t in snapshot().get('direct_terminals',[])),'transferred owner did not attach')
-        def api(method,params,operation=None):
+        def api(method,params,operation=None,ok=True):
             request=dict(version=1,id='transferred-proof',method=method,params=params,operation_id=operation)
-            result=json.loads(subprocess.check_output([str(app),'--api',json.dumps(request)],env=env));assert result['ok'],result
-            return result['result']
-        target=api('panes.get',dict(project=name,pane=1))['target']
+            result=json.loads(subprocess.check_output([str(app),'--api',json.dumps(request)],env=env));assert result['ok']==ok,result
+            return result['result'] if ok else result['error']
+        observed=api('panes.get',dict(project=name,pane=1))
+        assert observed['status']['bridge_connected'] and observed['capabilities']['input'],observed
+        target=observed['target']
         hidden=api('panes.get',dict(project=name,pane=2))['target']
         api('panes.send',dict(target=hidden,text="printf 'TRANSFER_BACKGROUND_界\\n'",submit=True),str(uuid.uuid4()))
         saved=tmp/'data/starflux/screens'/name/'p1.screen.json'
@@ -115,7 +121,42 @@ with tempfile.TemporaryDirectory(prefix='starflux-xfer-') as directory:
         input(dict(kind='paste',text='touch '+shlex.quote(str(marker))))
         input(dict(kind='embedded',canvas='terminals',event=dict(timestamp_ns=time.monotonic_ns(),sequence=serial+1,kind=dict(kind='key',code='enter',phase='press',modifiers=0))))
         wait(lambda:marker.exists(),'sibling owner stopped executing input')
-        print(json.dumps(dict(result='PASS',transferred_owner_terminated=True,cancel_preserves_owners=True,sibling_owner_preserved=True,sibling_input=True,guarded_api_input=True,idempotent_api_submit=True)))
+        sibling=api('panes.get',dict(project=name,pane=2))
+        assert sibling['capabilities']['input'],sibling
+        # Stop the presenter so its automatic bridge recovery cannot race the probe.
+        (state/(frontend+'.close')).touch();process.wait(timeout=10)
+        bridge=int(subprocess.check_output(['tmux','-L',server,'display-message','-p','-t','p1:0.0','#{pane_pid}'],env=env))
+        assert bridge not in {owner.pid for owner in originals}
+        os.kill(bridge,15)
+        deadline=time.monotonic()+5
+        while True:
+            disconnected=api('panes.get',dict(project=name,pane=2))
+            if disconnected['status']['bridge_connected'] is False:break
+            assert time.monotonic()<deadline,'bridge disconnect did not become observable'
+            time.sleep(.05)
+        assert disconnected['target']==sibling['target'] and disconnected['status']['alive']
+        assert disconnected['status']['health']['transport']=='disconnected'
+        assert disconnected['capabilities']==dict(input=False,terminate=True)
+        blocked=tmp/'disconnected-input-marker';operation=str(uuid.uuid4())
+        payload=dict(target=sibling['target'],text='touch '+shlex.quote(str(blocked)),submit=True)
+        rejected=api('panes.send',payload,operation,ok=False)
+        assert rejected['code']=='input_transport_unavailable' and rejected['outcome']=='not_applied',rejected
+        assert api('panes.send',payload,operation,ok=False)==rejected
+        assert not blocked.exists() and originals[1].poll() is None
+        (state/(frontend+'.close')).unlink(missing_ok=True)
+        messages=queue.Queue();scene=None
+        process=start_presenter(messages);hello()
+        def reconnected():
+            observation=api('panes.get',dict(project=name,pane=2))
+            return observation if observation['capabilities']['input'] else None
+        restored=wait(reconnected,'reopening the pane did not restore its bridge')
+        assert restored['target']==sibling['target']
+        assert api('panes.send',payload,operation,ok=False)==rejected
+        resumed=tmp/'reconnected-input-marker'
+        api('panes.send',dict(target=restored['target'],text='touch '+shlex.quote(str(resumed)),submit=True),str(uuid.uuid4()))
+        wait(resumed.exists,'fresh input did not reach the retained shell after reconnect')
+        assert not blocked.exists() and originals[1].poll() is None
+        print(json.dumps(dict(result='PASS',transferred_owner_terminated=True,cancel_preserves_owners=True,sibling_owner_preserved=True,sibling_input=True,guarded_api_input=True,idempotent_api_submit=True,disconnected_bridge_rejected=True,reconnected_bridge_preserves_rejection=True)))
     finally:
         (state/(frontend+'.close')).touch()
         if process and process.poll() is None:

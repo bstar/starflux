@@ -35,3 +35,32 @@ The saved diagnostic fixture belongs in `target/` when rerun. It records only it
 own disposable fake-agent namespace on failure, excluding the owner token.
 See `docs/parity-handoff-2026-11-14.md` for the complete pause handoff and remaining
 Herdr parity scope. No installed program or live session was replaced.
+
+## November 17 resumed validation
+
+`validation-resumed.json` supplements the original receipt without relabeling
+older evidence. Canonical `scripts/test-session-manager.py --native-launch-race`
+now forces the pre-intent handoff using a private Python host-helper gate.
+An older startup build fails while the gate is held. The current candidate
+passes in graphical/cells modes locally and over SSH: the other view executes
+the exact registered vector once before release, both views retain ordinary
+terminal input, and both subsequently attach to the same resumed source.
+
+The exact Rust increment also passed the no-default-feature release matrix
+(277 main plus 4 client tests), Linux x86_64 Nix package/all-feature tests
+(278 main plus 4 client) and executable smoke checks. Four main tests remain
+ignored in each matrix. Repeated cold-runtime tests passed locally in cells and
+over SSH in graphical mode. All these conversation fixtures use fake agents.
+
+The forced race additionally passed against the Nix package's underlying Rust
+executable. The package's shell wrapper prepends its Python path, bypassing the
+injected gate; the original two wrapper attempts therefore failed to reach the
+gate and are retained as fixture limitations. They are not product failures or
+claimed passing wrapper race tests. Wrapper smoke checks passed separately.
+ARM64 and real provider conversation resumption remain unverified.
+
+No desktop or mouse control was used. The installed executable and all ten
+production process identities observed at this resumption's baseline remained
+unchanged. Native source remains staged and uninstalled. Provider-confirmed
+identity capture/resumption, broader ownership/adoption and the other unchecked
+requirements in `docs/plan.md` remain in scope.

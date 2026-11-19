@@ -53,6 +53,13 @@ impl Directory {
             "Native source directory must be absolute"
         );
         starkit::terminal_graphics::session::private_root(path)?;
+        Self::open_existing(path)
+    }
+    fn open_existing(path: &Path) -> Result<Self> {
+        ensure!(
+            path.is_absolute(),
+            "Native source directory must be absolute"
+        );
         let file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -73,10 +80,14 @@ impl Directory {
             .is_ok_and(|m| m.is_dir() && (m.dev(), m.ino()) == self.stamp)
     }
     fn child(&self, name: &str) -> Result<Self> {
+        self.open_child(name, true)
+    }
+    fn open_child(&self, name: &str, create: bool) -> Result<Self> {
         valid_name(name)?;
         ensure!(self.current(), "Native source namespace changed");
         let c = CString::new(name)?;
-        if unsafe { libc::mkdirat(self.file.as_raw_fd(), c.as_ptr(), 0o700) } != 0
+        if create
+            && unsafe { libc::mkdirat(self.file.as_raw_fd(), c.as_ptr(), 0o700) } != 0
             && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists
         {
             return Err(io::Error::last_os_error().into());
@@ -88,11 +99,10 @@ impl Directory {
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
             )
         };
-        ensure!(
-            fd >= 0,
-            "Cannot open native source subdirectory: {}",
-            io::Error::last_os_error()
-        );
+        if fd < 0 {
+            return Err(io::Error::last_os_error())
+                .context("Cannot open native source subdirectory");
+        }
         let file = unsafe { File::from_raw_fd(fd) };
         let m = file.metadata()?;
         ensure!(
@@ -241,6 +251,9 @@ fn boot() -> Result<String> {
 fn root(data: &Path) -> Result<Directory> {
     Directory::open(data)?.child("native-sources")
 }
+fn existing_root(data: &Path) -> Result<Directory> {
+    Directory::open_existing(data)?.open_child("native-sources", false)
+}
 /// Resolving a short descriptor-relative pathname permits deep data directories
 /// without moving the live socket into the ephemeral runtime namespace.
 pub(super) fn bind_socket(path: &Path) -> Result<UnixListener> {
@@ -296,7 +309,7 @@ pub struct Handle {
 }
 impl Handle {
     pub fn connect(&self) -> Result<Connection> {
-        let directory = root(&self.data)?;
+        let directory = existing_root(&self.data)?;
         let socket = UnixStream::connect(directory.endpoint())?;
         peer(&socket, &self.owner)?;
         socket.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -494,7 +507,7 @@ pub fn ensure(data: &Path, executable: &Path) -> Result<Handle> {
     }
 }
 pub fn existing(data: &Path, owner: &Identity) -> Result<Handle> {
-    let directory = root(data)?;
+    let directory = existing_root(data)?;
     let d =
         descriptor(&directory)?.context("Saved native owner is unavailable; recover explicitly")?;
     ensure!(
@@ -597,6 +610,11 @@ impl Binding {
 fn slots(data: &Path, project: &str) -> Result<Directory> {
     root(data)?.child("panes")?.child(project)
 }
+fn existing_slots(data: &Path, project: &str) -> Result<Directory> {
+    existing_root(data)?
+        .open_child("panes", false)?
+        .open_child(project, false)
+}
 fn read_binding(directory: &Directory, project: &str, pane: usize) -> Result<Option<Binding>> {
     let record = directory.read::<Binding>(&format!("p{pane}.json"))?;
     if let Some(r) = &record {
@@ -610,7 +628,17 @@ fn read_binding(directory: &Directory, project: &str, pane: usize) -> Result<Opt
 }
 pub fn read_slot(data: &Path, project: &str, pane: usize) -> Result<Option<Binding>> {
     slot_shape(project, pane, "lookup")?;
-    read_binding(&slots(data, project)?, project, pane)
+    match existing_slots(data, project) {
+        Ok(directory) => read_binding(&directory, project, pane),
+        Err(error)
+            if error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|e| e.kind() == io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 impl Handle {
     /// Called only for a newly authorized launch, never from saved-screen or
@@ -691,7 +719,7 @@ impl Handle {
 /// reply, but cannot send a saved command or start a replacement broker.
 pub fn reattach_slot(data: &Path, project: &str, pane: usize, epoch: &str) -> Result<Binding> {
     slot_shape(project, pane, epoch)?;
-    let directory = slots(data, project)?;
+    let directory = existing_slots(data, project)?;
     let mut record =
         read_binding(&directory, project, pane)?.context("Native pane has no saved source")?;
     ensure!(record.terminal_epoch == epoch, "Native pane epoch changed");
@@ -838,6 +866,19 @@ mod tests {
         drop(listener);
         clean_stale_socket(&directory).unwrap();
         assert!(!path.exists());
+    }
+    #[test]
+    fn native_slot_lookup_never_creates_missing_namespaces() {
+        let tmp = private_temp();
+        let data = tmp.path().join("missing");
+        assert!(read_slot(&data, "project", 0).unwrap().is_none());
+        assert!(reattach_slot(&data, "project", 0, "epoch").is_err());
+        assert!(!data.exists());
+        let panes = root(&data).unwrap().child("panes").unwrap();
+        assert!(read_slot(&data, "project", 0).unwrap().is_none());
+        assert!(!panes.path.join("project").exists());
+        std::os::unix::fs::symlink(tmp.path(), panes.path.join("project")).unwrap();
+        assert!(read_slot(&data, "project", 0).is_err());
     }
     #[test]
     fn directory_replacement_never_resurrects_or_writes_into_the_new_namespace() {

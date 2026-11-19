@@ -526,7 +526,7 @@ mod tests {
         state.present_plugin_pane(pane, Placement::Overlay).unwrap();
         assert_eq!(state.visible(), vec![pane]);
         let concurrent = state.add_background_terminal().unwrap();
-        state.close_pane();
+        assert!(state.close_pane(state.terminal));
         assert_eq!(state.unzoomed_tree(), original);
         assert_eq!(state.terminal, focus);
         assert!(state.pane_zoom);

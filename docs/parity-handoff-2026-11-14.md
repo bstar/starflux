@@ -1,5 +1,10 @@
 # Herdr parity pause handoff — November 14, 2026
 
+> Resumed on November 17 at the user's request. The historical pause and evidence
+> below remain unchanged. See the November 17 entry in `parity-progress.md` and
+> `checkpoints/native-launch-authority/validation-resumed.json` for new validation.
+> Desktop/mouse control is prohibited; use private protocol fixtures only.
+
 The user requested a pause at a sensible point. The full goal is unfinished.
 The current recovery changes are frozen in reconstructable, uninstalled
 checkpoints; no production backend was switched. AI conversation resumption is

@@ -1,0 +1,73 @@
+{
+  "saved_at": 1794957805.2229989,
+  "source_files": {
+    "src/native_backend.rs": "21bc456c60f54930a5b032caeb8ee3daae19485b86dda9772b64885ffc7aaf09",
+    "src/ui.rs": "c2e217460da7e02a3867393b6f1f9d4a308d410564df8878570fef3adbc1ae08"
+  },
+  "source_patch_sha256": "2b1bba0b975b7ad1f68cecaca62f789b4a1e81feb0e2700b4b656e9318b81d02",
+  "candidate_binary_sha256": "99f255c35e672bc31a89b3957fb2d76bb7dbf08b759fecf1a629a813ccf22dd9",
+  "fixture_sha256": "acf5bd2b48164643ba854545d38c26d4cf608ea0920004fbb51718e74846a7df",
+  "validation_logs": {
+    "native-launch-race-final-local.log": {
+      "sha256": "a0c56a3c4a1c805c7bc75b5b3df922a6da7e5992e452c362f94485c3a036bf5a",
+      "mtime": 1794957552.3507059
+    },
+    "native-launch-race-final-cells.log": {
+      "sha256": "fd51fd953e8493f86ef1b4e916bce8d7d4980d1857b79c611f449232d718a532",
+      "mtime": 1794957588.9501672
+    },
+    "native-launch-race-final-ssh.log": {
+      "sha256": "2c9e2114d7f33eae5bf2808e997571620f8c1961806128cb95636fe5e4853f69",
+      "mtime": 1794957638.4977894
+    },
+    "native-launch-race-final-ssh-cells.log": {
+      "sha256": "adebbceb965cefd07dae6159bde7dfb1975e3613611cb0f6af25178370c39ba4",
+      "mtime": 1794957588.7611647
+    },
+    "native-launch-race-nix-binary-local.log": {
+      "sha256": "a0c56a3c4a1c805c7bc75b5b3df922a6da7e5992e452c362f94485c3a036bf5a",
+      "mtime": 1794957770.3574343
+    },
+    "native-launch-race-nix-binary-ssh-cells.log": {
+      "sha256": "adebbceb965cefd07dae6159bde7dfb1975e3613611cb0f6af25178370c39ba4",
+      "mtime": 1794957770.4034348
+    },
+    "native-launch-authority-resumed-cold-cells.log": {
+      "sha256": "b8a1b558bbe8ca55fd90af60252dfbc1ee9246e11286f394eba382ee886fd80e",
+      "mtime": 1794957658.7700434
+    },
+    "native-launch-authority-resumed-cold-ssh.log": {
+      "sha256": "d7c6c6f3d25d607f5bc1cbe27f7750f33a11964785eb86f9ee601d216c235421",
+      "mtime": 1794957653.8809822
+    },
+    "native-launch-authority-minimal-resumed.log": {
+      "sha256": "9b1f20ad0c7db5e4da41793d10833328188082c1c08c9e097439137ebe41e72a",
+      "mtime": 1794957496.5049987
+    },
+    "native-launch-authority-resumed-nix.log": {
+      "sha256": "a5fa4ec43083b19a8f15c473df7f76605590f06cb7a439d2f044fd46b788d90e",
+      "mtime": 1794957698.6445415
+    }
+  },
+  "negative_control": {
+    "log": "target/native-launch-race-control.log",
+    "sha256": "959b273edb6272604758b11ede15570a7b4f51d357b1144f49f17e0b44a1cd18",
+    "expected_exit": 1,
+    "binary": "/home/bstar/.cache/starflux-release-gate-n6vyxviv/target/release/starflux",
+    "binary_sha256": "4403b835fdd3e21fe3e613c5496ec147750fe9f0d21e112ddc33b976ffeadb5f"
+  },
+  "nix_snapshot": "/home/bstar/.cache/starflux-launch-authority-gate-cdqfwwg0",
+  "nix_package": "/nix/store/l66zym3qq969av6hsbrr4kr5fkklarm0-starflux-0.2.0",
+  "nix_x86_64_passed": true,
+  "nix_aarch64_tested": false,
+  "nix_wrapper_gate_limitation": "The package wrapper prepends its Python PATH ahead of the injected helper. The original wrapper race runs never reached the test gate; retained logs are target/native-launch-race-nix-{local,ssh-cells}.log. Forced race passed against the packaged .starflux-wrapped Rust executable with the private runtime environment. Wrapper smoke checks passed separately.",
+  "minimal_passed": true,
+  "deterministic_handoff_passed": true,
+  "repeated_cold_recovery_uses_fake_agents": true,
+  "real_provider_conversation_resume_verified": false,
+  "no_desktop_or_mouse_control": true,
+  "shipping_activation": false,
+  "canonical_source_promotion": false,
+  "full_parity_complete": false,
+  "safety_sha256": "a92e684d8a11bb782b81e717d4dbcc59aeea9e024272c822d545b10528ca8ecb"
+}

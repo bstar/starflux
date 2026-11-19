@@ -18,8 +18,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
-// Version 4 understands popup dimensions in persistent pane declarations.
-const VERSION: u64 = 4;
+// Version 5 dispatches saved-session lifecycle hooks.
+const VERSION: u64 = 5;
 fn spawn_detached(command: &mut Command) -> Result<()> {
     let mut child = command.spawn()?;
     std::thread::spawn(move || {
@@ -186,6 +186,27 @@ pub fn cancel(value: &str) -> Result<Value> {
     }
     Ok(serde_json::to_value(job)?)
 }
+enum JobRequest<'a> {
+    Explicit(&'a str),
+    Hook { id: &'a str, activation: &'a str },
+}
+
+impl JobRequest<'_> {
+    fn operation(&self) -> &str {
+        match self {
+            Self::Explicit(id) | Self::Hook { id, .. } => id,
+        }
+    }
+
+    fn matches_context(&self, job: &Job, project: &Option<Project>) -> bool {
+        match self {
+            Self::Explicit(_) => job.project == *project,
+            // Project lookup can change between delivery and cursor persistence.
+            Self::Hook { activation, .. } => job.activation == *activation,
+        }
+    }
+}
+
 fn enqueue_in(
     store: &Store,
     plugin: &str,
@@ -193,16 +214,16 @@ fn enqueue_in(
     digest: &str,
     project: Option<Project>,
     event: Option<Value>,
-    operation: &str,
+    request: JobRequest<'_>,
 ) -> Result<Value> {
-    let replay_id = id(operation)?;
+    let replay_id = id(request.operation())?;
     if store.path.join(name(&replay_id)).exists() {
         let old = load(store, &replay_id)?;
         ensure!(
             old.plugin == plugin
                 && old.action.id == action
                 && old.digest == digest
-                && old.project == project
+                && request.matches_context(&old, &project)
                 && old.event == event,
             "Plugin job ID conflict"
         );
@@ -213,6 +234,12 @@ fn enqueue_in(
         .plugins
         .get(plugin)
         .context("Plugin is not linked")?;
+    if let JobRequest::Hook { activation, .. } = request {
+        ensure!(
+            entry.activation == activation,
+            "Plugin hook activation changed"
+        );
+    }
     let (manifest, current) = plugins::package_for(entry)?;
     ensure!(
         entry.enabled
@@ -238,14 +265,14 @@ fn enqueue_in(
         );
     }
     let _queue = store.lock("queue.lock", true)?;
-    let id = id(operation)?;
+    let id = id(request.operation())?;
     if store.path.join(name(&id)).exists() {
         let old = load(store, &id)?;
         ensure!(
             old.plugin == plugin
                 && old.action.id == action.id
                 && old.digest == digest
-                && old.project == project
+                && request.matches_context(&old, &project)
                 && old.event == event,
             "Plugin job ID conflict"
         );
@@ -288,7 +315,15 @@ pub fn enqueue(
     operation: &str,
 ) -> Result<Value> {
     let store = plugins::store()?;
-    let result = enqueue_in(&store, plugin, action, digest, project, None, operation)?;
+    let result = enqueue_in(
+        &store,
+        plugin,
+        action,
+        digest,
+        project,
+        None,
+        JobRequest::Explicit(operation),
+    )?;
     ensure()?;
     Ok(result)
 }
@@ -331,7 +366,7 @@ pub fn open_link(
         digest,
         project,
         Some(json!({"kind":"link.opened","handler":handler.id,"url":url})),
-        operation,
+        JobRequest::Explicit(operation),
     )?;
     ensure()?;
     Ok(result)
@@ -467,7 +502,8 @@ pub fn service(path: &str) -> Result<()> {
                         reconciled = Instant::now();
                     }
                     let cursor_path = store.path.join(format!("cursor-{plugin}.json"));
-                    let mut cursor: Value = read(&cursor_path, 8192).unwrap_or(json!({}));
+                    let original: Value = read(&cursor_path, 8192).unwrap_or(json!({}));
+                    let mut cursor = original.clone();
                     if cursor["activation"] != entry.activation {
                         cursor = json!({"activation":entry.activation,"cursor":crate::automation::journal::snapshot()?.1});
                     }
@@ -489,16 +525,20 @@ pub fn service(path: &str) -> Result<()> {
                             &digest,
                             None,
                             Some(json!({"kind":"startup","service":service.instance})),
-                            &job[..32],
+                            JobRequest::Hook {
+                                id: &job[..32],
+                                activation: &entry.activation,
+                            },
                         )?;
                     }
                     let after = cursor["cursor"]
                         .as_str()
                         .context("Missing hook cursor")?
                         .to_owned();
+                    let mut pending = Ok(());
                     match crate::automation::journal::read(&after) {
                         Ok(events) => {
-                            for event in events {
+                            'events: for event in events {
                                 for hook in manifest.hooks.iter().filter(|h| {
                                     h.on == event.kind
                                         && (h.states.is_empty()
@@ -506,14 +546,14 @@ pub fn service(path: &str) -> Result<()> {
                                                 .as_str()
                                                 .is_some_and(|s| h.states.iter().any(|v| v == s)))
                                 }) {
-                                    let project_id = event
+                                    let project = event
                                         .resource
-                                        .split('/')
-                                        .nth(1)
-                                        .context("Event has no project")?;
-                                    let project = crate::saved(project_id)
-                                        .ok()
-                                        .filter(|c| c.workspace == project_id)
+                                        .split_once('/')
+                                        .filter(|(kind, _)| *kind != "sessions")
+                                        .and_then(|(_, path)| path.split('/').next())
+                                        .and_then(|id| {
+                                            crate::saved(id).ok().filter(|c| c.workspace == id)
+                                        })
                                         .map(|c| plugins::project(&c));
                                     let key = format!(
                                         "{}:{}:{}:{}:{}",
@@ -524,15 +564,21 @@ pub fn service(path: &str) -> Result<()> {
                                         event.sequence
                                     );
                                     let job = format!("{:x}", sha2::Sha256::digest(key.as_bytes()));
-                                    enqueue_in(
+                                    if let Err(error) = enqueue_in(
                                         &store,
                                         plugin,
                                         &hook.action,
                                         &digest,
                                         project,
                                         Some(serde_json::to_value(&event)?),
-                                        &job[..32],
-                                    )?;
+                                        JobRequest::Hook {
+                                            id: &job[..32],
+                                            activation: &entry.activation,
+                                        },
+                                    ) {
+                                        pending = Err(error);
+                                        break 'events;
+                                    }
                                 }
                                 cursor["cursor"] = json!(format!(
                                     "{}:{}",
@@ -541,18 +587,32 @@ pub fn service(path: &str) -> Result<()> {
                                 ));
                             }
                         }
-                        Err(_) => {
+                        Err(error)
+                            if crate::automation::fault_code(&error) == Some("cursor_expired") =>
+                        {
                             service.warning = Some(format!(
                                 "Event cursor expired for {plugin}; missed events were not replayed"
                             ));
                             cursor["cursor"] = json!(crate::automation::journal::snapshot()?.1);
                         }
+                        Err(error) => return Err(error.context("Could not read plugin events")),
                     }
-                    store.write(
-                        &format!("cursor-{plugin}.json"),
-                        &serde_json::to_vec(&cursor)?,
-                    )?;
-                    Ok(())
+                    if cursor != original {
+                        // Configure arms the new activation under this same lock.
+                        let _lock = crate::project_sync::Transaction::acquire(
+                            plugins::registry_lock_path()?,
+                        )?;
+                        let current = plugins::registry()?;
+                        if current.plugins.get(plugin).is_some_and(|current| {
+                            current.enabled && current.activation == entry.activation
+                        }) {
+                            store.write(
+                                &format!("cursor-{plugin}.json"),
+                                &serde_json::to_vec(&cursor)?,
+                            )?;
+                        }
+                    }
+                    pending
                 })();
                 if let Err(error) = delivered {
                     service.errors += 1;

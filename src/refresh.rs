@@ -11,6 +11,104 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 pub const SIGNAL: &str = "STARFLUX_RELOAD_UI";
+pub const SWITCH_SIGNAL: &str = "STARFLUX_SWITCH_MACHINE";
+#[derive(Serialize, Deserialize)]
+struct LocalPresenter {
+    pid: u32,
+    start: u64,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MachineSwitch {
+    pub machine: String,
+    pub revision: String,
+    pub project: String,
+    pub pane: Option<u8>,
+    pub pane_epoch: Option<String>,
+    pub graphical: bool,
+}
+#[derive(Serialize, Deserialize)]
+struct SwitchRequest {
+    presenter: u32,
+    created: u128,
+    destination: MachineSwitch,
+}
+
+fn switch_path(view: &str, suffix: &str) -> Result<PathBuf> {
+    let root = crate::runtime::root()?;
+    starkit::terminal_graphics::session::socket_path(&root, view)?;
+    Ok(root.join(format!("{view}.{suffix}.json")))
+}
+
+fn local_presenter(view: &str) -> Result<LocalPresenter> {
+    let presenter: LocalPresenter =
+        serde_json::from_slice(&fs::read(switch_path(view, "local-presenter")?)?)?;
+    ensure!(
+        crate::agent_state::process_start(presenter.pid) == Some(presenter.start),
+        "Local presenter has exited"
+    );
+    Ok(presenter)
+}
+
+pub fn can_switch(view: &str) -> bool {
+    local_presenter(view).is_ok()
+}
+
+pub fn request_switch(view: &str, destination: MachineSwitch) -> Result<()> {
+    let machine = crate::machines::get(&destination.machine)?;
+    ensure!(
+        machine.enabled && machine.revision == destination.revision,
+        "Machine changed"
+    );
+    let presenter = local_presenter(view)?;
+    starkit::fs::write_private(
+        &switch_path(view, "machine-switch")?,
+        &serde_json::to_vec(&SwitchRequest {
+            presenter: presenter.pid,
+            created: now(),
+            destination,
+        })?,
+    )?;
+    Ok(())
+}
+
+const RETURN_ENV: &str = "STARFLUX_LOCAL_RETURN";
+static RETURN: OnceLock<ReturnLaunch> = OnceLock::new();
+
+#[derive(Serialize, Deserialize)]
+struct ReturnLaunch {
+    executable: PathBuf,
+    args: Vec<OsString>,
+}
+
+pub fn load_return() -> Result<()> {
+    if let Some(value) = std::env::var_os(RETURN_ENV) {
+        // Read and remove the local handoff before any threads or child processes.
+        unsafe { std::env::remove_var(RETURN_ENV) };
+        let value = value.to_str().context("Invalid local return handoff")?;
+        let handoff = serde_json::from_str(value)?;
+        RETURN
+            .set(handoff)
+            .map_err(|_| anyhow::anyhow!("Local return already initialized"))?;
+    }
+    Ok(())
+}
+
+pub fn has_local_return() -> bool {
+    RETURN.get().is_some()
+}
+
+fn return_local(result: Result<()>) -> Result<()> {
+    let Some(origin) = RETURN.get() else {
+        return result;
+    };
+    if let Err(error) = result {
+        eprintln!("Remote view ended: {error:#}");
+    }
+    let error = std::process::Command::new(&origin.executable)
+        .args(&origin.args)
+        .exec();
+    Err(error).context("Could not restore the local STAR/FLUX view")
+}
 static FRONTEND: OnceLock<Frontend> = OnceLock::new();
 struct Frontend {
     executable: PathBuf,
@@ -58,7 +156,15 @@ pub fn register_local(
         frontend.into(),
     ];
     args.extend(mode.args().iter().map(OsString::from));
-    register(frontend, args, None)
+    register(frontend, args, None)?;
+    let pid = std::process::id();
+    if let Some(start) = crate::agent_state::process_start(pid)
+        && let Ok(path) = switch_path(frontend, "local-presenter")
+    {
+        let _ =
+            starkit::fs::write_private(&path, &serde_json::to_vec(&LocalPresenter { pid, start })?);
+    }
+    Ok(())
 }
 pub fn register_remote(
     host: &str,
@@ -67,6 +173,7 @@ pub fn register_remote(
     config: Option<&Path>,
     frontend: &str,
     mode: crate::presentation::Mode,
+    ssh_notifications: bool,
 ) -> Result<()> {
     let mut args = vec![
         "--ssh".into(),
@@ -79,6 +186,9 @@ pub fn register_remote(
         executable.into(),
     ];
     args.extend(mode.args().iter().map(OsString::from));
+    if ssh_notifications {
+        args.push("--ssh-notifications".into());
+    }
     if let Some(path) = config {
         args.extend(["--ssh-config".into(), path.as_os_str().to_owned()]);
     }
@@ -225,8 +335,65 @@ fn wait_for_controller(controller: u32, timeout: Duration) -> Result<()> {
 }
 pub fn finish(result: Result<()>) -> Result<()> {
     let Some(frontend) = FRONTEND.get() else {
-        return result;
+        return return_local(result);
     };
+    if frontend.remote.is_none()
+        && local_presenter(&frontend.workspace).is_ok_and(|lease| lease.pid == std::process::id())
+        && let Ok(path) = switch_path(&frontend.workspace, "local-presenter")
+    {
+        let _ = fs::remove_file(path);
+    }
+    if frontend.remote.is_none()
+        && result.as_ref().err().is_some_and(|error| {
+            error.chain().any(|cause| {
+                let text = cause.to_string();
+                text == SWITCH_SIGNAL || text == format!("Graphical session: {SWITCH_SIGNAL}")
+            })
+        })
+    {
+        let path = switch_path(&frontend.workspace, "machine-switch")?;
+        let request: SwitchRequest = serde_json::from_slice(&fs::read(&path)?)?;
+        fs::remove_file(path)?;
+        ensure!(
+            request.presenter == std::process::id() && request.created >= frontend.started,
+            "Stale machine switch"
+        );
+        let destination = request.destination;
+        let machine = crate::machines::get(&destination.machine)?;
+        ensure!(
+            machine.revision == destination.revision && machine.enabled,
+            "Machine changed"
+        );
+        let next_view = format!("v-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+        let return_launch = ReturnLaunch {
+            executable: frontend.executable.clone(),
+            args: frontend.args.clone(),
+        };
+        let mut command = std::process::Command::new(&frontend.executable);
+        command
+            .env(RETURN_ENV, serde_json::to_string(&return_launch)?)
+            .args([
+                "--machine",
+                &machine.id,
+                "--workspace",
+                &destination.project,
+                "--frontend",
+                &next_view,
+                if destination.graphical {
+                    "--graphical"
+                } else {
+                    "--cells"
+                },
+            ]);
+        if let Some(pane) = destination.pane {
+            command.args(["--focus-pane", &pane.to_string()]);
+        }
+        if let Some(epoch) = &destination.pane_epoch {
+            command.args(["--focus-pane-epoch", epoch]);
+        }
+        let error = command.exec();
+        return Err(error).context("Could not open saved machine in this terminal");
+    }
     let requested = result.as_ref().err().is_some_and(|e| {
         e.chain().any(|cause| {
             let text = cause.to_string();
@@ -240,7 +407,7 @@ pub fn finish(result: Result<()>) -> Result<()> {
             .and_then(|bytes| serde_json::from_slice::<Request>(&bytes).ok())
             .is_some_and(|r| r.created >= frontend.started);
     if !requested && !local_request {
-        return result;
+        return return_local(result);
     }
     if let Some(remote) = &frontend.remote {
         let mut command = std::process::Command::new("ssh");
@@ -280,9 +447,11 @@ pub fn finish(result: Result<()>) -> Result<()> {
         "Updated executable is missing: {}",
         frontend.executable.display()
     );
-    let error = std::process::Command::new(&frontend.executable)
-        .args(&frontend.args)
-        .exec();
+    let mut command = std::process::Command::new(&frontend.executable);
+    if let Some(origin) = RETURN.get() {
+        command.env(RETURN_ENV, serde_json::to_string(origin)?);
+    }
+    let error = command.args(&frontend.args).exec();
     Err(error).context("Could not load updated STAR/FLUX build")
 }
 

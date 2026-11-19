@@ -2664,3 +2664,681 @@ or promoted into canonical Rust source, no live sessions were migrated and all
 five tracked production process identities plus the installed executable hash
 remain unchanged. All validation jobs started in this turn have finished; no new
 work should run until the user resumes the goal.
+
+
+### November 17 — resumed: deterministic native resume handoff
+
+Resumed the active parity goal from the November 14 launch-authority checkpoint.
+The previous goal work made progress by fixing shared command/intent publication;
+this turn adds direct regression evidence rather than treating the old private
+cold-start passes as proof that the race was eliminated. The full goal remains
+unfinished and active.
+
+The new `--native-launch-race` fixture gates one private host-helper inspect call
+before native intent publication. Another frontend must run the registered exact
+resume vector once while that opener remains blocked. Both views must still send
+ordinary terminal input and subsequently share the same resumed source. The older
+startup build fails this test; the staged candidate passes all four combinations
+of local/SSH and graphical/cells. The gate's process must still be alive and
+unreleased when the resumed command and ordinary input are observed.
+
+The latest Rust increment passed its previously outstanding no-default-feature
+release matrix (277 main + 4 client, four main ignored), Linux x86_64 Nix package
+and all-feature tests (278 main + 4 client, four main ignored), and three packaged
+executable smoke checks. Private cold-runtime/recovery repetitions passed locally
+in cells and over SSH in graphical mode. The Nix package's underlying Rust binary
+also passed forced handoff locally in graphical mode and over SSH in cells mode.
+The package wrapper's fixed Python PATH prevented the private gate from being
+reached in the initial two wrapper attempts; those failed fixture logs remain
+preserved, and wrapper smoke coverage is distinct from binary race coverage.
+ARM64 and a complete unchanged canonical release-gate invocation remain unproven.
+
+Evidence/source/snapshot hashes are saved in
+`checkpoints/native-launch-authority/validation-resumed.json`; logs use
+`target/native-launch-race-*` and `target/native-launch-authority-resumed-*`.
+The staged Rust source reconstructs to the same two-file launch-authority
+increment. Canonical Rust source and dependency pins are untouched. Installed
+binary hash and all ten production PID/start identities observed at this turn's
+baseline remained unchanged. No live frontends or App Space were migrated.
+
+The user explicitly prohibited taking control of the mouse. All work uses private
+protocol pipes and disposable namespaces; no desktop mouse or keyboard automation
+was used. Keep this constraint for subsequent acceptance work.
+
+Next priority is provider-confirmed native conversation capture and resumption,
+including thread switches, late callbacks, pane/launch generations and retained
+provider/model/authentication choices. The tests above use fake agents and do not
+prove real AI conversation recovery. Broader ownership/adoption, uncertainty,
+graphics/history/placement, network/media, canonical integration and every other
+unchecked requirement in `docs/plan.md` remain required.
+
+The canonical terminal monitor now resolves a pending launch's command from the
+durable project model inside the same transaction that consumes the launch
+receipt. Previously the worker could obtain that receipt using a command read
+from an earlier frontend snapshot. Reconcile this change with the staged native
+handoff when promoting that backend. The staged checkpoint has its own command
+selection and does not require changes to its archived evidence.
+
+The canonical recovery record now keeps the current and proposed pane
+generations during publication. If writing the pane model is interrupted after
+writing the conversation record, a repeated recovery can still resolve the same
+saved conversation from the current generation. A retry replaces the abandoned
+proposal. Neither generation grants the inherited report live health authority.
+
+## SSH desktop notifications
+
+The optional SSH receiver samples the workspace selected in its own frontend.
+When focused-pane suppression is enabled, delivery uses the remote view's
+current pane and generation. A missing or expired focus sample defers delivery.
+
+The private loopback SSH test sends focus-gained and focus-lost reports through
+a PTY to the real presenter. It verifies forwarding, focused-pane suppression,
+project switching, deduplication, and preservation of the original terminal
+process. The fixture sets raw mode on its own slave PTY so focus reports do not
+wait for a newline. The local notification suite also passed. Evidence is in
+`target/ssh-focus-raw-slave.log` and
+`target/ssh-notification-focus-final-1.log`.
+
+## Saved-session plugin hooks
+
+The plugin runner now dispatches `session.created`, `session.changed` and
+`session.removed` from the durable automation journal. A session event carries
+its session resource and data independently of any project context. Deletion
+delivers the removal record with null data. The worker version was bumped so the
+existing cooperative upgrade path loads the new dispatch behavior.
+
+The private headless plugin suite exercises hooks for session creation, rename
+and removal alongside existing project hooks. Logs are in
+`target/session-hooks-v5-local.log` and `target/session-hooks-v5-ssh.log`.
+
+## Single-byte OSC 8 hyperlinks
+
+The native terminal parser accepts C1 OSC and ST alongside the ESC-prefixed
+forms. It checks incomplete UTF-8 prefixes across reads so characters sharing
+those continuation bytes remain intact in both visible text and destinations.
+Cancellation and overflow still discard incomplete targets.
+
+All 13 focused OSC 8 tests passed, including mixed delimiters, byte-sized
+chunks, URI and label Unicode, malformed sequences, and saved-screen round
+trips. See `target/c1-osc8-regression.log`. Parser throughput comparisons
+were variable across runs and do not measure UI latency. Browser handoff
+remains a separate outstanding part of plugin link support.
+
+## Browser handoff
+
+The terminal link menu and plugin handler chooser offer **Open in browser** for
+HTTP and HTTPS destinations on presenters that advertise the STAR/KIT browser
+action. The controller sends the selected destination to the presenting computer
+and displays the opener result. This path applies when the controller is over
+SSH as well as when it is local.
+
+Private cells presenters verified both menu paths, literal OSC 8 destination
+delivery to a fake local opener and no opening before explicit selection. The
+graphical plugin UI regression and the private SSH App Space streaming regression
+passed with the new STAR/KIT pin. Evidence is in
+`target/browser-handoff-{chooser-local-recheck,chooser-ssh-recheck,graphical-plugin,app-space}.log`.
+The browser opener was simulated, and these runs did not launch a real browser.
+
+## Pane edge placement
+
+A terminal tab's **Move pane to edge…** menu places a visible pane or hidden
+tab on any outer edge of its project's split layout. The other branches keep
+their structure. The moved pane takes 35% initially and can be resized.
+
+The pane-layout fixture passed in local graphical, SSH graphical and SSH cells
+presentations. It verifies tab-menu activation, moving a visible pane,
+restoring a hidden tab at an edge, retaining all processes, independent
+frontend layouts and reattachment with the moved pane in place. Results are in
+`target/pane-edge-final-{graphical,ssh-graphical,ssh-cells}.log`.
+Cross-project and separate-tab-group movement remain open.
+
+## Guarded input for imported tmux panes
+
+`panes.send` now works on the active pane of an imported tmux session. It
+checks the host boot, pane and foreground process identities, and uses a tmux
+command-queue guard to reject changed selections and copy mode before input.
+The API retains distinct paste and submit operations and operation replay
+protection. Imported pane termination remains owned by the source.
+
+The private import suite passed locally and over SSH. It verified Unicode
+paste, explicit submission, replay protection, changed target and copy-mode
+rejection, and preserved source topology. The owned-pane automation suite
+also passed over SSH. Logs are in
+`target/imported-tmux-input-final-{local,ssh,owned-ssh}.log`.
+Imported Herdr guarded input remains open.
+
+## Imported Herdr process diagnostics
+
+`panes.get` verifies the same owned Herdr socket and server process before
+and after querying pane process information. The imported pane and terminal
+IDs must match before STAR/FLUX publishes the shell PID, start time and
+foreground process group. Legacy records without a terminal ID report that
+identity is unavailable.
+
+The private Herdr import fixtures passed locally and over loopback SSH. They
+matched the reported shell PID and terminal ID to the original live panes,
+verified that diagnostics did not restart a stopped source, and confirmed
+that an inspected pane exposes neither an action target nor write
+capabilities. The owned automation regression passed. Evidence is in
+`target/herdr-identity-{local,ssh,owned}.log`. Herdr's input schema has no
+expected process or terminal identity, so guarded writes remain open.
+
+The tab menu's **Agent status / conversation** view now loads the imported
+Herdr identity asynchronously. Private graphical and SSH cells fixtures
+verified the read-only row matched an original shell PID and the source
+processes survived. Results are in `target/herdr-menu-final-{local,ssh-cells}.log`.
+
+## Per-machine agent view
+
+Enabled machine profiles open a scoped agent view from their details menu.
+Refresh and page navigation stay on that controller. Profile revision checks
+reject navigation from a stale menu after the profile changes.
+
+Private loopback SSH fixtures in graphical and cells modes verified that the
+view excluded other controllers, paged to the ninth pane on the selected
+controller, and rejected a stale profile action. See
+`target/machine-agent-scope-final-{graphical,cells}.log`. Switching the same
+frontend between independent controllers remains open.
+
+Saved-machine agent rows now copy a command that focuses the selected
+one-based pane in a fresh frontend. The remote launch verifies that the pane
+exists before starting the view. The focus flag is a one-time launch option
+and is omitted from refresh arguments. Private graphical and cells menu
+fixtures verified that a real SSH cells presenter attached to the original
+pane 9 process on an independent controller and rejected a missing pane.
+See `target/machine-pane-launch-attached-{graphical,cells}.log`.
+
+A local presenter can now open a saved machine's live agent pane in the same
+terminal via the agent list. It checks the destination before closing the
+local view, saves the local frontend state, and re-execs with a fresh remote
+frontend ID. Only a registered local presenter can consume the handoff.
+The private loopback fixtures verified rendering the original remote process
+in the same PTY, keeping the local process and other view alive, and rejecting
+a missing destination without closing the original view. The actual switch
+was exercised in a cells presenter. Evidence is in
+`target/machine-switch-short-{graphical,cells}.log`.
+
+Detaching after a machine handoff returns to the original local frontend in
+the same terminal. The origin command is held only by the local presenter.
+An SSH launch failure after a successful destination check also restores the
+origin. Loopback fixtures verified the same presenter rendered both original
+processes and recovered from a deliberately rejected remote launch. See
+`target/machine-switch-return-{graphical,cells}.log`. Direct remote-to-remote
+switching remains open.
+
+The remote Machines menu now offers **Return to local view** after a
+same-terminal handoff. Private loopback fixtures activated the action,
+verified the local view rendered again in the same PTY, and confirmed the
+remote pane process survived. The actual terminal handoff was tested in
+cells mode. Logs are in `target/machine-return-menu-{graphical,cells}.log`.
+
+A pending saved-machine destination check now has an explicit Cancel action.
+Dismissing the check also invalidates its eventual result. The loopback
+fixture held a successful check on the destination, canceled it, then let
+the response arrive. The same local controller stayed open and no remote
+frontend was created. The normal handoff and return paths also passed.
+See `target/machine-cancel-{graphical,cells}.log`.
+
+Machine details now offer **Open workspace here** from a local presenter.
+The destination check resolves the profile's configured workspace or its
+controller's saved default without requiring an agent or a specific pane.
+Private loopback fixtures verified default-workspace launch and return through
+the same cells presenter. See `target/machine-workspace-{graphical,cells}.log`.
+
+Saved-machine agent links now preserve the pane generation when the source
+reports one. Both the same-window check and copied launch command reject an
+obsolete generation. Startup verifies it again before queuing focus, and the
+controller checks it when applying the action. Private loopback fixtures
+recycled pane 9 and verified its copied command failed before opening a
+frontend. They also verified a stale same-window request retained the local
+view. See `target/pane-generation-{graphical,cells}.log`.
+
+## History search pagination
+
+The headless history search returns a continuation cursor for additional
+matches. The cursor binds the project, pane generation, source, query and
+captured bytes. If live output changes that capture between requests, the
+next page returns `stale_history` instead of skipping or repeating matches.
+Local graphical and SSH cells fixtures verified two ordered Unicode results
+and rejection after new PTY output. See
+`target/history-pagination-{local,ssh-cells}.log`.
+
+History review and the headless search now support opt-in Unicode ignore-case
+matching. It is still a literal search, and matches retain the original
+text, byte ranges and terminal columns. Case mode is bound into pagination
+cursors. The unit regression covers different-width Unicode encodings and
+literal punctuation. Local graphical and SSH cells fixtures verified the
+search toggle, original-case clipboard text and the headless results. See
+`target/history-ignore-case-{unit,local,ssh-cells}.log`.
+
+Imported Herdr history now checks the source socket, server process and
+terminal ID on either side of the capture. A stopped source is rejected
+before invoking the read command. Private Herdr fixtures passed locally and
+over SSH, including case-insensitive API paging, interactive search and a
+read against a stopped source that left it stopped. See
+`target/herdr-history-guard-{local,ssh-cells}.log`.
+
+The `agents.live` API now accepts project and session filters. They apply
+before pagination and terminal inspection, so unrelated panes cannot consume
+the requested page. A private loopback SSH fixture verified a filtered page
+with the ninth pane and an empty result for an unmatched session. See
+`target/live-agent-filter-ssh.log`.
+
+Multi-machine `machines.agents` requests can forward optional project and
+session filters to the independent controllers. Omitted filters leave the
+previous wire request unchanged. The loopback fixture verified matching
+pagination, an empty page on an unrelated controller, and an independent
+unreachable-host error. See `target/machine-agent-filter-ssh.log`.
+
+A valid live snapshot now repairs a corrupt current preview without rotating
+the corrupt data over the previous-process preview. Private cold-start
+fixtures deliberately corrupted both paths at different times, verified the
+corrupt preview still reports a read error, then verified live repair and
+byte-for-byte preservation of the previous-process preview. See
+`target/cold-corrupt-repair-{local,ssh-cells}.log`.
+
+Saved-screen deduplication now treats cursor and alternate-buffer metadata
+changes as updates even when the formatted bytes are identical. The unit test
+covers byte-identical records. Private local and loopback SSH cold-start
+fixtures verified correction of stale alternate metadata and retention of the
+previous-process preview. See `target/cold-screen-metadata-unit.log` and
+`target/cold-screen-metadata-final-{local,ssh}.log`.
+
+Saved-screen review now opens at the archived cursor. A smaller pane clamps
+it to the nearest visible cell. Unit coverage verifies clamping and private
+local and SSH cold-start fixtures verify the previous screen opens at its
+original cursor without changing the live pane. See
+`target/cold-review-cursor-{unit,local,ssh-cells}.log`.
+
+The tmux graphics observer now ignores oversized output notifications that
+identify an unrelated pane. Watched or unidentifiable oversized output still
+reports a gap. Parser tests exercise both normal and extended foreign
+notifications across fragmented reads. The private local and SSH composition
+fixtures verified graphics decoding and retained source geometry. See
+`target/graphics-foreign-output-{unit,local,ssh}.log`.
+
+Inline graphics now has a resize regression that checks a retained image is
+clipped completely when its placement is outside the smaller view and that
+expansion restores the entire original RGBA plane byte for byte. Sixteen
+graphics-owner tests passed. The private native broker suites also passed
+locally and over SSH, including source retention and streamed-view resize
+recovery. See `target/graphics-resize-exact-unit.log` and
+`target/graphics-resize-broker-{local,ssh}.log`.
+
+Native broker resize now acknowledges duplicate dimensions without publishing
+a new frame revision. For a changed size, the broker validates graphics
+readiness before resizing the PTY and updates parser geometry only after the
+kernel accepts the resize. Private local and loopback SSH streamed fixtures
+verified that duplicate requests preserve the revision and retained graphics
+usage. See `target/broker-resize-idempotent-{local,ssh,unit}.log`.
+
+Terminal history now resolves a search committed during capture from the
+queued review page. An initial search that wraps to the final match shows
+the wrap in the status line. The regression covers both paths. See
+`target/history-queued-search-verified-unit.log`.
+
+The plugin service now recognizes recorded hook jobs when a journal cursor
+replays an event whose project was deleted or changed after delivery. The
+replayed event must still match the job and plugin activation. Private
+fixtures restarted the service from a cursor preceding project creation,
+verified the original hook ran only once, and verified delivery of later
+events. Both local and loopback SSH fixtures passed. See
+`target/plugin-hook-replay-final-{local,ssh}.log`.
+
+Plugin hook cursor updates now take the registry lock and confirm the same
+activation is still enabled before publishing. This prevents an older service
+scan from replacing a newly enabled activation's starting cursor. Unchanged
+cursors are left on disk without atomic replacement. Private local and loopback
+SSH suites passed activation guards, replay after project removal, and a check
+that repeated idle scans preserve the cursor inode. See
+`target/plugin-hook-cursor-{local,ssh}.log`.
+
+The plugin service now saves the last fully queued event when a later hook
+hits the queue limit. This reduces rescans and preserves delivered progress
+under sustained backpressure. Private local and loopback SSH tests filled the
+queue with 32 jobs, blocked both workers, and verified that the first of two
+session hooks was checkpointed while the second waited. Both hooks ran once
+after the queue drained. See `target/plugin-hook-prefix-{local,ssh}.log`.
+
+The plugin service now resets its cursor only when the automation journal
+reports actual expiry. Other journal-read errors retain the cursor for retry.
+Private local and loopback SSH plugin fixtures verified that an invalid
+future position remains intact with a diagnostic and that a genuinely
+expired journal identity triggers a reported reset. See
+`target/plugin-journal-errors-{local,ssh}.log`.
+
+An open automation subscription now returns its subscription ID and last
+processed cursor on journal polling or reconciliation failure. Private
+session-event fixtures interrupted an open stream with invalid journal bytes,
+restored the journal and resumed on the same transport using the error cursor.
+Local and loopback SSH tests passed. See `target/event-stream-error-{local,ssh}.log`.
+
+Resumed automation streams now validate their cursor by reading the first
+retained batch directly. They deliver that batch without rebuilding a
+workspace snapshot and reconcile live metadata on the normal polling
+schedule. Private session-event tests verified a bounded replay while
+metadata awaited reconciliation, locally and over loopback SSH. See
+`target/event-stream-replay-{local,ssh}.log`.
+
+The combined saved-machine agent view now links directly to a host's
+next pane page using its reported continuation offset. The link keeps
+the profile revision guard and opens the existing machine-scoped view.
+Graphical and cells fixtures followed the new link to pane 9 through
+private loopback SSH controllers. See
+`target/machine-direct-page-{graphical,cells}.log`.
+
+Machine-specific agent pages opened from the combined overview retain
+their origin while paging or refreshing. The return action restores that
+combined page. Private graphical and cells fixtures verified the return
+path around pane 9 over loopback SSH. See
+`target/machine-agent-return-{graphical,cells}.log`.
+
+Combined agent queries now resolve saved profiles from one catalog snapshot
+and report missing profiles per machine while returning intact agent pages
+from other controllers. The overview also labels results whose known profile
+changed or disappeared while the request was open. Both private graphical
+and cells machine suites verified a mixed request over loopback SSH with
+one valid controller and one missing profile. See
+`target/machine-profile-isolation-{graphical,cells}.log`.
+
+Agent health now reports why a structured observation lacks authority,
+including process mismatch, archival, heartbeat expiry, clock skew or a
+live backend failure overriding a current heartbeat. The pane inspector
+explains the reason. Nine unit tests passed, and private local graphical
+and loopback SSH cells lifecycle fixtures checked registration status
+and the backend-failure explanation. See `target/agent-report-status-final-unit.log`
+and `target/agent-report-status-{local,ssh-cells}.log`.
+
+A fresh structured lifecycle report can no longer overwrite an explicit
+terminal transport failure. The pane inspector identifies the transport as
+the source and retains the saved report for recovery. A disconnected bridge
+with a reachable terminal owner remains a separate health signal. The nine
+agent-state unit tests passed, including both disconnect cases. See
+`target/agent-transport-authority-unit.log`.
+
+The pane observation API now offers an opt-in unavailable result with saved
+identity and layered disconnect diagnostics. It never grants a live target or
+write capabilities from a failed inspection. Private local and loopback SSH
+import tests stopped their isolated Herdr servers and confirmed that the
+observation left those servers stopped. See `target/pane-unavailable-{local,ssh}.log`.
+
+Pane input capability and guarded send now share a transport readiness check.
+A valid target with a disconnected input transport receives a typed
+not-applied error before delivery. Transferred panes also expose the observed
+bridge state. Automation unit tests, the private transferred-PTY fixture and
+the loopback SSH automation suite passed. See
+`target/pane-input-transport-{unit,transfer,ssh}.log`.
+
+The transferred-PTY fixture now detaches its private presenter and stops
+only the remaining pane's bridge. The original shell stays alive with the
+same guarded target. The API reports input unavailable while termination
+remains supported. An attempted write and its operation replay both return
+`not_applied`, and the shell never receives the marker command. See
+`target/pane-input-disconnected-fixture.log`.
+
+The same private transferred-pane fixture now reopens the presenter after
+a bridge disconnect. The original shell and guarded target survive. The
+rejected operation remains not applied after reconnect, and a fresh operation
+reaches that same shell. See `target/pane-input-reconnection-fixture.log`.
+
+Closing a targeted split pane now removes that leaf directly, preserving
+focus on a different open pane. An already hidden tab cannot replace and
+then close the focused leaf. Private local graphical and loopback SSH
+cells fixtures verified both cases and retained all terminal processes.
+See `target/pane-targeted-close-{graphical,ssh-cells}.log`.
+
+A pane can now split right or down with an existing hidden terminal tab.
+The native menu lists eligible tabs, and the action validates both
+memberships against the current layout before changing it. Private
+graphical and loopback SSH cells fixtures placed a hidden tab below a
+selected pane, verified all original processes survived, and restored
+the prior tree by closing the added leaf. See
+`target/pane-split-existing-{graphical,ssh-cells}.log`.
+
+The keyboard action `split-existing` opens the existing-tab split picker
+for the focused pane. The default is Ctrl+B, then S (lowercase). Private
+graphical and loopback SSH cells suites verified opening and completing
+the split with the keyboard. See `target/pane-split-shortcut-{graphical,ssh-cells}.log`.
+
+The existing-tab split picker now binds both terminals to their observed
+generations. The selection checks those generations after synchronizing
+the project under the model lock. Local graphical and loopback SSH cells
+fixtures verified that a mismatched generation leaves the tree intact
+and the current selection still succeeds. See
+`target/existing-split-epoch-{graphical,ssh-cells}.log`.
+
+The typed frontend command `split_existing_tab` places a hidden tab
+next to the focused pane. The controller checks both terminal generations
+under the project lock, and frontend discovery advertises support.
+Private graphical and loopback SSH cells fixtures proved stale generation
+rejection, placement acknowledgement, operation replay and preservation
+of the original process and the other window's layout. See
+`target/api-existing-split-{graphical,ssh-cells}.log`.
+
+The typed frontend command `close_split_pane` removes a terminal from
+the addressed window's split while retaining its tab and process.
+Private graphical and loopback SSH cells fixtures verified that closing
+a nonfocused pane preserves focus, other windows stay independent,
+stale and already hidden targets are rejected, and operation replay
+returns the original receipt. See `target/api-close-split-{graphical,ssh-cells}.log`.
+
+The typed frontend command `move_pane_to_edge` exposes the existing
+outer-edge layout operation with frontend, project and pane generation
+guards. Local graphical and loopback SSH cells fixtures moved a hidden
+tab to the bottom, verified the original branches and process survived,
+and checked stale-target rejection and idempotent receipts. See
+`target/api-move-edge-{graphical,ssh-cells}.log`.
+
+Native broker pane lookup, reattachment, and saved-owner connection now
+open existing metadata directories without creating missing ones. This
+keeps namespace probes safe when checking source and destination records
+for future cross-project movement. The unit regression covered missing
+roots, absent project subdirectories and a symlink. The private managed
+broker and streaming fixtures passed locally and over loopback SSH. See
+`target/native-slot-read-only-{unit,local,ssh}.log`.
+
+The configurable `move-pane-to-edge` action now opens the edge picker
+for the focused pane. Ctrl+B followed by Shift+E is the default. Private
+graphical and loopback SSH cells fixtures completed bottom-edge placement
+through the keyboard picker. The pane guide also records the separate
+tmux servers and retained-owner handoff needed for cross-project moves.
+See `target/pane-edge-shortcut-{graphical,ssh-cells}.log`.
+
+The outer-edge picker now binds selections to the project and terminal
+generation observed when it opened. Playback checks both under the project
+lock. Private graphical and loopback SSH cells fixtures verified rejection
+of a stale selection and success of the current one. The SSH typed frontend
+command suite also passed. See `target/pane-edge-epoch-{graphical,ssh-cells,api}.log`.
+
+The default existing-tab split shortcut is now Ctrl+B, Shift+S. The
+initial lowercase binding collided with Ctrl+B, s for the session picker,
+which has been restored. A key-routing regression checks both bindings.
+The pane-layout and narrow session-picker suites passed in graphical
+mode and loopback SSH cells mode. See `target/split-session-shortcuts-*.log`.
+
+Attention item details now explain when the original terminal generation
+is gone and omit the open action while retaining dismissal. Private
+graphical and loopback SSH cells fixtures terminated only an isolated
+notification source, then verified the retained item, unchanged
+selection and available dismissal. See
+`target/attention-stale-pane-{graphical,ssh-cells}.log`.
+
+Attention navigation now synchronizes and checks the destination generation
+under the project lock before focusing and marking the alert read.
+Loopback SSH cells fixtures verified normal cross-session navigation and
+rejection of a direct action targeting a terminated pane. See
+`target/attention-navigation-guard-{notifications,agent-lifecycle}.log`.
+
+Reported attention details now offer the exact saved conversation ID through
+the frontend clipboard. The lookup binds the alert's original run, pane and
+generation. Private graphical and loopback SSH cells fixtures copied the
+same conversation after the notification source terminal was closed. See
+`target/attention-conversation-copy-{graphical,ssh-cells}.log`.
+
+Attention queries now return offset zero for empty results. When a saved
+page lies beyond the available results, the inbox persists the corrected
+offset so the old page does not reappear after refresh. Private graphical
+and loopback SSH cells fixtures verified API empty results and restoration
+from a saved offset past the last available page. See
+`target/attention-page-clamp-{graphical,ssh-cells}.log`.
+
+Page-level mark read now requires the inbox to be visible, so a queued or
+direct action cannot apply to cached items after the page closes or while
+a new page loads. Private graphical and loopback SSH cells fixtures
+verified rejection with the inbox closed and successful marking of the
+filtered page through its menu item. See
+`target/attention-visible-mark-{graphical,ssh-cells}.log`.
+
+The attention inbox now supports Left and Right for previous and next
+result pages while preserving the existing item navigation keys. Private
+graphical and loopback SSH cells notification suites paged both ways with
+the keyboard. See `target/attention-keyboard-paging-{graphical,ssh-cells}.log`.
+
+Worktree automation now supports guarded Git lock and unlock with an
+optional lock reason and an updated reference. The host fixture verified
+Unicode, removal refusal while locked, and stale-reference rejection.
+Private local graphical and loopback SSH cells worktree suites exercised
+the new API before reopening and removing the checkout. See
+`target/worktree-lock-{local,ssh}.log`.
+
+The worktree picker now offers lock and unlock for linked checkouts,
+runs the guarded host operation in the background, and refreshes the
+catalog. Private graphical and loopback SSH cells fixtures changed a
+live checkout's lock, verified removal was hidden while locked, and
+kept the project and its shell active. See `target/worktree-lock-ui-{local,ssh}.log`.
+
+The worktree picker now refreshes after a failed lock change and reports
+the original error. It does not retry the write. Private graphical and
+loopback SSH cells tests changed the lock from another client, verified
+the stale unlock preserved the newer lock, and then unlocked through the
+refreshed picker. See `target/worktree-stale-lock-ui-{local,ssh}.log`.
+
+Worktree automation now reports typed outcomes for confirmed repository
+host refusals and preserves unknown outcomes for Git or transport failures.
+Private graphical and loopback SSH cells fixtures verified
+`stale_worktree` and `locked_worktree` responses with `not_applied` and
+then unlocked and removed the original checkout normally. See
+`target/worktree-error-codes-{local,ssh}.log`.
+
+Successful worktree lock changes now return the updated catalog from
+the same host request, removing an extra SSH round trip in the picker.
+Failed changes still refresh independently and retain the original
+diagnostic. The host fixture checked the returned catalog, and private
+graphical and loopback SSH cells worktree fixtures passed. See
+`target/worktree-lock-one-query-{local,ssh}.log`.
+
+Worktree lock refreshes now reselect the same checkout by directory
+identity. Private graphical and loopback SSH cells tests used Enter to
+reopen that row after both a successful lock and a rejected stale action.
+See `target/worktree-lock-focus-{local,ssh}.log`.
+
+Worktree details can copy the exact checkout path and full HEAD commit.
+Private local graphical and loopback SSH cells fixtures checked exact
+clipboard values including the Unicode path. See
+`target/worktree-copy-details-{local,ssh}.log`.
+
+The release gate now includes opt-in SSH notification forwarding and
+local/SSH saved-session event replay, including resumption from a journal
+read error. All three private fixtures passed independently. The parity
+checklist now reflects the implemented combined machine view and opt-in
+forwarding alongside their remaining acceptance gaps. See
+`target/parity-release-{forward,event-local,event-ssh}.log`.
+
+The release script can now gate on the real offline provider fixtures
+when the Codex or Claude Code executable is supplied. Both probes passed
+against the working candidate. Codex resumed and registered the exact ID
+in cells over loopback SSH. Claude Code registered the same ID through
+its callback in a new STAR/FLUX cells pane in print mode. See
+`target/provider-gate-{codex,claude}.log`.
+
+The provider hook now rejects a delayed Codex startup callback that
+would replace a different conversation registered by the same process.
+Malformed event and ID shapes return a bounded hook diagnostic. The
+real offline Codex SSH cells fixture verified an injected late startup
+did not change the stored conversation before the exact resume.
+The Claude Code print-mode callback fixture also passed. See
+`target/provider-late-startup-{codex,claude}.log`.
+
+Provider registration now requests status only for its bound pane.
+The CLI's scoped observation leaves project-wide status available
+and filters saved records to the requested pane. The offline Codex SSH
+cells fixture verified scoping after starting a second pane and an empty
+response for an absent pane. The Claude Code print-mode probe also passed.
+See `target/agent-pane-scoped-{codex,claude}.log`.
+
+The provider startup integration is now available as
+`starflux --agent-session-hook`. The executable includes the adapter and
+uses its own path for scoped status and report calls. Private offline
+fixtures verified direct callbacks through this entry point for Claude
+Code print mode and Codex cells over loopback SSH. The Codex fixture now
+waits for the working report after the callback's initial idle report.
+See `target/embedded-agent-hook-{codex,claude}.log`.
+
+The embedded provider hook now reads Linux process ancestry without
+decoding executable names, and rejects vanished, malformed or zombie
+process records. Focused checks exercised those cases. The private
+offline Codex SSH cells and Claude print-mode recovery probes passed.
+See `target/provider-ancestry-{codex,claude}.log`.
+
+Provider hook setup now has a read-only JSON generator built into the
+STAR/FLUX executable. The default generated command resolves the public
+launcher from PATH, and an explicit launcher path can be provided. CLI
+checks round-tripped spaces, quotes and literal shell metacharacters
+for both providers and rejected a missing session placeholder.
+Offline Codex SSH and Claude print-mode recovery probes passed after
+the change. See `target/provider-config-fragment-{codex,claude}.log`.
+
+Real offline provider fixtures now consume the generated SessionStart
+configuration. Claude Code loads the generated group in its disposable
+JSON settings. The Codex fixture invokes the generated command through its
+private managed callback recorder. Both registered the resumed conversation
+against the new pane. See `target/provider-generated-config-{codex,claude}.log`.
+
+The current parity candidate passed workspace tests with all features
+and with default features disabled, using the development profile.
+Strict all-target workspace Clippy also passed after updating the
+retained-image regression to check complete four-byte RGBA pixels.
+This is Rust gate evidence rather than a fresh full release run.
+See `target/parity-workspace-{all-features,minimal,lint-all-targets}.log`.
+
+Native graphics now follows the terminal parser's explicit alternate
+grid clear event. The retained alternate grid selected by DEC mode 47
+keeps image placements when switching away and back, and 1049 still
+clears only the alternate grid. Seventeen graphics-owner tests and
+private broker streaming tests locally and over loopback SSH passed.
+See `target/graphics-retained-alternate-{unit,local,ssh}.log`.
+
+The broker streaming fixture now opens a retained alternate grid, emits
+an image, returns to the main grid and reenters the alternate grid. It
+checks that the main grid has no alternate image and that the restored
+stream contains the same text and image-derived cells. Both private
+local and loopback SSH runs passed. See
+`target/graphics-alternate-stream-{local,ssh}.log`.
+
+Native terminal mouse reports now honor the requested UTF-8 encoding
+and use the same encoder for pointer events and synthetic release.
+The terminal tests verify extended coordinates and both legacy and SGR
+release bytes. See `target/terminal-mouse-encoding-unit.log`.
+
+The guarded launch-receipt build passed the private cold-start suites
+in local graphical and loopback SSH cells presentations using the default
+backend. An additional run with `--native-sources` stopped at the fixture's
+initial source-binding check because this candidate's workspace did not
+select the retained native broker. That run provides no evidence for native
+cold recovery. See `target/cold-receipt-integration-{graphical,ssh-cells,native}.log`.
+
+## Native broker integration checkpoint
+
+The verified native broker changes were merged into an isolated checkout at
+`target/native-promotion-iyk4jraj`. The merge inputs and three conflict
+resolutions are tracked in its `merge-audit.json` and source tree.
+`target/native-promotion-check.log` records one remaining compiler error.
+The native branch of the terminal startup worker in `src/ui.rs` reads
+`command` before the worker loads the pending command from durable state.
+
+Resume by reconciling that startup branch with the native broker's
+launch-intent transaction and the current pending-command lookup. Then
+build an isolated executable and run the private native cold-start suite
+locally in graphical mode and over loopback SSH in cells mode before
+promoting the merge. The installed executable and active sessions were
+left untouched.

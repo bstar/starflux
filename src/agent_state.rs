@@ -68,6 +68,8 @@ pub struct Record {
 #[derive(Default, Deserialize, Serialize)]
 struct Store {
     #[serde(default)]
+    saved_conversations: BTreeMap<usize, SavedConversation>,
+    #[serde(default)]
     observed: BTreeMap<usize, String>,
     #[serde(default)]
     attention: Vec<Attention>,
@@ -75,6 +77,74 @@ struct Store {
     active: BTreeMap<usize, String>,
     #[serde(default)]
     runs: BTreeMap<String, Record>,
+}
+#[derive(Deserialize, Serialize)]
+struct SavedConversation {
+    epoch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_epoch: Option<String>,
+    run_id: String,
+}
+impl Store {
+    fn conversation(&self, pane: usize, epoch: Option<&str>) -> Option<(&Record, bool)> {
+        let record = self.active.get(&pane).and_then(|id| self.runs.get(id))?;
+        if record.pane != pane {
+            return None;
+        }
+        if record.report.epoch.as_deref() == epoch {
+            return Some((record, true));
+        }
+        self.saved_conversations
+            .get(&pane)
+            .filter(|saved| {
+                saved.run_id == record.report.run_id
+                    && epoch.is_some_and(|epoch| {
+                        saved.epoch == epoch || saved.previous_epoch.as_deref() == Some(epoch)
+                    })
+            })
+            .map(|_| (record, false))
+    }
+    fn preserve_conversation(&mut self, pane: usize, previous: Option<&str>, next: &str) -> bool {
+        let Some((record, _)) = self.conversation(pane, previous) else {
+            return false;
+        };
+        if record.report.conversation_id.is_none() && record.report.resume_argv.is_none() {
+            return false;
+        }
+        let run_id = record.report.run_id.clone();
+        self.saved_conversations.insert(
+            pane,
+            SavedConversation {
+                epoch: next.into(),
+                // Recovery writes this record before publishing the new pane
+                // generation. An interrupted save must leave the current
+                // generation usable, even after an earlier recovery.
+                previous_epoch: previous.map(str::to_owned),
+                run_id,
+            },
+        );
+        true
+    }
+}
+/// Called under the project's transaction before publishing a recovered epoch.
+/// Only the explicit conversation reference crosses generations, never health.
+pub fn preserve_conversation(
+    config: &Config,
+    pane: usize,
+    previous: Option<&str>,
+    next: &str,
+) -> Result<()> {
+    let state = ProjectState::load(config)?;
+    ensure!(
+        state.terminal_ids().contains(&pane)
+            && state.terminal_epochs.get(&pane).map(String::as_str) == previous,
+        "Terminal changed before preserving its saved conversation"
+    );
+    let mut store = load(config)?;
+    if store.preserve_conversation(pane, previous, next) {
+        starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+    }
+    Ok(())
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Attention {
@@ -256,6 +326,12 @@ fn accept(
         );
     } else {
         ensure!(report.sequence == 1, "A new run starts at sequence 1");
+        if let Some(replaced) = &report.replaces_run {
+            ensure!(
+                store.active.get(&pane) == Some(replaced),
+                "The run being replaced is no longer active in this pane"
+            );
+        }
         if let Some(old) = store.active.get(&pane).and_then(|id| store.runs.get(id))
             && old.report.epoch == report.epoch
             && old.report.agent_pid == report.agent_pid
@@ -395,7 +471,9 @@ pub fn resume_argv(config: &Config, pane: usize, run: &str) -> Result<Vec<String
         store.active.get(&pane).is_some_and(|id| id == run)
             && record.pane == pane
             && state.terminal_ids().contains(&pane)
-            && state.terminal_epochs.get(&pane) == record.report.epoch.as_ref(),
+            && store
+                .conversation(pane, state.terminal_epochs.get(&pane).map(String::as_str))
+                .is_some_and(|(saved, _)| saved.report.run_id == run),
         "Pane or conversation changed; reopen its menu"
     );
     record.report.validate()?;
@@ -424,15 +502,26 @@ pub fn enrich(config: &Config, pane: usize, health: &mut Value) {
     stamp_local(config, pane, health);
     let state = ProjectState::load(config).ok();
     let store = load(config).ok();
-    let record = store
-        .as_ref()
-        .and_then(|s| s.active.get(&pane).and_then(|id| s.runs.get(id)))
-        .filter(|r| {
-            state
-                .as_ref()
-                .is_some_and(|s| s.terminal_epochs.get(&pane) == r.report.epoch.as_ref())
-        });
-    apply_health(health, record, now_ms());
+    let conversation = store.as_ref().and_then(|store| {
+        let state = state.as_ref()?;
+        state.terminal_ids().contains(&pane).then_some(())?;
+        store.conversation(pane, state.terminal_epochs.get(&pane).map(String::as_str))
+    });
+    apply_conversation_health(health, conversation, now_ms());
+}
+fn apply_conversation_health(health: &mut Value, conversation: Option<(&Record, bool)>, now: u64) {
+    apply_health(
+        health,
+        conversation
+            .filter(|(_, live)| *live)
+            .map(|(record, _)| record),
+        now,
+    );
+    if let Some((saved, false)) = conversation {
+        health["agent_record"] = json!(saved);
+        health["health"]["report_stale"] = json!(true);
+        health["health"]["report_status"] = json!("archived");
+    }
 }
 pub fn observe_attention(
     config: &Config,
@@ -514,10 +603,24 @@ fn apply_health(health: &mut Value, record: Option<&Record>, now: u64) {
     // Explicit backend failure on the live screen takes precedence over an
     // older integration heartbeat claiming that work is still in progress.
     let backend_failed = agent && health["state"] == "backend_unavailable";
-    if fresh && !backend_failed {
+    let disconnected = health["state"] == "disconnected";
+    let transport_disconnected = disconnected || health["bridge_connected"] == false;
+    let use_report = fresh && !backend_failed && !disconnected;
+    let report_status = match (record, current) {
+        (None, _) => "unregistered",
+        (Some(_), None) => "process_mismatch",
+        (_, Some(report)) if now < report.observed_ms => "clock_skew",
+        _ if !fresh => "heartbeat_expired",
+        _ if disconnected => "transport_failure_override",
+        _ if backend_failed => "backend_failure_override",
+        _ => "current",
+    };
+    if use_report {
         health["state"] = json!(current.unwrap().report.state.label());
     }
-    let source = if fresh && !backend_failed {
+    let source = if disconnected {
+        "transport"
+    } else if use_report {
         "integration"
     } else if agent {
         "screen"
@@ -528,16 +631,67 @@ fn apply_health(health: &mut Value, record: Option<&Record>, now: u64) {
     health["health"] = json!({
         "terminal":if alive {"alive"} else if health["exited"]==true {"exited"} else {"unreachable"},
         "agent_process":if agent {"running"} else if alive && health["agent"].is_null() {"absent"} else {"unknown"},
-        "transport":if health["bridge_connected"]==false || health["state"]=="disconnected" {"disconnected"} else if alive {"connected"} else {"unknown"},
+        "transport":if transport_disconnected {"disconnected"} else if alive {"connected"} else {"unknown"},
         "agent_backend":if backend_failed || health["state"]=="backend_unavailable" {"unavailable"} else {"unknown"},
         "lifecycle":health["state"],"source":source,"confidence":if source=="integration" {"reported"} else if source=="screen" {"heuristic"} else {"unknown"},
         "report_stale":record.is_some() && !fresh,"report_process_matches":current.is_some(),
+        "report_status":report_status,
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovered_conversation_survives_recovery_but_never_restores_health_authority() {
+        let (mut state, mut health, report) = fixture();
+        let mut store = Store::default();
+        accept(&mut store, &state, 0, &health, report.clone(), 1000).unwrap();
+        assert!(store.preserve_conversation(0, Some("epoch"), "recovered"));
+        state.terminal_epochs.insert(0, "recovered".into());
+        // Even identical process observations cannot make an inherited report
+        // authoritative for the recovered terminal generation.
+        apply_conversation_health(&mut health, store.conversation(0, Some("recovered")), 1001);
+        assert_eq!(health["agent_record"]["conversation_id"], "exact-thread");
+        assert_eq!(health["health"]["report_process_matches"], false);
+        assert_eq!(health["health"]["report_stale"], true);
+        assert_eq!(health["health"]["report_status"], "archived");
+        assert_eq!(health["health"]["source"], "screen");
+        assert_eq!(health["state"], "idle");
+        let mut delayed = report.clone();
+        delayed.sequence += 1;
+        assert!(accept(&mut store, &state, 0, &health, delayed, 1002).is_err());
+        assert!(store.preserve_conversation(0, Some("recovered"), "recovered-again"));
+        let mut store: Store =
+            serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+        let (before_publication, live) = store.conversation(0, Some("recovered")).unwrap();
+        assert!(!live);
+        assert_eq!(before_publication.report.resume_argv, report.resume_argv);
+        assert!(store.preserve_conversation(0, Some("recovered"), "retried-recovery"));
+        assert!(store.conversation(0, Some("recovered-again")).is_none());
+        assert!(store.preserve_conversation(0, Some("recovered"), "recovered-again"));
+        let (saved, live) = store.conversation(0, Some("recovered-again")).unwrap();
+        assert!(!live);
+        assert_eq!(saved.report.epoch.as_deref(), Some("epoch"));
+        assert_eq!(saved.report.resume_argv, report.resume_argv);
+        assert!(store.conversation(0, Some("recycled-slot")).is_none());
+        assert!(store.conversation(1, Some("recovered-again")).is_none());
+        state.terminal_epochs.insert(0, "recovered-again".into());
+        let mut replacement = report.clone();
+        replacement.epoch = Some("recovered-again".into());
+        replacement.run_id = uuid::Uuid::new_v4().to_string();
+        replacement.conversation_id = Some("new-exact-thread".into());
+        replacement.resume_argv = Some(vec![
+            "codex".into(),
+            "resume".into(),
+            "new-exact-thread".into(),
+        ]);
+        accept(&mut store, &state, 0, &health, replacement.clone(), 1003).unwrap();
+        let (current, live) = store.conversation(0, Some("recovered-again")).unwrap();
+        assert!(live);
+        assert_eq!(current.report.run_id, replacement.run_id);
+        assert_ne!(current.report.run_id, report.run_id);
+    }
     #[test]
     fn attention_coalesces_heartbeats_but_preserves_new_transitions() {
         let (state, health, mut report) = fixture();
@@ -604,6 +758,31 @@ mod tests {
             2,
             "Old conversation references must remain available"
         );
+    }
+    #[test]
+    fn delayed_replacement_cannot_register_in_an_empty_pane_record() {
+        let (state, health, mut report) = fixture();
+        let mut store = Store::default();
+        report.replaces_run = Some(uuid::Uuid::new_v4().to_string());
+        assert!(accept(&mut store, &state, 0, &health, report.clone(), 1000).is_err());
+        assert!(store.runs.is_empty());
+        report.replaces_run = None;
+        assert!(accept(&mut store, &state, 0, &health, report, 1001).is_ok());
+    }
+    #[test]
+    fn replacement_after_process_change_still_requires_the_current_run() {
+        let (state, mut health, report) = fixture();
+        let mut store = Store::default();
+        accept(&mut store, &state, 0, &health, report.clone(), 1000).unwrap();
+        let mut next = report.clone();
+        next.run_id = uuid::Uuid::new_v4().to_string();
+        next.agent_start_ticks += 1;
+        health["agent_start_ticks"] = json!(next.agent_start_ticks);
+        next.replaces_run = Some(uuid::Uuid::new_v4().to_string());
+        assert!(accept(&mut store, &state, 0, &health, next.clone(), 1001).is_err());
+        assert_eq!(store.active.get(&0), Some(&report.run_id));
+        next.replaces_run = Some(report.run_id);
+        assert!(accept(&mut store, &state, 0, &health, next, 1002).is_ok());
     }
     #[test]
     fn reject_recycled_panes_and_processes() {
@@ -675,22 +854,48 @@ mod tests {
         apply_health(&mut fresh, Some(&record), 1001);
         assert_eq!(fresh["state"], "working");
         assert_eq!(fresh["health"]["source"], "integration");
+        assert_eq!(fresh["health"]["report_status"], "current");
+        let mut disconnected = health.clone();
+        disconnected["state"] = json!("disconnected");
+        apply_health(&mut disconnected, Some(&record), 1001);
+        assert_eq!(disconnected["state"], "disconnected");
+        assert_eq!(disconnected["health"]["transport"], "disconnected");
+        assert_eq!(disconnected["health"]["agent_process"], "running");
+        assert_eq!(disconnected["health"]["source"], "transport");
+        assert_eq!(
+            disconnected["health"]["report_status"],
+            "transport_failure_override"
+        );
+        let mut bridge = health.clone();
+        bridge["bridge_connected"] = json!(false);
+        apply_health(&mut bridge, Some(&record), 1001);
+        assert_eq!(bridge["health"]["transport"], "disconnected");
+        assert_eq!(bridge["state"], "working");
         let mut stale = health.clone();
         apply_health(&mut stale, Some(&record), 61001);
         assert_eq!(stale["state"], "idle");
         assert_eq!(stale["health"]["report_stale"], true);
+        assert_eq!(stale["health"]["report_status"], "heartbeat_expired");
+        let mut skewed = health.clone();
+        apply_health(&mut skewed, Some(&record), 999);
+        assert_eq!(skewed["health"]["report_status"], "clock_skew");
         let mut failed = health.clone();
         failed["state"] = json!("backend_unavailable");
         apply_health(&mut failed, Some(&record), 1002);
         assert_eq!(failed["health"]["agent_process"], "running");
         assert_eq!(failed["health"]["agent_backend"], "unavailable");
         assert_eq!(failed["state"], "backend_unavailable");
+        assert_eq!(
+            failed["health"]["report_status"],
+            "backend_failure_override"
+        );
         let mut shell = health;
         shell["agent_pid"] = Value::Null;
         shell["agent"] = Value::Null;
         apply_health(&mut shell, Some(&record), 1003);
         assert_eq!(shell["health"]["terminal"], "alive");
         assert_eq!(shell["health"]["agent_process"], "absent");
+        assert_eq!(shell["health"]["report_status"], "process_mismatch");
         assert_eq!(shell["agent_record"]["conversation_id"], "exact-thread");
     }
     #[test]

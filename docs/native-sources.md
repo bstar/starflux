@@ -90,6 +90,8 @@ The receipt layer independently prevents consumed source IDs from executing
 again after worker loss or a failed exec.
 
 Read-only reattachment validates the recorded owner, source and launch digest.
+Looking up an absent pane or reconnecting to a missing owner leaves missing
+metadata directories absent. Only the explicit creation path makes them.
 A pending record can recover a source that exists despite a lost Open reply; it
 cannot execute a saved command. If the owner/source is gone, recovery requires a
 new explicit shell/conversation intent. A stale completion cannot overwrite a

@@ -24,6 +24,12 @@ with tempfile.TemporaryDirectory(prefix='sf-worktrees-') as directory:
     assert call('create',branch='other',path=str(path),ok=False)['code']=='path_exists'
     assert call('create',branch='-bad',ok=False)['code']=='invalid_branch'
     assert not call('create',branch='main',ok=False).get('ok',False)
+    response=call('set_lock',target=created,locked=True,reason='Keep café 界')
+    locked=response['worktree'];assert locked in response['worktrees'] and len(response['worktrees'])==2
+    assert locked['locked']=='Keep café 界'
+    assert call('remove',target=locked,ok=False)['code']=='locked_worktree'
+    assert call('set_lock',target=created,locked=False,ok=False)['code']=='stale_worktree'
+    assert call('set_lock',target=locked,locked=False)['worktree']['locked'] is None
     (path/'file').write_text('unsaved')
     assert call('remove',target=tree(path),ok=False)['code']=='dirty_worktree';assert (path/'file').read_text()=='unsaved'
     git('restore','file',cwd=path)

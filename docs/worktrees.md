@@ -14,7 +14,11 @@ Opening an already-associated worktree in the same saved session reattaches its 
 
 Only the requesting view switches on completion. If you navigate to another project while creation/opening runs, the worktree is saved and its status is reported without stealing your new selection. Other views discover the project without changing focus.
 
+The worktree detail menu can copy the checkout path or the full HEAD commit ID. For SSH projects, the path is on the repository host and the clipboard is on the presenting computer.
+
 ## Remove
+
+The linked worktree menu offers **Lock worktree** and **Unlock worktree**. The picker refreshes after the operation and keeps the same checkout selected when it is still present. If a lock changed elsewhere, the picker reports the conflict and shows its current state. Locking protects the checkout from Git pruning and removes the removal action until you unlock it.
 
 Choose a linked worktree, then **Remove worktree…** and type **REMOVE**. Canceling keeps it intact. Removal retains the branch and committed work.
 
@@ -35,8 +39,11 @@ The [automation API](automation.md) adds:
 | `worktrees.list` | `project`; returns repository identity and opaque worktree references |
 | `worktrees.create` | `project`, new `branch`, optional `path` and `base`; returns a `target` without opening a project |
 | `worktrees.open` | `project`, complete `target`; opens/reattaches a project and returns its ID and origin |
+| `worktrees.set_lock` | `project`, complete fresh `target`, `locked`, optional single-line `reason` when locking; returns the updated `worktree` reference |
 | `worktrees.remove` | `project`, complete fresh `target`, `confirm: "REMOVE"` |
 
 Writes use the API's durable operation UUID/retry rules. Pass targets through unchanged from a fresh list/create result; a stale target is rejected. Creation and opening are separate API operations, while the UI combines them explicitly.
+
+The API reports confirmed host refusals with codes such as `stale_worktree`, `locked_worktree` and `dirty_worktree` and an outcome of `not_applied`. Uncertain Git or transport failures keep the `unknown` outcome. Refresh the catalog before issuing a new operation after an uncertain result.
 
 Associations are private `PROJECT.worktree.json` files beside project metadata. They record the origin, host, target identity and active/pending/removed state. Repository operations are serialized by a host-side lock in the common Git directory, with controller-side association locks as well. Existing terminal/app startup paths remain unchanged for projects with no worktree association.

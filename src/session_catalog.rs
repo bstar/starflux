@@ -82,7 +82,7 @@ pub fn set_default(id: Option<&str>) -> Result<()> {
         );
     }
     crate::automation::persist(&root()?.join("default-session"), &serde_json::to_vec(&id)?)?;
-    project_state::catalog_changed()
+    session_catalog_changed()
 }
 pub fn default_project() -> Result<Option<String>> {
     let Some(id) = default_id()? else {
@@ -120,15 +120,44 @@ pub fn projects() -> Vec<Config> {
 pub fn save(session: &Session) -> Result<()> {
     valid(&session.id)?;
     project_state::validate_label(&session.name)?;
+    let _lock = metadata_lock(&session.id)?;
     crate::automation::persist(
         &root()?.join(format!("{}.json", session.id)),
         &serde_json::to_vec_pretty(session)?,
     )?;
-    project_state::catalog_changed()
+    session_catalog_changed()
+}
+fn session_catalog_changed() -> Result<()> {
+    project_state::catalog_changed()?;
+    crate::automation::journal::sessions_saved()
+}
+fn metadata_lock(id: &str) -> Result<crate::project_sync::Transaction> {
+    crate::project_sync::Transaction::acquire(root()?.join(format!("{id}.metadata.lock")))
+}
+pub fn rename(id: &str, expected_name: &str, name: &str) -> Result<Session> {
+    valid(id)?;
+    project_state::validate_label(name)?;
+    let _lock = metadata_lock(id)?;
+    let entry = list()?
+        .into_iter()
+        .find(|entry| entry.id == id)
+        .context("Session no longer exists")?;
+    ensure!(
+        entry.name == expected_name,
+        "Session name changed; refresh the session list"
+    );
+    let session = Session {
+        id: id.into(),
+        name: name.into(),
+        project: entry.project.context("Session has no saved project")?,
+    };
+    save(&session)?;
+    Ok(session)
 }
 pub fn remember(config: &Config) -> Result<()> {
     let id = group(config);
     valid(&id)?;
+    let _lock = metadata_lock(&id)?;
     let path = root()?.join(format!("{id}.json"));
     let saved = fs::read(&path)
         .ok()
@@ -153,7 +182,8 @@ pub fn remember(config: &Config) -> Result<()> {
             name,
             project: config.workspace.clone(),
         })?,
-    )
+    )?;
+    crate::automation::journal::sessions_saved()
 }
 pub fn list() -> Result<Vec<Entry>> {
     let default = default_id()?;
@@ -233,7 +263,12 @@ fn create_with_source(
         desktop_helper: runtime::default_desktop_helper(),
     };
     config.validate()?;
-    ProjectState::default().save(&config)?;
+    let state = if config.tmux.is_none() {
+        ProjectState::new_owned()
+    } else {
+        ProjectState::default()
+    };
+    state.save(&config)?;
     starkit::fs::write_private(
         &runtime::config_path(&config.workspace)?,
         &serde_json::to_vec_pretty(&config)?,
@@ -374,6 +409,15 @@ pub(crate) fn import_prepared(
     Ok(config)
 }
 pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
+    delete_checked(id, presenting, fallback, None)
+}
+
+pub fn delete_checked(
+    id: &str,
+    presenting: &str,
+    fallback: &Config,
+    expected_projects: Option<&BTreeSet<String>>,
+) -> Result<()> {
     valid(id)?;
     let configs = projects()
         .into_iter()
@@ -388,6 +432,10 @@ pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
         .iter()
         .map(|c| c.workspace.clone())
         .collect::<BTreeSet<_>>();
+    ensure!(
+        expected_projects.is_none_or(|expected| expected == &identities),
+        "Session membership changed; refresh the project list before deleting"
+    );
     let mut closing = Vec::new();
     for entry in fs::read_dir(runtime::root()?)? {
         let path = entry?.path();
@@ -502,12 +550,15 @@ pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
             &serde_json::to_vec_pretty(fallback)?,
         )?;
     }
-    let path = root()?.join(format!("{id}.json"));
-    if path.exists() {
-        fs::remove_file(path)?;
+    {
+        let _lock = metadata_lock(id)?;
+        let path = root()?.join(format!("{id}.json"));
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
     }
     if default_id()?.as_deref() == Some(id) {
         set_default(None)?;
     }
-    project_state::catalog_changed()
+    session_catalog_changed()
 }

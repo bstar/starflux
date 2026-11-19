@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Read,
+    os::unix::fs::OpenOptionsExt,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -153,6 +154,13 @@ impl Screen {
             && self.pid == other.pid
             && self.start_ticks == other.start_ticks
     }
+    fn same_view(&self, other: &Self) -> bool {
+        self.rows == other.rows
+            && self.columns == other.columns
+            && self.cursor == other.cursor
+            && self.alternate == other.alternate
+            && self.formatted == other.formatted
+    }
     fn older_than(&self, current: &Self) -> bool {
         if self.observer_boot_id.is_some() && self.observer_boot_id == current.observer_boot_id {
             self.captured_monotonic_ns < current.captured_monotonic_ns
@@ -170,18 +178,36 @@ impl Screen {
         Ok(parser.screen().clone())
     }
 }
-pub fn load(project: &str, pane: usize, previous: bool) -> Result<Screen> {
-    let path = path(project, pane, previous)?;
+fn read_screen(path: &std::path::Path) -> Result<Vec<u8>> {
+    let file = open_archive(path).context("No saved screen is available yet")?;
     let mut bytes = Vec::new();
-    fs::File::open(path)
-        .context("No saved screen is available yet")?
-        .take((LIMIT * 2 + 4097) as u64)
+    file.take((LIMIT * 2 + 4097) as u64)
         .read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+fn open_archive(path: &std::path::Path) -> std::io::Result<fs::File> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Archive is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+pub fn load(project: &str, pane: usize, previous: bool) -> Result<Screen> {
+    let bytes = read_screen(&path(project, pane, previous)?)?;
+    decode_screen(&bytes, project, pane)
+}
+fn decode_screen(bytes: &[u8], project: &str, pane: usize) -> Result<Screen> {
     ensure!(
         bytes.len() <= LIMIT * 2 + 4096,
         "Saved screen file exceeds its limit"
     );
-    let screen: Screen = serde_json::from_slice(&bytes).context("Read saved screen")?;
+    let screen: Screen = serde_json::from_slice(bytes).context("Read saved screen")?;
     screen.validate()?;
     ensure!(
         screen.project == project && screen.pane == pane,
@@ -228,8 +254,8 @@ pub(crate) fn save(config: &Config, screen: &Screen) -> Result<()> {
     {
         return Ok(());
     }
-    if path(&screen.project, screen.pane, false)?.exists() {
-        let current = load(&screen.project, screen.pane, false)?;
+    let current_path = path(&screen.project, screen.pane, false)?;
+    if let Ok(current) = load(&screen.project, screen.pane, false) {
         if screen.older_than(&current) {
             return Ok(());
         }
@@ -238,17 +264,11 @@ pub(crate) fn save(config: &Config, screen: &Screen) -> Result<()> {
                 &path(&screen.project, screen.pane, true)?,
                 &serde_json::to_vec(&current)?,
             )?;
-        } else if current.formatted == screen.formatted
-            && current.rows == screen.rows
-            && current.columns == screen.columns
-        {
+        } else if current.same_view(screen) {
             return Ok(());
         }
     }
-    crate::automation::persist(
-        &path(&screen.project, screen.pane, false)?,
-        &serde_json::to_vec(screen)?,
-    )
+    crate::automation::persist(&current_path, &serde_json::to_vec(screen)?)
 }
 pub fn clear(project: &str, pane: usize) -> Result<()> {
     for previous in [false, true] {
@@ -276,13 +296,15 @@ fn launch_path(project: &str, pane: usize) -> Result<PathBuf> {
 /// Caller holds the project transaction. A receipt survives stale layout saves
 /// and uncertain remote outcomes; retries must not launch an agent twice.
 pub fn consume_launch(config: &Config, pane: usize, epoch: Option<&str>) -> Result<bool> {
+    consume_launch_at(&launch_path(&config.workspace, pane)?, epoch)
+}
+fn consume_launch_at(path: &std::path::Path, epoch: Option<&str>) -> Result<bool> {
     #[derive(Serialize, Deserialize)]
     struct Receipt {
         version: u8,
         epoch: Option<String>,
     }
-    let path = launch_path(&config.workspace, pane)?;
-    match fs::File::open(&path) {
+    match open_archive(path) {
         Ok(file) => {
             let mut bytes = Vec::new();
             file.take(4097).read_to_end(&mut bytes)?;
@@ -298,7 +320,7 @@ pub fn consume_launch(config: &Config, pane: usize, epoch: Option<&str>) -> Resu
         Err(e) => return Err(e.into()),
     }
     crate::automation::persist(
-        &path,
+        path,
         &serde_json::to_vec(&Receipt {
             version: 1,
             epoch: epoch.map(str::to_owned),
@@ -335,6 +357,22 @@ impl Writer {
 mod tests {
     use super::*;
     #[test]
+    fn launch_receipts_refuse_symlinks_and_preserve_one_shot_consumption() {
+        let directory = tempfile::tempdir().unwrap();
+        let receipt = directory.path().join("launch.json");
+        let unrelated = directory.path().join("unrelated");
+        fs::write(&unrelated, br#"{"version":1,"epoch":"earlier"}"#).unwrap();
+        std::os::unix::fs::symlink(&unrelated, &receipt).unwrap();
+        assert!(consume_launch_at(&receipt, Some("new")).is_err());
+        assert_eq!(
+            fs::read(&unrelated).unwrap(),
+            br#"{"version":1,"epoch":"earlier"}"#
+        );
+        fs::remove_file(&receipt).unwrap();
+        assert!(consume_launch_at(&receipt, Some("new")).unwrap());
+        assert!(!consume_launch_at(&receipt, Some("new")).unwrap());
+    }
+    #[test]
     fn archive_preserves_styled_unicode_cursor_and_ignores_effects() {
         let mut parser = vt100::Parser::new(12, 40, 10);
         parser.process(b"\x1b[?1049h\x1b[1;38;2;20;40;60m");
@@ -359,6 +397,13 @@ mod tests {
             cursor: original.cursor_position(),
             formatted: String::from_utf8(original.contents_formatted()).unwrap(),
         };
+        let mut updated = screen.clone();
+        assert!(screen.same_view(&updated));
+        updated.alternate = !screen.alternate;
+        assert!(!screen.same_view(&updated));
+        updated.alternate = screen.alternate;
+        updated.cursor = (0, 0);
+        assert!(!screen.same_view(&updated));
         let restored = screen.parse().unwrap();
         assert_eq!(restored.contents(), original.contents());
         assert_eq!(restored.cursor_position(), original.cursor_position());

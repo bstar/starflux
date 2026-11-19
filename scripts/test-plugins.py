@@ -3,7 +3,8 @@
 import argparse,concurrent.futures,getpass,json,os,shlex,shutil,signal,socket,subprocess,tempfile,time,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--capacity',action='store_true');parser.add_argument('--packages',action='store_true');parser.add_argument('--links',action='store_true');parser.add_argument('--panes',action='store_true');args=parser.parse_args()
-app=Path(__file__).resolve().parents[1]/'scripts/run-local.sh'
+root=Path(__file__).resolve().parents[1]
+app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
     tmp=Path(temporary);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith(('HERDR_','BASH_FUNC_','STARFLUX_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
@@ -54,12 +55,12 @@ with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
             ssh=['ssh','-T','-p',str(port),'-i',str(tmp/'client'),'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(tmp/'known_hosts'),getpass.getuser()+'@127.0.0.1']
         if args.panes:
             import runpy
-            runpy.run_path(str(app.parents[1]/'scripts/test-plugin-panes.py'),init_globals=dict(api=api,tmp=tmp,env=env,args=args,wait=wait,stamp=stamp,data=data,app=app,package=package))
+            runpy.run_path(str(root/'scripts/test-plugin-panes.py'),init_globals=dict(api=api,tmp=tmp,env=env,args=args,wait=wait,stamp=stamp,data=data,app=app,package=package))
             raise SystemExit(0)
         if args.packages:
             if args.ssh:env['GIT_SSH_COMMAND']=shlex.join(['ssh','-p',str(port),'-i',str(tmp/'client'),'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(tmp/'known_hosts')])
             import runpy
-            runpy.run_path(str(app.parents[1]/'scripts/test-plugin-packages.py'),init_globals=dict(api=api,tmp=tmp,env=env,args=args,wait=wait,stamp=stamp,data=data,port=port if args.ssh else None,app=app,ssh=ssh))
+            runpy.run_path(str(root/'scripts/test-plugin-packages.py'),init_globals=dict(api=api,tmp=tmp,env=env,args=args,wait=wait,stamp=stamp,data=data,port=port if args.ssh else None,app=app,ssh=ssh))
             raise SystemExit(0)
         script=package/'runner';script.write_text('''#!/usr/bin/python3
 import json,os,subprocess,sys,time
@@ -88,11 +89,12 @@ else:print(json.dumps(dict(context=c,argv=sys.argv[1:]),ensure_ascii=False))
         source=package/'starflux-plugin.json';source.write_text(json.dumps(manifest))
         if args.links:
             import runpy
-            runpy.run_path(str(app.parents[1]/'scripts/test-plugin-links.py'),init_globals=globals())
+            runpy.run_path(str(root/'scripts/test-plugin-links.py'),init_globals=globals())
             raise SystemExit(0)
         if args.capacity:
             manifest['actions'].append(dict(id='gate',title='Gate command',argv=['package:runner','gate'],timeout_ms=30000))
-            manifest['hooks']=[dict(id='startup',on='startup',action='hook')]
+            manifest['hooks']=[dict(id='startup',on='startup',action='hook'),
+                               dict(id='created',on='session.created',action='hook')]
             source.write_text(json.dumps(manifest))
             stopped={**env,'STARFLUX_PLUGIN_SERVICE':'off'}
             c=api('plugins.link',dict(path=str(package),expected_revision='initial'),write=True,scope=stopped)
@@ -103,14 +105,23 @@ else:print(json.dumps(dict(context=c,argv=sys.argv[1:]),ensure_ascii=False))
             rejected=run('gate',scope=stopped,ok=False)
             assert 'queue is full' in rejected['message'],rejected
             assert len(api('plugins.jobs',scope=stopped)['jobs'])==32
+            cursor_path=data/'cursor-fixture.json';original_cursor=json.loads(cursor_path.read_text())['cursor']
+            sessions=[api('sessions.create',dict(name=f'Capacity event {i}',directory=str(package)),write=True,scope=stopped)['session'] for i in range(2)]
             api('plugins.service')
             wait(lambda:len([c for c in calls() if c['context']['job_id'] in identities])==2,'two workers did not start when hook queue was full')
             # Keep both actions blocked: another scan must not exceed the limit.
             time.sleep(1.2)
             assert len([c for c in calls() if c['context']['job_id'] in identities])==2,'plugin worker capacity was exceeded'
+            def session_jobs():
+                return [j for j in api('plugins.jobs')['jobs'] if (j.get('event') or {}).get('kind')=='session.created']
+            wait(lambda:len(session_jobs())==1,'first event was not queued during backpressure')
+            wait(lambda:json.loads(cursor_path.read_text())['cursor']!=original_cursor,'hook cursor did not save the delivered prefix')
+            assert session_jobs()[0]['event']['resource']=='sessions/'+sessions[0]
             (package/'CAPACITY_GATE').touch()
             wait(lambda:all(j['status']=='succeeded' for j in api('plugins.jobs')['jobs'] if j['id'] in identities),'queued plugin jobs did not drain under hook backpressure',timeout=30)
             wait(lambda:len([c for c in calls() if (c['context']['event'] or {}).get('kind')=='startup'])==1,'startup hook was lost or duplicated under backpressure')
+            wait(lambda:len([c for c in calls() if (c['context']['event'] or {}).get('kind')=='session.created'])==2,'session hooks did not drain',timeout=30)
+            assert sorted(j['event']['resource'] for j in session_jobs())==sorted('sessions/'+s for s in sessions)
             assert all(sum(c['context']['job_id']==identity for c in calls())==1 for identity in identities),'capacity recovery duplicated commands'
             configure(False)
             print(json.dumps(dict(result='PASS',ssh=args.ssh,concurrent_publishers=True,queue_limit=32,worker_limit=2,hook_backpressure_drains=True,all_jobs_once=True)))
@@ -141,11 +152,62 @@ else:print(json.dumps(dict(context=c,argv=sys.argv[1:]),ensure_ascii=False))
         api('plugins.unlink',dict(plugin='fixture',expected_revision='stale'),write=True,ok=False)
         # Hooks start at enable-time and work with every UI and API process gone.
         manifest['hooks']=[dict(id='boot',on='startup',action='hook'),dict(id='created',on='project.created',action='hook')]
+        manifest['hooks'] += [dict(id='session-'+change,on='session.'+change,action='hook')
+                              for change in ('created','changed','removed')]
         source.write_text(json.dumps(manifest));configure(True)
         wait(lambda:any(c['context']['event'] and c['context']['event']['kind']=='startup' for c in calls()),'startup hook did not run')
         before=len(calls());time.sleep(1.2);assert len(calls())==before,'startup hook duplicated each scan'
-        project=api('sessions.create',dict(name='Plugin event fixture',directory=str(package)),write=True)['project']
+        hook_cursor=data/'cursor-fixture.json';before_create=hook_cursor.read_text()
+        cursor_inode=hook_cursor.stat().st_ino
+        scans=api('plugins.service')['service']['scans']
+        wait(lambda:api('plugins.service')['service']['scans']>=scans+2,'hook service did not scan')
+        assert hook_cursor.stat().st_ino==cursor_inode,'idle scans replaced the hook cursor'
+        saved=api('sessions.create',dict(name='Plugin event fixture',directory=str(package)),write=True)
+        project=saved['project'];session=saved['session']
         wait(lambda:any(c['context']['event'] and c['context']['event'].get('resource')=='projects/'+project for c in calls()),'headless project hook did not run')
+        def session_events(kind):
+            return [c['context'] for c in calls() if (event:=c['context']['event'])
+                    and event.get('resource')=='sessions/'+session and event['kind']=='session.'+kind]
+        def session_hook(kind):
+            contexts=wait(lambda:session_events(kind),'session '+kind+' hook did not run')
+            assert len(contexts)==1 and contexts[0]['project'] is None,contexts
+            return contexts[0]['event']
+        assert session_hook('created')['data']['name']=='Plugin event fixture'
+        api('sessions.rename',dict(session=session,expected_name='Plugin event fixture',name='Renamed plugin fixture'),write=True)
+        assert session_hook('changed')['data']['name']=='Renamed plugin fixture'
+        fallback=api('sessions.create',dict(name='Plugin fallback fixture',directory=str(package)),write=True)['project']
+        api('sessions.delete',dict(session=session,expected_projects=[project],fallback_project=fallback,confirm='DELETE'),write=True)
+        assert session_hook('removed')['data'] is None
+        assert all(len(session_events(change))==1 for change in ('created','changed','removed'))
+        # Model a restart between recording a hook job and persisting its cursor.
+        # The project is now gone, so replay cannot reconstruct its old context.
+        service=api('plugins.service')['service'];upgrade=data/'service-request.json'
+        upgrade.write_text(json.dumps(dict(version=service['version']+1)))
+        wait(lambda:stamp(service['pid'])!=service['start_ticks'],'hook service did not retire')
+        cursor_restore=hook_cursor.with_suffix('.restore');cursor_restore.write_text(before_create)
+        cursor_restore.replace(hook_cursor)
+        marker=api('sessions.create',dict(name='Plugin replay marker',directory=str(package)),write=True,scope=stopped)['project']
+        upgrade.unlink();api('plugins.service')
+        def project_calls(project_id):
+            return [c for c in calls() if (event:=c['context']['event'])
+                    and event.get('resource')=='projects/'+project_id]
+        wait(lambda:project_calls(marker),'hook replay did not reach the next project event')
+        assert len(project_calls(project))==1,'hook replay ran an existing job again'
+        assert project_calls(project)[0]['context']['project']['id']==project
+        replayed_cursor=json.loads(hook_cursor.read_text())
+        def replace_cursor(value):
+            cursor_restore.write_text(json.dumps(value));cursor_restore.replace(hook_cursor)
+        def cursor_warning(fragment):
+            return fragment in (api('plugins.service')['service'].get('warning') or '')
+        journal_id=replayed_cursor['cursor'].split(':')[0]
+        invalid={**replayed_cursor,'cursor':journal_id+':18446744073709551615'}
+        replace_cursor(invalid)
+        wait(lambda:cursor_warning('Cursor is ahead of the event journal'),'invalid cursor was not reported')
+        assert json.loads(hook_cursor.read_text())==invalid,'invalid cursor advanced past pending events'
+        expired={**replayed_cursor,'cursor':str(uuid.uuid4())+':0'}
+        replace_cursor(expired)
+        wait(lambda:json.loads(hook_cursor.read_text())['cursor'].startswith(journal_id+':'),'expired cursor was not reset')
+        wait(lambda:cursor_warning('Event cursor expired'),'expired cursor gap was not reported')
         configure(False);before=len(calls());api('sessions.create',dict(name='Disabled hook fixture',directory=str(package)),write=True);time.sleep(1.2);assert len(calls())==before,'disabled hook executed'
         # Lost worker outcome is explicit and commands are never rerun.
         configure(True);running=run('slow');record=wait(lambda:(j if (j:=job(running['id']))['status']=='running' else None),'worker not running')
@@ -153,9 +215,9 @@ else:print(json.dumps(dict(context=c,argv=sys.argv[1:]),ensure_ascii=False))
         assert stamp(record['pid'])==record['start_ticks'];assert b'--plugin-job' in Path('/proc',str(record['pid']),'cmdline').read_bytes().split(b'\0')
         os.killpg(record['pid'],signal.SIGKILL);finished(record['id'],'indeterminate');time.sleep(.7);assert sum(c['context']['job_id']==record['id'] for c in calls())==1
         configure(False);assert all(stamp(p) is None for p in pids)
-        status=api('plugins.service');pid=status['service']['pid'];ticks=status['service']['start_ticks'];shutil.rmtree(data)
+        status=api('plugins.service');pid=status['service']['pid'];ticks=status['service']['start_ticks'];data.rename(data.with_name('retired-plugins'))
         wait(lambda:stamp(pid)!=ticks,'removed namespace left service alive');time.sleep(.6);assert not data.exists(),'service resurrected deleted namespace'
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,literal_argv=True,unicode=True,manifest_approval=True,revision_guard=True,headless_jobs=True,idempotency=True,exit_logs=True,timeout_cleanup=True,cancel_cleanup=True,output_bounds=True,both_escaped_streams=True,activation_guard=True,startup_once=True,event_hooks=True,worker_loss_indeterminate=True,no_namespace_resurrection=True)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,literal_argv=True,unicode=True,manifest_approval=True,revision_guard=True,headless_jobs=True,idempotency=True,exit_logs=True,timeout_cleanup=True,cancel_cleanup=True,output_bounds=True,both_escaped_streams=True,activation_guard=True,startup_once=True,event_hooks=True,session_hooks=True,hook_replay_after_project_removal=True,worker_loss_indeterminate=True,no_namespace_resurrection=True)))
     finally:
         # Only this fixture's role and data path authorize cleanup.
         for process in Path('/proc').iterdir():

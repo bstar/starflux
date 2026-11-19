@@ -57,17 +57,78 @@ impl Source {
             .stdin(Stdio::null());
         c
     }
-    pub fn inspect(&self, pane: usize) -> Result<Value> {
+    fn pane_snapshot(&self, pane: usize) -> Result<Value> {
         let p = self.panes.get(&pane).context("Imported pane is missing")?;
-        let out = self.command(&["pane", "get", &p.pane_id]).output()?;
+        let out = crate::read_query::output(self.command(&["pane", "get", &p.pane_id]))?;
+        let data: Value = serde_json::from_slice(&out)?;
+        Ok(data["result"]["pane"].clone())
+    }
+    pub fn inspect(&self, pane: usize) -> Result<Value> {
+        Ok(self.health_from_pane(pane, &self.pane_snapshot(pane)?))
+    }
+    pub(crate) fn history_identity(&self, pane: usize) -> Result<(Value, String)> {
+        let stored = self.panes.get(&pane).context("Imported pane is missing")?;
+        let socket = socket_path(&self.session)?;
+        let before = crate::session_import::herdr_server_stamp(&socket)?;
+        let current = self.pane_snapshot(pane)?;
+        let terminal = current["terminal_id"]
+            .as_str()
+            .context("Herdr terminal identity unavailable")?;
         ensure!(
-            out.status.success(),
-            "Herdr pane unavailable: {}",
-            String::from_utf8_lossy(&out.stderr)
+            current["pane_id"] == stored.pane_id
+                && (stored.terminal_id.is_empty() || terminal == stored.terminal_id),
+            "Herdr pane or terminal identity changed"
         );
-        let data: Value = serde_json::from_slice(&out.stdout)?;
-        let p = &data["result"]["pane"];
-        Ok(self.health_from_pane(pane, p))
+        ensure!(
+            before == crate::session_import::herdr_server_stamp(&socket)?,
+            "Herdr source server changed"
+        );
+        Ok((before, terminal.to_owned()))
+    }
+    pub(crate) fn inspect_identity(&self, pane: usize) -> Result<Value> {
+        let stored = self.panes.get(&pane).context("Imported pane is missing")?;
+        let socket = socket_path(&self.session)?;
+        let before = crate::session_import::herdr_server_stamp(&socket)?;
+        let output = crate::read_query::output(self.command(&[
+            "pane",
+            "process-info",
+            "--pane",
+            &stored.pane_id,
+        ]));
+        let mut health = self.inspect(pane)?;
+        ensure!(
+            health["pane_id"] == stored.pane_id
+                && (stored.terminal_id.is_empty() || health["terminal_id"] == stored.terminal_id),
+            "Herdr pane or terminal identity changed"
+        );
+        let after = crate::session_import::herdr_server_stamp(&socket)?;
+        ensure!(before == after, "Herdr source server changed");
+        if stored.terminal_id.is_empty() {
+            health["identity_error"] = json!("Reimport the Herdr session to bind this terminal");
+            return Ok(health);
+        }
+        let info = output.and_then(|bytes| Ok(serde_json::from_slice::<Value>(&bytes)?));
+        match info {
+            Ok(response) if response["result"]["process_info"]["pane_id"] == stored.pane_id => {
+                let info = &response["result"]["process_info"];
+                if let Some(pid) = info["shell_pid"]
+                    .as_u64()
+                    .and_then(|p| u32::try_from(p).ok())
+                    && let Some(ticks) = crate::agent_state::process_start(pid)
+                {
+                    health["pid"] = json!(pid);
+                    health["pid_start_ticks"] = json!(ticks);
+                    health["foreground_process_group"] =
+                        info["foreground_process_group_id"].clone();
+                } else {
+                    health["identity_error"] = json!("Herdr did not report a live shell process");
+                }
+            }
+            _ => {
+                health["identity_error"] = json!("Herdr pane process information is unavailable");
+            }
+        }
+        Ok(health)
     }
     pub(crate) fn health_from_pane(&self, pane: usize, p: &Value) -> Value {
         let observed = self.observed_status(&self.panes[&pane].pane_id, p["agent"].as_str());

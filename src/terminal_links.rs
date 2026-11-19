@@ -246,6 +246,48 @@ pub fn scan(screen: &vt100::Screen) -> Vec<Link> {
 mod tests {
     use super::*;
     #[test]
+    fn c1_osc8_preserves_utf8_and_accepts_mixed_delimiters() {
+        let fixtures: &[(&[u8], &[u8])] = &[
+            (b"\x9d8;;", b"\x9c"),
+            (b"\x1b]8;;", b"\x9c"),
+            (b"\x9d8;;", b"\x1b\\"),
+            (b"\x9d8;;", b"\x07"),
+        ];
+        let url = "https://example.invalid/Ü/ĝ";
+        for &(start, end) in fixtures {
+            let mut stream = "Üĝ ".as_bytes().to_vec();
+            stream.extend_from_slice(start);
+            stream.extend_from_slice(url.as_bytes());
+            stream.extend_from_slice(end);
+            stream.extend_from_slice("ĝÜ".as_bytes());
+            stream.extend_from_slice(b"\x9d8;;\x9c!");
+            for chunk in [1, 2, stream.len()] {
+                let mut parser = vt100::Parser::new(2, 32, 0);
+                for bytes in stream.chunks(chunk) {
+                    parser.process(bytes);
+                }
+                assert_eq!(parser.screen().contents(), "Üĝ ĝÜ!");
+                assert_eq!(parser.screen().hyperlink(0, 3), Some(url));
+                assert_eq!(parser.screen().hyperlink(0, 4), Some(url));
+                assert_eq!(parser.screen().hyperlink(0, 5), None);
+                let links = scan(parser.screen());
+                assert_eq!(links.len(), 1);
+                assert_eq!(links[0].url, url);
+            }
+        }
+    }
+
+    #[test]
+    fn c1_osc8_discards_oversize_and_cancelled_targets() {
+        let mut parser = vt100::Parser::new(2, 32, 0);
+        parser.process(b"\x9d8;;https://example.invalid/");
+        parser.process(&vec![b'x'; 128 * 1024]);
+        parser.process(b"\x9cA\x9d8;;https://example.invalid/\x18B");
+        assert_eq!(parser.screen().contents(), "AB");
+        assert!(scan(parser.screen()).is_empty());
+    }
+
+    #[test]
     fn pointer_region_union_preserves_cells_and_merges_repeated_runs() {
         let mut links = vec![
             Link {

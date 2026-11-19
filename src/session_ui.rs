@@ -180,6 +180,7 @@ impl Workspace {
         }
         if action == "sessions:choose"
             || action == "sessions:delete"
+            || action == "sessions:rename"
             || action == "sessions:default"
             || action.starts_with("sessions:row:")
         {
@@ -231,12 +232,16 @@ impl Workspace {
                     "Default session cleared"
                 }
                 .into();
-            } else if action == "sessions:delete" {
+            } else if matches!(action, "sessions:delete" | "sessions:rename") {
                 ensure!(
                     !picker.external,
                     "Import the session before managing its STAR/FLUX copy"
                 );
-                self.open_prompt(Prompt::DeleteSession(entry.id));
+                self.open_prompt(if action == "sessions:rename" {
+                    Prompt::RenameSession(entry.id, entry.name)
+                } else {
+                    Prompt::DeleteSession(entry.id)
+                });
             } else if picker.external {
                 picker.loading = true;
                 picker.token = Instant::now();

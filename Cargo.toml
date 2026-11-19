@@ -13,7 +13,7 @@ exclude = ["vendor/vt100"]
 resolver = "2"
 
 [workspace.dependencies]
-starkit = { git = "https://github.com/bstar/starkit", rev = "f60a8fb3ffb41a5625c0c3d43e97394f2249ce61", version = "0.13", default-features = false, features = ["terminal-graphics", "media"] }
+starkit = { git = "https://github.com/bstar/starkit", rev = "874694d4a673d45ef02e8692692599537f213027", version = "0.13", default-features = false, features = ["terminal-graphics", "media"] }
 
 [features]
 default = ["lossless-canvas", "gpu-renderer"]
@@ -23,6 +23,7 @@ gpu-renderer = ["starkit/gpu-renderer"]
 [dependencies]
 anyhow = "1"
 unicode-width = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "perf"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 starkit.workspace = true
@@ -41,6 +42,7 @@ uuid = { version = "1", features = ["v4"] }
 gio = { version = "0.22", features = ["v2_66"] }
 gio-unix = "0.22"
 vt100 = { version = "0.16.2", path = "vendor/vt100" }
+vte = "0.15"
 portable-pty = "0.9"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"

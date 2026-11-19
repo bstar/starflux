@@ -110,6 +110,7 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("split", "Toggle split"),
     ("split-right", "Split pane right"),
     ("split-down", "Split pane down"),
+    ("split-existing", "Split with existing tab"),
     ("zoom-pane", "Zoom / restore pane"),
     ("swap-pane", "Swap with next pane"),
     ("close-pane", "Close pane, keep terminal"),
@@ -119,6 +120,7 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("focus-down", "Focus pane below"),
     ("move-left", "Move pane left"),
     ("move-right", "Move pane right"),
+    ("move-pane-to-edge", "Move pane to outer edge"),
     ("move-up", "Move pane above"),
     ("move-down", "Move pane below"),
     ("resize-less", "Shrink focused pane"),
@@ -164,6 +166,7 @@ impl Default for Settings {
         for (key, action) in [
             ("?", "help"),
             ("e", "workspace-menu"),
+            ("Shift+e", "move-pane-to-edge"),
             ("Shift+p", "project-picker"),
             ("Shift+t", "tab-picker"),
             ("s", "sessions"),
@@ -183,6 +186,7 @@ impl Default for Settings {
             ("v", "split"),
             ("%", "split-right"),
             ("\"", "split-down"),
+            ("Shift+s", "split-existing"),
             ("z", "zoom-pane"),
             ("Shift+o", "swap-pane"),
             ("!", "close-pane"),
@@ -483,6 +487,17 @@ impl Keyboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_and_existing_split_shortcuts_stay_distinct() {
+        let mut keys = Keyboard::default();
+        for (modifiers, action) in [(0, "sessions"), (1, "split-existing")] {
+            assert_eq!(keys.route("char:b", 2, false, false, false), Route::Consume);
+            assert_eq!(
+                keys.route("char:s", modifiers, false, false, false),
+                Route::Action(action.into())
+            );
+        }
+    }
     #[test]
     fn popup_controls_are_configurable_and_do_not_steal_global_keys() {
         let mut keys = Keyboard::default();

@@ -16,9 +16,9 @@ import threading
 import time
 import uuid
 
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--herdr',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--herdr',action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
 if args.herdr and not args.session_imports:parser.error('--herdr requires --session-imports')
-app=Path(__file__).resolve().parents[1]/'scripts/run-local.sh'
+app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith('HERDR_') and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
@@ -110,6 +110,71 @@ while True:
             wait(lambda:(tmp/'config/herdr/sessions/named/herdr.sock').exists(),'named Herdr socket missing')
             herdr_cli('--session','named','workspace','create','--cwd',str(tmp),'--label','Named source','--no-focus')
         c=Client();assert c.call('projects.list')['projects']==[],'API created an implicit demo project'
+        if args.session_events:
+            fallback=c.write('sessions.create',dict(name='Event fallback',directory=str(tmp)))
+            watch=Client()
+            watch.send('events.subscribe',dict(resources=['sessions'],duration_ms=15000,max_events=4))
+            initial=watch.take()['result']
+            assert [s['id'] for s in initial['snapshot']['sessions']]==[fallback['session']]
+            created=c.write('sessions.create',dict(name='Event target',directory=str(tmp)))
+            id=created['session'];project=created['project']
+            c.write('sessions.rename',dict(session=id,expected_name='Event target',name='Renamed café'))
+            c.write('sessions.default',dict(session=id))
+            c.write('sessions.delete',dict(session=id,expected_projects=[project],
+                                           fallback_project=fallback['project'],confirm='DELETE'))
+            events=[watch.take()['event'] for _ in range(4)]
+            assert watch.take()['ended']['events']==4
+            assert [e['kind'] for e in events]==['session.created','session.changed','session.changed','session.removed']
+            assert all(e['resource']=='sessions/'+id for e in events)
+            assert events[1]['data']['name']=='Renamed café' and events[2]['data']['is_default']
+            assert events[3]['data'] is None
+            replay=Client()
+            replay.send('events.subscribe',dict(resources=['sessions'],after=initial['cursor'],
+                                                duration_ms=6000,max_events=4))
+            assert replay.take()['result']['snapshot'] is None
+            again=[replay.take()['event'] for _ in range(4)]
+            assert [e['cursor'] for e in again]==[e['cursor'] for e in events]
+            assert replay.take()['ended']['events']==4
+            journal=tmp/'data/starflux/automation/events.json'
+            saved_journal=journal.read_bytes();replacement=journal.with_suffix('.fixture')
+            def replace_journal(content):
+                replacement.write_bytes(content);replacement.replace(journal)
+            # Simulate metadata awaiting reconciliation while retained events
+            # are already available to a bounded replay request.
+            outdated=json.loads(saved_journal)
+            del outdated['latest']['sessions/'+fallback['session']]
+            replace_journal(json.dumps(outdated).encode())
+            try:
+                replay.send('events.subscribe',dict(resources=['sessions'],after=initial['cursor'],
+                                                    duration_ms=6000,max_events=1))
+                assert replay.take()['result']['snapshot'] is None
+                assert replay.take()['event']['cursor']==events[0]['cursor']
+                assert replay.take()['ended']['events']==1
+                assert json.loads(journal.read_bytes())==outdated,'replay reconciled live metadata before delivery'
+            finally:
+                replace_journal(saved_journal)
+            interrupted=Client()
+            request_id=interrupted.send('events.subscribe',dict(resources=['sessions'],duration_ms=6000))
+            subscription=interrupted.take()['result']
+            saved_journal=journal.read_bytes()
+            replace_journal(b'{')
+            try:
+                failure=interrupted.take()
+                assert failure['id']==request_id and failure['ok'] is False,failure
+                error=failure['error']
+                assert error['code']=='operation_failed' and 'Read automation event journal' in error['message'],error
+                assert error['subscription']==subscription['subscription'] and error['cursor']==subscription['cursor'],error
+            finally:
+                replace_journal(saved_journal)
+            c.write('sessions.rename',dict(session=fallback['session'],expected_name='Event fallback',name='Recovered stream'))
+            interrupted.send('events.subscribe',dict(resources=['sessions'],after=error['cursor'],duration_ms=6000,max_events=1))
+            assert interrupted.take()['result']['snapshot'] is None
+            assert interrupted.take()['event']['data']['name']=='Recovered stream'
+            assert interrupted.take()['ended']['events']==1
+            assert c.call('panes.get',dict(project=fallback['project'],pane=1))['status']['alive']
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,session_events=True,
+                                  transitions_retained=True,durable_replay=True,error_cursor_replay=True,fallback_preserved=True)))
+            raise SystemExit(0)
         if args.session_imports:
             sockets=tmp/'tmux'/('tmux-'+str(os.getuid()));sockets.mkdir(parents=True,exist_ok=True,mode=0o700);source_socket=sockets/'original'
             def tmux(*arguments):return subprocess.check_output(['tmux','-S',str(source_socket),*arguments],env=env,text=True).strip()
@@ -130,7 +195,33 @@ while True:
             assert len(c.call('projects.list')['projects'])==1 and topology()==before
             assert c.call('projects.list')['projects'][0]['directory']==str(source_directory),'import changed the source working directory'
             assert c.call('frontends.list',dict(project=imported['project']))['frontends']==[],'headless import opened a presentation'
-            assert c.call('panes.get',dict(project=imported['project'],pane=1))['status']['source']=='tmux'
+            pane_scope=dict(project=imported['project'],pane=1)
+            imported_pane=c.call('panes.get',pane_scope)
+            assert imported_pane['status']['source']=='tmux'
+            assert imported_pane['capabilities']==dict(input=True,terminate=False),imported_pane
+            selection=tmux('display-message','-p','-t','Original café','#{window_id} #{pane_id}').split()
+            def capture():return tmux('capture-pane','-p','-t',selection[1])
+            wait(lambda:'API_READY' in capture(),'imported pane did not become ready')
+            send=dict(target=imported_pane['target'],text='imported café 界',submit=False)
+            input_operation=str(uuid.uuid4())
+            assert c.write('panes.send',send,input_operation)==c.write('panes.send',send,input_operation)
+            wait(lambda:'PASTE 1' in capture(),'imported pane did not receive its paste')
+            assert 'SUBMIT' not in capture(),'imported paste implicitly submitted'
+            c.write('panes.send',dict(target=send['target'],text='',submit=True))
+            wait(lambda:"SUBMIT 1 'imported café 界'" in capture(),'explicit submit missed the imported pane')
+            assert 'PASTE 2' not in capture(),'operation replay delivered another paste'
+            tmux('copy-mode','-t',selection[1])
+            error=c.call('panes.send',dict(target=send['target'],text='COPY_MODE',submit=True),str(uuid.uuid4()),ok=False)
+            assert error['code']=='source_input_rejected' and error['outcome']=='not_applied',error
+            tmux('send-keys','-t',selection[1],'-X','cancel')
+            assert 'COPY_MODE' not in capture()
+            other_window=next(window for window in tmux('list-windows','-t','Original café','-F','#{window_id}').splitlines() if window!=selection[0])
+            tmux('select-window','-t',other_window)
+            denied=c.call('panes.send',dict(target=send['target'],text='WRONG_PANE',submit=True),str(uuid.uuid4()),ok=False)
+            assert denied['code']=='stale_target',denied
+            assert 'WRONG_PANE' not in tmux('capture-pane','-p','-t',other_window)
+            tmux('select-window','-t',selection[0])
+            assert topology()==before
             tmux('rename-session','-t','Original café','Renamed source')
             assert c.call('sessions.import',params,str(uuid.uuid4()),ok=False)['code']=='stale_source'
             assert c.write('sessions.import',params,operation)==imported,'replay re-ran an import against a changed source'
@@ -155,12 +246,28 @@ while True:
                 assert c.write('sessions.import',params)['project']==result['project']
                 assert {p['pane_id'] for p in herdr_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in panes}
                 assert all(Path('/proc',str(pid)).exists() for pid in pids),'Herdr import restarted a terminal'
+                original_pids={pane['pane_id']:pid for pane,pid in zip(panes,pids)}
+                original_terminals={pane['pane_id']:pane['terminal_id'] for pane in panes}
+                herdr_project=result['project']
+                for entry in result['projects']:
+                    observed=c.call('panes.get',dict(project=entry['project'],pane=1))
+                    health=observed['status'];source_pane=health['pane_id']
+                    assert health['source']=='herdr' and health['pid']==original_pids[source_pane],observed
+                    assert health['terminal_id']==original_terminals[source_pane] and health['pid_start_ticks']>0,observed
+                    assert observed['target'] is None and observed['capabilities']==dict(input=False,terminate=False),observed
                 herdr_cli('workspace','create','--cwd',str(tmp),'--label','Changed topology','--no-focus')
                 assert c.call('sessions.import',params,str(uuid.uuid4()),ok=False)['code']=='stale_source'
                 named=next(s for s in c.call('sessions.external')['sources'] if s['source']=='herdr' and s['name']=='named')
                 result=c.write('sessions.import',dict(reference=named['reference']));assert result['session']=='herdr-named' and result['projects']
                 latest=next(s for s in c.call('sessions.external')['sources'] if s['source']=='herdr' and s['name']=='default')['reference']
                 herdr.terminate();herdr.wait(timeout=5)
+                unavailable=c.call('panes.get',dict(project=herdr_project,pane=1),ok=False)
+                assert unavailable['code']=='operation_failed',unavailable
+                observation=c.call('panes.get',dict(project=herdr_project,pane=1,allow_unavailable=True))
+                assert observation['status']['health']['transport']=='disconnected',observation
+                assert observation['status']['health']['source']=='transport' and observation['status']['error']
+                assert observation['target'] is None and observation['capabilities']==dict(input=False,terminate=False)
+                assert not (tmp/'config/herdr/herdr.sock').exists(),'diagnostics restarted the missing server'
                 assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='source_unavailable','import restarted a missing Herdr server'
                 assert not any(s['source']=='herdr' and s['name']=='default' for s in c.call('sessions.external')['sources'])
                 herdr=subprocess.Popen(['herdr','server'],env=env,stdout=(tmp/'herdr-restarted.log').open('w'),stderr=subprocess.STDOUT)
@@ -182,7 +289,7 @@ while True:
             assert time.monotonic()-began<5.8,'source watchdog did not bound a slow CLI'
             query_pids=json.loads(record.read_text());wait(lambda:all(not query_alive(pid) for pid in query_pids),'source timeout left read helpers running',timeout=.6)
             assert topology()==retained,'query cleanup changed the original source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,herdr=args.herdr,headless_import=True,stable_discovery=True,guarded_source_identity=True,stale_topology_rejected=True,replaced_server_rejected=True,idempotent_import=True,source_processes_and_topology_preserved=True,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,herdr=args.herdr,herdr_read_only_identity=args.herdr,headless_import=True,guarded_tmux_input=True,stable_discovery=True,guarded_source_identity=True,stale_topology_rejected=True,replaced_server_rejected=True,idempotent_import=True,source_processes_and_topology_preserved=True,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
             raise SystemExit(0)
         caps=c.call('capabilities');assert caps['version']==1 and caps['operation_replay']
         c.process.stdin.write(b'{invalid\n');c.process.stdin.flush();assert c.take()['error']['code']=='invalid_request'

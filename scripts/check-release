@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run in the Nix development shell; no GUI windows or real agents are used.
+# Run in the Nix development shell. Provider probes run only when requested.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 scripts/check-version.py
@@ -94,6 +94,7 @@ python3 scripts/test-session-manager.py --ssh --cells --narrow
 python3 scripts/test-session-manager.py --notifications
 python3 scripts/test-session-manager.py --ssh --notifications
 python3 scripts/test-session-manager.py --ssh --cells --notifications
+python3 scripts/test-session-manager.py --ssh-notification-client
 python3 scripts/test-session-manager.py --machines
 python3 scripts/test-session-manager.py --ssh --machines
 python3 scripts/test-session-manager.py --ssh --cells --machines
@@ -103,6 +104,8 @@ python3 scripts/test-session-manager.py --ssh --worktrees
 python3 scripts/test-session-manager.py --ssh --cells --worktrees
 python3 scripts/test-automation.py
 python3 scripts/test-automation.py --ssh
+python3 scripts/test-automation.py --session-events
+python3 scripts/test-automation.py --ssh --session-events
 python3 scripts/test-automation.py --session-imports
 python3 scripts/test-automation.py --ssh --session-imports
 python3 scripts/test-session-manager.py --automation
@@ -111,6 +114,12 @@ python3 scripts/test-session-manager.py --ssh --cells --automation
 python3 scripts/test-session-manager.py --agent-lifecycle
 python3 scripts/test-session-manager.py --ssh --agent-lifecycle
 python3 scripts/test-session-manager.py --ssh --cells --agent-lifecycle
+if [[ -n "${STARFLUX_TEST_CODEX_BIN:-}" ]]; then
+    python3 scripts/test-codex-resume-offline.py "$STARFLUX_TEST_CODEX_BIN" --starflux scripts/run-local.sh --ssh --cells
+fi
+if [[ -n "${STARFLUX_TEST_CLAUDE_BIN:-}" ]]; then
+    python3 scripts/test-claude-resume-offline.py "$STARFLUX_TEST_CLAUDE_BIN" --starflux scripts/run-local.sh
+fi
 python3 scripts/test-native-terminal.py --context-menu
 python3 scripts/test-native-terminal.py --pane-recovery
 python3 scripts/test-session-manager.py --pane-layouts
@@ -129,3 +138,6 @@ python3 scripts/test-multiwindow.py --ssh --scrollback
 
 python3 scripts/test-cells.py
 python3 scripts/test-cells.py --ssh
+
+python3 scripts/test-cells.py --browser
+python3 scripts/test-cells.py --ssh --browser

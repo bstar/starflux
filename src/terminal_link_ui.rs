@@ -6,6 +6,19 @@ pub(super) struct Target {
     url: String,
 }
 impl Workspace {
+    pub(super) fn can_open_browser(&self, url: &str) -> bool {
+        self.browser.available()
+            && crate::plugin_links::parse(url).is_ok()
+            && starkit::terminal_graphics::frontend_actions::web_url(url).is_some()
+    }
+    pub(super) fn open_browser(&mut self, url: &str) -> Result<()> {
+        crate::plugin_links::parse(url)?;
+        self.browser.open_url(url)?;
+        self.context_menu = None;
+        self.note("Opening link on this computer…".into());
+        Ok(())
+    }
+
     fn resolve_terminal_link(&mut self, target: Target) {
         self.plugin_request("links".into(), move || {
             let mut result = crate::plugin_links::resolve(&target.url, 0, 16)?;
@@ -90,6 +103,7 @@ impl Workspace {
             .context("Choose a visible terminal link again")?;
         match kind {
             "open" => self.resolve_terminal_link(target),
+            "browser" => self.open_browser(&target.url)?,
             "copy" => {
                 self.effects
                     .push(ServerMessage::Clipboard { text: target.url });
@@ -114,16 +128,20 @@ impl Workspace {
             hint: String::new(),
             action: action.into(),
         };
+        let mut items = vec![
+            item("Open with a plugin…", "terminal-link:open"),
+            item("Copy URL", "terminal-link:copy"),
+            item("Terminal options…", "terminal-link:options"),
+        ];
+        if self.can_open_browser(&target.url) {
+            items.insert(0, item("Open in browser", "terminal-link:browser"));
+        }
         self.context_menu = Some(crate::shelf::ContextMenu {
             position,
             title: "Terminal link".into(),
             subtitle: target.url.clone(),
             selected: Some(0),
-            items: vec![
-                item("Open with a plugin…", "terminal-link:open"),
-                item("Copy URL", "terminal-link:copy"),
-                item("Terminal options…", "terminal-link:options"),
-            ],
+            items,
         });
         self.terminal_link = Some(target);
     }

@@ -281,7 +281,8 @@ the controller. Approval and matching are checked again when a handler is chosen
 queued jobs cannot bypass subsequent disablement or a package change.
 
 For URL text visible in a native terminal, **Ctrl+click** opens the handler
-chooser. **Right-click** offers handler review, copy URL and terminal options.
+chooser. **Right-click** offers handler review, copy URL and terminal options. For HTTP
+and HTTPS links, supported presenters also offer **Open in browser**.
 **Ctrl+B, L** opens a keyboard picker for URLs in the focused terminal; it is
 also available in the Plugins menu. Normal left-click/drag retains terminal
 selection and application input. Pointer feedback uses local host regions and
@@ -304,8 +305,9 @@ saved-screen previews preserve destinations and parameters (including `id`).
 Link-only repainting invalidates the region cache without resending unchanged
 text. Adjacent pointer rectangles are merged without expanding clickable areas.
 
-The parser accepts BEL and ESC-backslash OSC terminators, raw URI semicolons and
-UTF-8. Destinations are limited to 8192 bytes, parameters to 1024 bytes, individual
+The parser accepts single-byte and ESC-prefixed OSC 8 introducers, plus BEL,
+single-byte ST and ESC-backslash terminators. It preserves raw URI semicolons
+and UTF-8. Destinations are limited to 8192 bytes, parameters to 1024 bytes, individual
 OSC bodies to 128 KiB and shared retained target allocations to 8 MiB. Invalid,
 truncated or oversized destinations cannot become partial clickable URLs. These
 parser bounds do not bypass backend limits: for example, tmux can discard long
@@ -315,9 +317,11 @@ escape attributes. Saved-grid formatting stops at 1 MiB before encoding, and
 host capture is capped at 2 MiB. Oversized captures report an error rather than
 replacing a valid archive.
 
-C1 OSC encodings and browser handoff remain unfinished. The controls above
-review/copy destinations and route explicitly selected approved plugin handlers;
-they never automatically open a browser or execute terminal-provided commands.
+**Open in browser** is also available from the handler chooser. It uses the
+default browser on the presenting computer, including when that presenter was
+started with `starflux --ssh`. Older and headless presenters keep copy and
+plugin actions available. Opening requires an explicit selection. The status
+reports dispatch to the opener or a launch error.
 
 ## Action context
 
@@ -339,8 +343,12 @@ inspect the returned outcome before deciding whether to issue another operation.
 ## Hooks
 
 A hook declares `id`, `on`, `action` and optional `states`. Supported events are
-`startup`, `project.created/changed/removed`, `pane.created/changed/removed`,
+`startup`, `session.created/changed/removed`, `project.created/changed/removed`,
+`pane.created/changed/removed`,
 `agent.reported.created/changed/removed`, and `attention.created/changed/removed`.
+Session hooks carry the saved-session resource and event data with a null project
+context. Removal carries a null data tombstone.
+
 State filters accept `unknown`, `idle`, `working`, `needs_input`,
 `waiting_for_approval`, `completed`, `failed`, `stopped`, `backend_unavailable`.
 
@@ -353,6 +361,12 @@ Hook jobs have deterministic IDs for duplicate protection. Retention gaps are
 reported rather than silently interpreted as a complete event history. Events
 are observations; a plugin must query and validate current identity before
 acting on a project that may have changed since the event.
+If the service resumes from an older cursor, it recognizes recorded deliveries
+even when the original project has since changed or been removed.
+When the queue fills, the service saves progress through the last fully queued
+event and retries the unfinished event as capacity becomes available.
+Only confirmed journal expiry resets the cursor. Other read failures appear
+in service diagnostics and leave the cursor available for retry.
 
 ## Automation
 
@@ -398,8 +412,8 @@ implemented. Declared link handlers have native menu/API routing and activation
 from visible native terminal URL text and OSC 8 metadata. Normal persistent plugin
 terminals and frontend-targeted placement are implemented. Transient popup
 terminals have focused native UI, actual cells-client and App Space acceptance;
-broader lifecycle and actual graphical-host capture remain under audit. Browser handoff and
-broader hook semantics remain unfinished. The native ABI should not be presented
+broader lifecycle and actual graphical-host capture remain under audit.
+Broader hook semantics remain unfinished. The native ABI should not be presented
 as compatible with every Herdr plugin. The queue/worker bounds and hook backpressure have focused concurrent-publisher
 coverage. Multi-plugin scheduling, source/lifecycle failure coverage and broader
 service-restart semantics remain under audit.

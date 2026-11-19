@@ -225,6 +225,9 @@ pub fn package(path: &Path) -> Result<(Manifest, String)> {
             matches!(
                 h.on.as_str(),
                 "startup"
+                    | "session.created"
+                    | "session.changed"
+                    | "session.removed"
                     | "project.created"
                     | "project.changed"
                     | "project.removed"

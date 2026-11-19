@@ -70,6 +70,8 @@ while True:
   expected=b'\x1b_Gi=51;OK\x1b\\\x1b[?1;2c';assert receive(len(expected))==expected
   os.write(1,b'IMAGE_READY\r\n' if line==b'IMAGE\n' else b'\r\n\r\nDEFERRED_IMAGE_READY\r\n')
  elif line==b'RESET\n':os.write(1,b'\x1bcRESET_DONE\r\n')
+ elif line==b'ALT_ENTER\n':os.write(1,b'\x1b[?47h')
+ elif line==b'ALT_LEAVE\n':os.write(1,b'\x1b[?47l')
  elif line==b'SIZE\n':
   rows,cols,_,_=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));os.write(1,('SIZE='+str(rows)+'x'+str(cols)+'\r\n').encode())
  elif line.startswith(b'BIG '):
@@ -308,6 +310,11 @@ while True:
         stale={**first,'epoch':str(uuid.uuid4())};b.call(dict(op='close',source=stale),ok=False)
         send_stale={**first,'boot':str(uuid.uuid4())};b.call(dict(op='input',source=send_stale,data=base64.b64encode(b'MUST_NOT_REACH_SOURCE\n').decode()),ok=False)
         assert stamp(first['pid'])==first['start_ticks']
+        unchanged=info(b,first)
+        for _ in range(3):
+            repeated=b.call(dict(op='resize',source=first,size=unchanged['size']))
+            assert repeated['revision']==unchanged['revision'],'duplicate resize advanced the source revision'
+            assert repeated['graphics_usage']==unchanged['graphics_usage'],'duplicate resize changed retained graphics'
         b.call(dict(op='resize',source=second,size=dict(rows=30,columns=100,cell=[8,16])))
         send(c,second,b'SIZE\n');wait(lambda:'SIZE=30x100' in text(cells(c,second)),'kernel PTY resize missing')
         n=1024*1024-64;send(b,second,('BIG '+str(n)+'\n').encode()+b'x'*n)
@@ -315,6 +322,26 @@ while True:
         send(b,first,b'PING\n');wait(lambda:'PONG' in text(cells(b,first)),'source lost input after reattachment')
         assert stamp(worker_pid)==worker_start,'broker restarted when views disconnected'
         if args.streams:
+            alternate=Client();alternate_id=str(uuid.uuid4())
+            def has_image(frame):
+                return any(run['background'] in ([255,0,0],[0,0,255]) for row in frame['rows'] for run in row['runs'])
+            def alternate_snapshot(epoch):
+                alternate.call(dict(op='watch',source=second,view=alternate_id,epoch=epoch,generation=1,focused=False,size=size,palette=palette))
+                event=alternate.event();assert event['epoch']==epoch and event['frame']['complete'],event
+                return event['frame']
+            send(b,second,b'ALT_ENTER\n');send(b,second,b'DEFER\n')
+            wait(lambda:has_image(frame:=cells(c,second)) and 'DEFERRED_IMAGE_READY' in text(frame),
+                 'alternate screen image and completion marker did not arrive')
+            original_alternate=alternate_snapshot(1);assert 'DEFERRED_IMAGE_READY' in text(original_alternate) and has_image(original_alternate)
+            send(b,second,b'ALT_LEAVE\n')
+            wait(lambda:'BIG_OK=' in text(cells(c,second)),'main buffer did not return')
+            assert not has_image(alternate_snapshot(2)),'alternate image appeared in the main buffer'
+            send(b,second,b'ALT_ENTER\n')
+            wait(lambda:'DEFERRED_IMAGE_READY' in text(cells(c,second)),'retained alternate buffer did not return')
+            restored=alternate_snapshot(3)
+            assert restored['rows']==original_alternate['rows'],'alternate screen text or image cells changed'
+            alternate.close()
+            send(b,second,b'ALT_LEAVE\n')
             closing_view=Client();closing_id=str(uuid.uuid4());closing_view.call(dict(op='watch',source=second,view=closing_id,epoch=1,generation=1,focused=True,size=size,palette=palette));closing_initial=closing_view.event()
             b.call(dict(op='resize',source=second,size=dict(rows=10,columns=40,cell=[8,16])))
             closing_view.call(dict(op='ack',view=closing_id,epoch=1,sequence=closing_initial['sequence']))
@@ -370,7 +397,7 @@ while True:
             exit_view.close()
         assert d.call(dict(op='open',launch=fresh))['exited'] and (root/'launch-0').read_text().count('START')==2,'exited source restarted implicitly'
         stop_worker(d,hello['instance'])
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,retained_native_ptys=True,detached_launcher=args.ssh,view_detach_preserves_sources=True,reattach_same_pid=True,no_command_replay=True,literal_argv=True,independent_sources=True,independent_cells_views=True,source_geometry_preserved=True,kernel_resize=True,large_input=True,image_retained_without_views=True,cells_fallback=True,source_queries_owned=True,stale_close_rejected=True,receipt_survives_broker_restart=True,half_closed_launch=True,view_palettes=True,nonblocking_close=True,natural_exit_no_replay=True,failed_launch_not_replayed=True,explicit_fresh_launch=True,no_real_agents=True,streamed_frames=args.streams,slow_view_credit=args.streams,stale_view_epochs=args.streams,half_closed_cells=args.streams,row_deltas=args.streams,source_switch_fences=args.streams,source_closed_events=args.streams,natural_exit_frames=args.streams,resize_error_recovery=args.streams,managed_service=args.service,deep_durable_socket=args.service,concurrent_owner_discovery=args.service,concurrent_slot_open=args.service,durable_pane_references=args.service,uncertain_open_recovery=args.service,runtime_loss_preserves_sources=args.service,loaded_owner_upgrade=args.service,no_service_downgrade=args.service,explicit_slot_recovery=args.service,packaged_host_path=args.service)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,retained_native_ptys=True,detached_launcher=args.ssh,view_detach_preserves_sources=True,reattach_same_pid=True,no_command_replay=True,literal_argv=True,independent_sources=True,independent_cells_views=True,source_geometry_preserved=True,kernel_resize=True,identical_resize_noop=True,large_input=True,image_retained_without_views=True,cells_fallback=True,source_queries_owned=True,stale_close_rejected=True,receipt_survives_broker_restart=True,half_closed_launch=True,view_palettes=True,nonblocking_close=True,natural_exit_no_replay=True,failed_launch_not_replayed=True,explicit_fresh_launch=True,no_real_agents=True,streamed_frames=args.streams,slow_view_credit=args.streams,stale_view_epochs=args.streams,half_closed_cells=args.streams,row_deltas=args.streams,source_switch_fences=args.streams,source_closed_events=args.streams,natural_exit_frames=args.streams,resize_error_recovery=args.streams,managed_service=args.service,deep_durable_socket=args.service,concurrent_owner_discovery=args.service,concurrent_slot_open=args.service,durable_pane_references=args.service,uncertain_open_recovery=args.service,runtime_loss_preserves_sources=args.service,loaded_owner_upgrade=args.service,no_service_downgrade=args.service,explicit_slot_recovery=args.service,packaged_host_path=args.service)))
     finally:
         for client in clients:
             try:client.close()

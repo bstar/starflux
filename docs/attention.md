@@ -8,7 +8,7 @@ The inbox controls provide:
 
 - Literal, case-insensitive Unicode search across project names/identities, session, host, provider, conversation identity, lifecycle label and event source. All whitespace-separated search terms must match. Search does not read agent transcripts.
 - Unread, all or read-only history; question, approval, completed, failed and backend-unavailable states; project, current-session or all-session scope; and reported-event or screen-observation sources.
-- Previous/next pages. Pages default to 100 items, keeping UI size and query responses bounded. The count shows all matching items; incoming events can shift page positions.
+- Press **Left** or **Right** for the previous or next page. Pages default to 100 items, keeping UI size and query responses bounded. The count shows all matching items; incoming events can shift page positions.
 - **Mark unread items on this page read**, which captures exactly those event identities. It does not include newly arriving items or other pages. Each project's batch is checked before changing any of its items; errors for another project do not silently change that project's read state.
 
 Filters and page position persist for each frontend, including refresh and reattachment. They do not change another window's filters. **Reset filters** returns to all unread events.
@@ -16,6 +16,10 @@ Filters and page position persist for each frontend, including refresh and reatt
 Choose **Open pane** to enter the originating session/project and focus its terminal. Opening marks the notification read. **Dismiss notification** marks it read without switching projects or sending input. Read state is durable and shared between frontends. Reading or dismissing a notification does not answer a question or approve a command.
 
 Pane generations are checked before and after switching sessions. If the original pane has gone away, the item remains available for review and dismissal until retention expires it. Project/session deletion removes that project's saved items. A project whose attention data cannot be read is shown as unavailable; other projects remain accessible.
+The item detail shows when the original pane is gone and keeps the dismissal action available.
+If results shrink past the current page, the inbox saves the last available page. An empty result returns to the first page.
+The page-level mark-read action applies to the items currently shown in the inbox.
+For a reported event with a saved conversation reference, **Copy conversation ID** is available in the item detail, including after the original terminal closes.
 
 ## Event identity
 
@@ -31,7 +35,17 @@ Choose **Notification settings…** from the inbox to configure popup delivery, 
 - **Desktop + in-app status** additionally submits new events to the controller's local desktop service. Linux uses `notify-send`; the macOS path uses `osascript`. Linux needs a desktop session, a session D-Bus and libnotify's helper. Nix/AppImage packaging includes the Linux helper; Arch lists it as optional.
 - **Off** disables new popup/status delivery while retaining the inbox and unread count. Event category switches affect delivery, not event storage or inbox visibility.
 
-Desktop mode is offered only when a local desktop is available. A controller launched through SSH does not send notifications to the remote computer's desktop. Forwarding an OS notification to the presenting SSH client still needs presentation-protocol support; SSH users retain the inbox and in-app delivery.
+A controller launched through SSH keeps its inbox and in-app delivery. To
+deliver new attention to the presenting desktop, enable desktop notifications
+on that machine and launch with `--ssh-notifications` alongside `--ssh` or
+`--machine`. The receiver reads the selected workspace's unread attention
+over SSH about every four seconds. It uses the remote sampling time to skip
+earlier items and a local ledger to avoid duplicate attempts for the same
+endpoint. Focused-pane suppression compares the exact pane and generation
+reported by the remote presentation. If focus information is temporarily
+unavailable, delivery waits while suppression is on. Delivery uses the
+presenting machine's settings and helper and requires a controller with
+the `attention.forward` endpoint.
 
 Desktop delivery runs outside the input/render path, with bounded helper time and a maximum of three helper attempts per scan. Independent frontends share a durable claim ledger, preventing duplicate OS requests for an event. Visible, focused panes can suppress a popup without marking its item read. Focus metadata includes the controller process identity and expires after six seconds. App Space does not count as a visible terminal pane.
 

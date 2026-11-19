@@ -380,3 +380,8 @@ The offscreen proof preserves its actual Kitty screenshots (`baseline.png`,
 `target/native-planes-kitty-artifacts/`. The source and transmitted PNGs preserve
 exact pixel values. The software-GPU framebuffer comparison allows only the
 measured one-level edge/antialias rounding and checks unchanged pixel geometry.
+
+Mode 1047 clears alternate-screen text and image placements when returning
+from that screen. Mode 47 retains its alternate grid across a switch.
+Mode 1048 saves and restores the cursor used to place subsequent images.
+[XTerm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)

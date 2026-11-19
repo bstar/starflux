@@ -9,10 +9,12 @@ retain the original package attribution and metadata.
 This checked-in source is the canonical dependency. STAR/FLUX adds shared
 immutable OSC 8 cell targets in optional row metadata; target lifetime through painting, erasing, scrolling,
 resize, clones and formatting; revision tracking; and bounded formatting for saved
-previews. BEL and ESC-backslash terminators are supported. URI semicolons are
+previews. OSC 8 accepts the single-byte C1 OSC and ST forms alongside the
+ESC-prefixed forms and BEL. UTF-8 continuation bytes retain their meaning even
+across input chunks. URI semicolons are
 preserved independently of VTE's callback parameter limit. OSC bodies are bounded
 to 128 KiB; overflow, cancellation and malformed OSC 8 cannot publish a partial
-target. Unsupported C1 encodings are not advertised.
+target.
 
 URIs are limited to 8192 bytes, parameters to 1024 bytes. Retained allocations
 share an 8-MiB arena budget with cloned screens. Erase/overwrite/drop releases

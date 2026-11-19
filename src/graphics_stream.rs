@@ -62,9 +62,18 @@ impl Control {
                 self.discarding = false;
             } else if !self.discarding {
                 if self.line.len() == MAX_LINE {
+                    // An oversized notification from another pane cannot
+                    // interrupt this pane's graphics stream.
+                    let unrelated = self.block.is_none()
+                        && output_tail(&self.line)
+                            .and_then(split)
+                            .and_then(|(pane, _)| pane_id(pane))
+                            .is_some_and(|pane| pane != self.pane);
                     self.line.clear();
                     self.discarding = true;
-                    emit(Event::Gap(Gap::TooLarge));
+                    if !unrelated {
+                        emit(Event::Gap(Gap::TooLarge));
+                    }
                 } else {
                     self.line.push(*byte);
                 }
@@ -128,12 +137,7 @@ impl Control {
             }
         }
         let extended = line.starts_with(b"%extended-output ");
-        let tail = if extended {
-            line.strip_prefix(b"%extended-output ")
-        } else {
-            line.strip_prefix(b"%output ")
-        };
-        let Some(tail) = tail else {
+        let Some(tail) = output_tail(line) else {
             return;
         };
         let Some((pane, mut encoded)) = split(tail) else {
@@ -198,6 +202,11 @@ impl Control {
         emit(Event::Bytes(&bytes));
     }
 }
+fn output_tail(line: &[u8]) -> Option<&[u8]> {
+    line.strip_prefix(b"%output ")
+        .or_else(|| line.strip_prefix(b"%extended-output "))
+}
+
 fn split(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
     let index = bytes.iter().position(|b| *b == b' ')?;
     Some((&bytes[..index], &bytes[index + 1..]))
@@ -481,6 +490,26 @@ mod tests {
             [Gap::Paused, Gap::Continued, Gap::Malformed, Gap::Closed]
         );
     }
+    #[test]
+    fn oversized_foreign_output_does_not_interrupt_watched_pane() {
+        let mut control = Control::new(7);
+        let mut output = Vec::new();
+        let mut gaps = Vec::new();
+        for prefix in [b"%output %8 ".as_slice(), b"%extended-output %8 0 : "] {
+            let mut line = prefix.to_vec();
+            line.resize(MAX_LINE + 4, b'x');
+            line.extend_from_slice(b"\n%output %7 still-watching\n");
+            for bytes in line.chunks(1021) {
+                control.feed(bytes, |event| match event {
+                    Event::Bytes(bytes) => output.extend_from_slice(bytes),
+                    Event::Gap(gap) => gaps.push(gap),
+                });
+            }
+        }
+        assert!(gaps.is_empty());
+        assert_eq!(output, b"still-watchingstill-watching");
+    }
+
     #[test]
     fn overlong_control_lines_and_eof_are_bounded_and_report_a_gap() {
         let mut c = Control::new(1);

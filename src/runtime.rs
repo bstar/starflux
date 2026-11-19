@@ -219,6 +219,13 @@ impl Config {
             io::Seek,
             time::{Duration, Instant},
         };
+        let herdr = self
+            .herdr
+            .as_ref()
+            .filter(|source| source.panes.contains_key(&pane));
+        let herdr_identity = herdr
+            .map(|source| source.history_identity(pane))
+            .transpose()?;
         let (mut command, source) = if pane == 0
             && let Some(source) = &self.tmux
         {
@@ -235,7 +242,7 @@ impl Config {
                 ]),
                 "tmux",
             )
-        } else if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+        } else if let Some(source) = herdr {
             (
                 source.command(&[
                     "pane",
@@ -281,6 +288,12 @@ impl Config {
         output.rewind()?;
         let mut bytes = Vec::new();
         output.take(limit + 1).read_to_end(&mut bytes)?;
+        if let Some((source, identity)) = herdr.zip(herdr_identity) {
+            ensure!(
+                source.history_identity(pane)? == identity,
+                "Herdr source changed during history capture"
+            );
+        }
         Ok((bytes, source))
     }
     pub fn command(&self, pane: usize, request: &Value, tty: bool) -> Command {
@@ -325,6 +338,16 @@ impl Config {
             c.args(["-c", HELPER, &encoded]);
             c
         }
+    }
+    pub(crate) fn guarded_tmux_call(&self, request: &Value) -> Result<Value> {
+        let source = self.tmux.as_ref().context("No imported tmux source")?;
+        source.validate()?;
+        let mut request = request.clone();
+        request["source_socket"] = json!(source.socket);
+        request["source_session"] = json!(source.session);
+        let mut result = self.host_call(0, &request)?;
+        result["source"] = json!("tmux");
+        Ok(result)
     }
     pub fn call(&self, pane: usize, request: &Value) -> Result<Value> {
         if pane == 0
@@ -386,6 +409,9 @@ impl Config {
             };
         }
 
+        self.host_call(pane, request)
+    }
+    fn host_call(&self, pane: usize, request: &Value) -> Result<Value> {
         let out = self
             .command(pane, request, false)
             .stdin(Stdio::null())
@@ -435,6 +461,10 @@ impl Config {
             req["recover_proxy"] = json!(true);
         } else if let Some(command) = agent_command.filter(|_| !recovered_boot) {
             req["argv"] = json!(shell_words::split(command)?);
+        }
+        if !req["recover_proxy"].as_bool().unwrap_or(false) {
+            let state = crate::project_state::ProjectState::load(self)?;
+            req["binding_epoch"] = json!(state.terminal_epochs.get(&pane));
         }
         self.call(pane, &req)?;
         let _ = crate::snapshot_service::ensure();
@@ -488,9 +518,9 @@ impl Config {
                     stopped.status.success(),
                     "Could not close the abandoned PTY bridge"
                 );
-                state
-                    .terminal_epochs
-                    .insert(pane, uuid::Uuid::new_v4().to_string());
+                let next = uuid::Uuid::new_v4().to_string();
+                crate::agent_state::preserve_conversation(&config, pane, epoch, &next)?;
+                state.terminal_epochs.insert(pane, next);
                 state.save(&config)?;
             }
         }
@@ -501,9 +531,9 @@ impl Config {
                 "Plugin pane is still running; close it through Plugins before replacing it"
             );
             state.terminal_plugins.remove(&pane);
-            state
-                .terminal_epochs
-                .insert(pane, uuid::Uuid::new_v4().to_string());
+            let next = uuid::Uuid::new_v4().to_string();
+            crate::agent_state::preserve_conversation(&config, pane, epoch, &next)?;
+            state.terminal_epochs.insert(pane, next);
             state.save(&config)?;
         }
         config.ensure(pane, None)?;

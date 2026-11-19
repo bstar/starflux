@@ -14,7 +14,8 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
             return json.loads(result.stdout) if action!='capture' else result.stdout.decode()
         return result
     try:
-        call('ensure',directory=tmp,argv=['bash','--noprofile','--norc'])
+        epoch=str(uuid.uuid4())
+        call('ensure',directory=tmp,argv=['bash','--noprofile','--norc'],binding_epoch=epoch)
         first=call('inspect');assert first['alive']
         framed=call('inspect',include_screen=True)
         frame=framed['saved_screen'];assert frame['rows']>0 and frame['columns']>0
@@ -32,7 +33,13 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
                 rejected=call(action,check=False,expected_boot_id=boot,expected_pid=first['pid'],expected_start_ticks=first['pid_start_ticks'],expected_agent_pid=None,expected_agent_start_ticks=None,text='SHOULD_NOT_REACH_TERMINAL',submit=True)
                 assert rejected.returncode!=0 and b'boot identity' in rejected.stderr and call('inspect')['pid']==first['pid'],'old boot identity authorized an action'
         # A second independent helper/connection reuses the process, not a new shell.
-        call('ensure',directory=tmp,argv=['bash']);assert call('inspect')['pid']==first['pid']
+        call('ensure',directory=tmp,argv=['bash'],binding_epoch=str(uuid.uuid4()))
+        assert call('inspect')['pid']==first['pid']
+        # The running process keeps the binding it was started with.
+        identity=dict(item.split(b'=',1) for item in pathlib.Path(f"/proc/{first['pid']}/environ").read_bytes().split(b'\0') if b'=' in item)
+        assert identity[b'STARFLUX_WORKSPACE']==workspace.encode()
+        assert identity[b'STARFLUX_PANE']==b'1'
+        assert identity[b'STARFLUX_PANE_EPOCH']==epoch.encode()
         marker=pathlib.Path(tmp)/'must-not-submit'
         call('paste',text='touch '+str(marker));time.sleep(.15);assert not marker.exists(),'Paste submitted a command'
         call('key',key='Enter')

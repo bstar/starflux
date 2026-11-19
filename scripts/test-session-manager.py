@@ -16,17 +16,21 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import struct
 import termios
 import tempfile
 import threading
 import time
+import tty
+import uuid
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--ssh',action='store_true')
 parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
+parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
 parser.add_argument('--herdr',action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
 parser.add_argument('--agent-lifecycle',action='store_true')
@@ -56,7 +60,10 @@ parser.add_argument('--snapshot-service',action='store_true')
 parser.add_argument('--query-upgrade',action='store_true')
 parser.add_argument('--frontend-commands',action='store_true')
 parser.add_argument('--notification-service',action='store_true')
+parser.add_argument('--ssh-notification-client',action='store_true')
 args=parser.parse_args()
+if args.ssh_notification_client:args.ssh=True;args.notifications=True
+if args.native_launch_race:args.native_sources=True;args.agent_lifecycle=True
 if args.plugin_pane_upgrade:args.plugin_panes_ui=True
 if args.plugin_popups_managed:args.plugin_popups_ui=True
 if args.plugin_popup_keyboard:args.plugin_popups_ui=True
@@ -65,7 +72,17 @@ if args.category_agent_selection:args.category_agent_workflow=True
 if args.category_agent_workflow:args.category_agent=True;args.agent_lifecycle=True
 if args.notification_service and not args.notifications:parser.error("--notification-service requires --notifications")
 if args.native_sources and args.startup_retry:parser.error("--startup-retry injects a tmux-specific launch failure")
-root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
+root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
+def generated_session_hooks(provider, resume_argv, env):
+    output=subprocess.check_output([str(app),'--agent-session-hook','--provider',provider,
+                                    '--print-config','--starflux',str(app),'--',*resume_argv],
+                                   env=env,timeout=10)
+    return json.loads(output)['hooks']['SessionStart']
+provider_resume=json.loads(os.environ.get('STARFLUX_TEST_CODEX_RESUME','null')) if args.agent_lifecycle else None
+if provider_resume:
+    assert provider_resume[0]=='bwrap' and '--unshare-net' in provider_resume
+claude_resume=json.loads(os.environ.get('STARFLUX_TEST_CLAUDE_RESUME','null')) if args.agent_lifecycle else None
+
 with tempfile.TemporaryDirectory(prefix='starflux-session-proof-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     name='sessions-'+secrets.token_hex(4)
@@ -79,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-session-proof-') as directory:
         shell.write_text("#!/usr/bin/python3\nimport ctypes,os,sys\nif len(sys.argv)>1 and sys.argv[1]=='-c':os.execv('/bin/sh',['sh',*sys.argv[1:]])\nctypes.CDLL(None).prctl(15,ctypes.c_char_p(b'codex'),0,0,0)\nprint('\\x1b[1;34mCOLD_SAVED café 界\\x1b[0m',flush=True)\nif 'cold-exact-thread' in sys.argv:print('RESUMED_COLD_EXACT_THREAD',flush=True)\nfor line in sys.stdin:print('REPLY='+line.strip(),flush=True)\n")
     if args.panel_focus:
         shell.write_text('#!/usr/bin/python3\nimport os,tty\nfrom pathlib import Path\ntty.setraw(0)\nprint("PANEL_READY",flush=True)\nwhile True:\n data=os.read(0,4096)\n if not data:break\n with Path('+repr(str(tmp/'panel-input'))+').open("ab") as out:out.write(data)\n')
-    if args.agent_lifecycle or args.notifications:
+    if args.agent_lifecycle or args.notifications or args.machines:
         shell.write_text("""#!/usr/bin/python3
 import ctypes,os,sys
 if len(sys.argv)>1 and sys.argv[1]=='-c':os.execv('/bin/sh',['sh',*sys.argv[1:]])
@@ -96,16 +113,68 @@ import os,sys
 print('SESSION_PROOF_PID='+str(os.getpid()),flush=True)
 for line in sys.stdin:
  if line.strip()=='HISTORY':
-  for i in range(120):print(f'ROW {i:03} '+('NEEDLE 界é' if i in (7,75) else 'history text'),flush=True)
+  for i in range(120):print(f'ROW {i:03} '+('NEE'+chr(27)+'[31mDLE'+chr(27)+'[0m 界é' if i in (7,75) else 'history text'),flush=True)
  else:print('REPLY='+line.strip(),flush=True)
 """)
+    if claude_resume:
+        shell.write_text(shell.read_text().replace("b'codex'","b'claude'"))
+    if provider_resume:
+        hook_request=tmp/'hook-request.json'
+        hook_result=tmp/'hook-result.json'
+        script=shell.read_text().replace(
+            "for line in sys.stdin:\n",
+            "import json,subprocess\nfrom pathlib import Path\nfor line in sys.stdin:\n"
+            " if line.strip()=='RUN_SESSION_HOOK':\n"
+            "  request=json.loads(Path("+repr(str(hook_request))+").read_text())\n"
+            "  result=subprocess.run(request['argv'],input=request['event'],text=True,capture_output=True)\n"
+            "  Path("+repr(str(hook_result))+").write_text(json.dumps(dict(code=result.returncode,error=result.stderr)))\n"
+            "  continue\n",
+        )
+        shell.write_text(script)
+        project_data=tmp/'data/starflux/projects'
+        for parent in (tmp/'data',project_data.parent,project_data):parent.mkdir(mode=0o700)
+        (project_data/(name+'.model.json')).write_text(json.dumps(dict(
+            terminal_first=True,space='terminals',terminals=[0],
+            terminal_epochs={'0':str(uuid.uuid4())},
+        )))
     shell.chmod(0o700)
+    if args.native_launch_race:
+        launches=tmp/'resume-launches.jsonl'
+        script=shell.read_text().replace("if 'exact-thread' in sys.argv:print('RESUMED_EXACT_THREAD',flush=True)",
+            "if 'exact-thread' in sys.argv:\n from pathlib import Path\n import json\n with Path("+repr(str(launches))+").open('a') as out:out.write(json.dumps(dict(pid=os.getpid(),argv=sys.argv[1:]))+'\\n')\n print('RESUMED_EXACT_THREAD',flush=True)")
+        shell.write_text(script)
     if args.plugin_ui:
         hidden='https://example.invalid/hidden'+(';part'*20)+'?q=destination#OSC8'
         text=shell.read_text();text=text.replace("for line in sys.stdin:","print("+repr('\x1b]8;id=fixture;'+hidden+'\x1b\\OSC8_LABEL_界é\x1b]8;;\x1b\\')+",flush=True)\nfor line in sys.stdin:")
         shell.write_text(text)
     env={k:v for k,v in os.environ.items() if not k.startswith('HERDR_') and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_HERDR='herdr' if args.herdr else str(tmp/'herdr-not-installed'))
+    if args.native_launch_race:
+        gate=tmp/'launch-gate';gate.mkdir()
+        bindir=tmp/'gate-bin';bindir.mkdir()
+        real_python=shutil.which('python3');assert real_python
+        wrapper=bindir/'python3'
+        # This wraps only private host-helper requests. No product sleep, test
+        # hook or provider inference is needed to force the pre-intent window.
+        wrapper.write_text('#!'+real_python+'\n'+'''import base64,json,os,sys,time
+from pathlib import Path
+gate=Path(GATE_PATH)
+try:
+ request=json.loads(base64.b64decode(sys.argv[-1])) if len(sys.argv)>3 and sys.argv[1]=='-c' else {}
+except (ValueError,TypeError):request={}
+if request.get('action')=='inspect' and request.get('pane')=='p1' and (gate/'armed').exists():
+ try:
+  fd=os.open(gate/'blocked',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ except FileExistsError:pass
+ else:
+  os.write(fd,str(os.getpid()).encode());os.close(fd)
+  until=time.monotonic()+30
+  while not (gate/'release').exists():
+   if time.monotonic()>until:raise SystemExit('private launch gate timed out')
+   time.sleep(.02)
+os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
+'''.replace('GATE_PATH',repr(str(gate))).replace('REAL_PYTHON',repr(real_python)))
+        wrapper.chmod(0o700);env['PATH']=str(bindir)+os.pathsep+env['PATH']
     if args.plugin_popups_ui:
         env.update(STARFLUX_PANE='32',STARFLUX_PLUGIN_PANE_ID='inherited-pane',STARFLUX_PLUGIN_JOB_ID='inherited-job')
     if args.notifications:
@@ -258,10 +327,14 @@ for line in sys.stdin:
         resumed=Client(client.identity,remote=args.ssh,executable=client.executable)
         wait(lambda:resumed.scene and resumed.snapshot().get('panes') and resumed.snapshot()['panes'][0].get('pid'),'view did not resume')
         return resumed
-    def check_startup(expected,expected_pid,explicit=False,machine=None):
+    def check_startup(expected,expected_pid,explicit=False,machine=None,focus=None,controller_env=None,focus_epoch=None):
         identity='v-startup-explicit' if explicit else 'v-startup-default'
         command=[str(app),'--cells','--frontend',identity]
-        if explicit:command+=['--workspace',name]
+        if explicit or focus:command+=['--workspace',expected]
+        if focus:command+=['--focus-pane',str(focus)]
+        if focus_epoch:command+=['--focus-pane-epoch',focus_epoch]
+        controller_env=controller_env or env
+        controller_state=Path(controller_env['XDG_RUNTIME_DIR'])/'starflux'
         if args.ssh and not machine:
             wrapper=tmp/'remote-starflux'
             wrapper.write_text('#!/bin/sh\nexec '+shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_HERDR','HERDR_CONFIG_PATH','PATH')],str(app)])+' "$@"\n');wrapper.chmod(0o700)
@@ -269,26 +342,39 @@ for line in sys.stdin:
             config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
             command+=['--ssh','proof','--ssh-config',str(config),'--remote-executable',str(wrapper)]
         if machine:command += ["--machine",machine]
-        (state/(identity+'.state.json')).unlink(missing_ok=True)
+        (controller_state/(identity+'.state.json')).unlink(missing_ok=True)
         master,slave=pty.openpty()
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',35,100,0,0))
         process=subprocess.Popen(command,stdin=slave,stdout=slave,stderr=(tmp/(identity+'.log')).open('w'),env={**env,'TERM':'xterm-256color'},start_new_session=True)
         processes.append(process);os.close(slave)
+        rendered=threading.Event()
         def drain():
+            tail=b''
             try:
-                while os.read(master,65536):pass
+                while chunk:=os.read(master,65536):
+                    tail+=chunk
+                    if b'SESSION_PROOF_PID' in tail:
+                        rendered.set()
+                    tail=tail[-32:]
             except OSError:pass
         threading.Thread(target=drain,daemon=True).start()
         try:
+            def focused_pid(snapshot):
+                if focus:
+                    return next(((entry.get('health') or {}).get('pid') for entry in snapshot.get('sessions',[])
+                                 if entry['pane']==focus-1),None)
+                panes=snapshot.get('panes',[])
+                return panes[0].get('pid') if panes else None
             def loaded():
                 try:
-                    snapshot=json.loads((state/(identity+'.state.json')).read_text())
-                    return snapshot if snapshot.get('panes') and snapshot['panes'][0].get('pid') else None
+                    snapshot=json.loads((controller_state/(identity+'.state.json')).read_text())
+                    return snapshot if focused_pid(snapshot) and (not focus or snapshot.get('active')==focus-1) else None
                 except (OSError,ValueError):return None
             snapshot=wait(loaded,'default startup failed')
-            assert snapshot['active_project']==expected,(snapshot['active_project'],expected,command,subprocess.check_output([str(app),'--default-workspace'],env=env,text=True).strip(),(state/(identity+'.frontend.json')).read_text(),snapshot['workspace'])
-            assert snapshot['panes'][0]['pid']==expected_pid,'Startup replaced the existing terminal process'
-            subprocess.run([str(app),'--workspace',expected,'--frontend',identity,'--close'],env=env,check=True,capture_output=True)
+            assert snapshot['active_project']==expected,(snapshot['active_project'],expected,command,subprocess.check_output([str(app),'--default-workspace'],env=env,text=True).strip(),(controller_state/(identity+'.frontend.json')).read_text(),snapshot['workspace'])
+            assert focused_pid(snapshot)==expected_pid,'Startup replaced the existing terminal process'
+            if focus:wait(rendered.is_set,'remote presenter did not render the selected pane')
+            subprocess.run([str(app),'--workspace',expected,'--frontend',identity,'--close'],env=controller_env,check=True,capture_output=True)
             process.wait(timeout=5)
         finally:
             if process.poll() is None:process.terminate();process.wait(timeout=3)
@@ -373,6 +459,89 @@ GLib.MainLoop().run()
             assert references[0]==references[1],'independent views did not share the native source'
             print(json.dumps(dict(native_source_backend_verified=True,ssh=args.ssh,cells=args.cells)),flush=True)
         original_pid=a.snapshot()['panes'][0]['pid']
+        if claude_resume:
+            assert claude_resume[0]=='bwrap' and '--unshare-net' in claude_resume
+            conversation=claude_resume[-1]
+            report_cmd=[str(app),'--workspace',name]
+            def agent_status():
+                return json.loads(subprocess.check_output([*report_cmd,'--agent-status'],env=env,timeout=8))
+            pane=agent_status()['panes'][0];health=pane['status']
+            assert health['agent']=='claude',health.get('agent')
+            # Preserve only the private transport environment when running the
+            # adapter inside the isolated Claude process.
+            shim=tmp/'claude-resume-fixture.py'
+            launch_args=tmp/'claude-launch-args.json'
+            shim.write_text(
+                "import json, os, sys\nfrom pathlib import Path\n"
+                f"argv = json.loads(Path({str(launch_args)!r}).read_text()) + sys.argv[1:]\n"
+                "bindings = []\n"
+                "for key in ('STARFLUX_WORKSPACE','STARFLUX_PANE','STARFLUX_PANE_EPOCH',"
+                "'XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_RUNTIME_DIR','TMUX_TMPDIR'):\n"
+                "    bindings.extend(['--setenv', key, os.environ[key]])\n"
+                "index = argv.index('--clearenv') + 1\n"
+                "os.execvp(argv[0], argv[:index] + bindings + argv[index:])\n"
+            )
+            resume=[sys.executable,str(shim),conversation]
+            launch=claude_resume[:-1]
+            mount=launch.index('--chdir')
+            launch[mount:mount]=['--bind',str(tmp),str(tmp)]
+            settings_index=launch.index('--settings')+1
+            settings=json.loads(launch[settings_index])
+            settings['hooks']['SessionStart'].extend(generated_session_hooks('claude',
+                [*resume[:-1],'{session_id}'],env))
+            launch[settings_index]=json.dumps(settings)
+            launch_args.write_text(json.dumps(launch))
+            run=str(uuid.uuid4())
+            report=dict(run_id=run,sequence=1,epoch=pane['epoch'],agent_pid=health['agent_pid'],
+                        agent_start_ticks=health['agent_start_ticks'],boot_id=health['boot_id'],
+                        harness='claude',source='fixture:claude-source',state='idle',
+                        conversation_id=conversation,resume_argv=resume)
+            result=subprocess.run([*report_cmd,'--pane','1','--agent-report',json.dumps(report)],
+                                  env=env,capture_output=True,text=True,timeout=8)
+            assert result.returncode==0,result.stderr
+            a.action('agent-resume:0:'+run)
+            def confirmed():
+                return any(r['pane']==1 and r['harness']=='claude'
+                           and r['source']=='claude:session-start'
+                           and r['conversation_id']==conversation
+                           for r in agent_status()['records'])
+            wait(confirmed,'Claude did not register the exact thread in the new pane',timeout=25)
+            assert alive(original_pid),'resume stopped the source process'
+            print(json.dumps(dict(result='PASS',claude_exact_resume=True,
+                                  claude_direct_callback=True,original_process_preserved=True)))
+            raise SystemExit(0)
+        if args.native_launch_race:
+            status=json.loads(subprocess.check_output([str(app),'--workspace',name,'--agent-status'],env=env))['panes'][0]
+            process=status['status'];run=secrets.token_hex(16)
+            report=dict(run_id=run,sequence=1,epoch=status['epoch'],agent_pid=process['agent_pid'],agent_start_ticks=process['agent_start_ticks'],boot_id=process['boot_id'],harness='codex',source='fixture:launch-race',state='working',conversation_id='exact-thread',resume_argv=[str(shell),'exact-thread'])
+            subprocess.run([str(app),'--workspace',name,'--pane','1','--agent-report',json.dumps(report)],env=env,check=True,capture_output=True)
+            wait(lambda:any(((s.get('health') or {}).get('agent_record') or {}).get('run_id')==run for s in a.snapshot().get('sessions',[])),'resume registration missing')
+            (gate/'armed').touch();a.action('agent-resume:0:'+run)
+            wait(lambda:(gate/'blocked').exists(),'native opener did not reach the forced handoff window')
+            try:
+                # The other view must resolve the shared command before the
+                # stalled opener continues, rather than relying on a retry.
+                wait(lambda:launches.exists(),'competing frontend did not execute the saved resume command while opener was stalled')
+                entries=[json.loads(line) for line in launches.read_text().splitlines()]
+                assert len(entries)==1 and entries[0]['argv']==['exact-thread'],'resume command was duplicated or changed'
+                assert alive(int((gate/'blocked').read_text())) and not (gate/'release').exists(),'opener was no longer stalled when the competing frontend resumed'
+                assert alive(entries[0]['pid']) and alive(original_pid),'resume damaged the original terminal'
+                wait(lambda:b.snapshot().get('project_state',{}).get('native_sources',{}).get('1',{}).get('binding',{}).get('source'),'other frontend did not publish the resumed source')
+                for client in (a,b):
+                    client.action('terminal:0')
+                    wait(lambda:client.snapshot().get('project_state',{}).get('terminal')==0 and any(t.get('pane')==0 for t in client.snapshot().get('direct_terminals',[])),'original terminal did not focus during handoff')
+                    client.paste('DURING_HANDOFF_'+client.identity);client.key('enter')
+                wait(lambda:all(any('REPLY=DURING_HANDOFF_'+c.identity in t['text'] for t in c.snapshot().get('direct_terminals',[])) for c in (a,b)),'ordinary terminal input stalled during native handoff')
+                assert alive(int((gate/'blocked').read_text())) and not (gate/'release').exists(),'handoff gate ended before ordinary input was checked'
+            finally:(gate/'release').touch()
+            for client in (a,b):client.action('terminal:1')
+            wait(lambda:all(any('RESUMED_EXACT_THREAD' in t['text'] for t in c.snapshot().get('direct_terminals',[])) for c in (a,b)),'frontends did not share the resumed conversation source')
+            bindings=[c.snapshot()['project_state']['native_sources']['1']['binding'] for c in (a,b)]
+            assert bindings[0]==bindings[1] and len(launches.read_text().splitlines())==1,'handoff replayed resume or split ownership'
+            receipt=tmp/'data/starflux/screens'/name/'p1.launch.json'
+            assert receipt.exists() and receipt.stat().st_mode&0o777==0o600,'one-shot receipt missing or public'
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,forced_pre_intent_handoff=True,resume_before_gate_release=True,exact_vector_once=True,shared_source=True,ordinary_input_preserved=True,original_process_preserved=True)))
+            raise SystemExit(0)
         if args.theme_settings:
             def appearance_is(theme):
                 return all(c.snapshot().get('appearance',{}).get('id')==theme for c in (a,b))
@@ -577,7 +746,68 @@ GLib.MainLoop().run()
             assert b.snapshot()['active']==0
             stale=command(dict(kind='select_pane',project=name,pane=created['pane'],epoch='wrong-generation'))
             assert stale['status']=='rejected' and stale['error']['code']=='stale_target',stale
-            a.action('terminal:split-right');wait(lambda:a.snapshot()['project_state']['split'],'split missing')
+            split_params=dict(kind='split_pane',project=name,pane=created['pane'],
+                              epoch=created['epoch'],axis='right')
+            wrong=command({**split_params,'pane':1,'epoch':a.snapshot()['project_state']['terminal_epochs'].get('0')})
+            assert wrong['status']=='rejected' and wrong['error']['code']=='stale_target',wrong
+            split=command(split_params)
+            assert split['status']=='applied' and split['result']['pane']!=created['pane'],split
+            wait(lambda:a.snapshot()['project_state']['split'],'split missing')
+            new_pane=split['result']['pane']
+            def new_target():
+                return api('panes.get',dict(project=name,pane=new_pane)).get('target')
+            added=wait(new_target,'split terminal did not start')
+            move=dict(kind='move_pane',project=name,pane=new_pane,epoch=added['epoch'],direction='left')
+            move_op=str(uuid.uuid4())
+            moved=command(move,move_op)
+            assert moved['status']=='applied' and moved['result']['pane']==new_pane,moved
+            wait(lambda:a.snapshot()['project_state']['pane_tree']['first']['id']==new_pane-1,
+                 'typed pane move did not rearrange the split')
+            assert command(move,move_op)==moved,'operation replay repeated the move'
+            no_neighbor=command(move)
+            assert no_neighbor['status']=='rejected' and no_neighbor['error']['code']=='no_neighbor',no_neighbor
+            assert command({**move,'direction':'right'})['status']=='applied'
+            assert new_target()['pid']==added['pid'] and not b.snapshot()['project_state']['split']
+
+            assert next(view for view in api('frontends.list')['frontends']
+                        if view['frontend']==a.identity)['split_existing_tab_commands']
+            existing=dict(kind='split_existing_tab',project=name,pane=new_pane,epoch=added['epoch'],
+                          tab=1,tab_epoch=a.snapshot()['project_state']['terminal_epochs'].get('0'),axis='down')
+            rejected=command({**existing,'tab_epoch':'wrong-generation'})
+            assert rejected['status']=='rejected' and rejected['error']['code']=='stale_target',rejected
+            existing_op=str(uuid.uuid4());placed=command(existing,existing_op)
+            assert placed['status']=='applied' and placed['result']['pane']==1,placed
+            wait(lambda:len(a.snapshot()['pane_layout']['panes'])==3,'typed existing tab did not join split')
+            assert command(existing,existing_op)==placed and alive(original_pid)
+            assert not b.snapshot()['project_state']['split']
+            assert next(view for view in api('frontends.list')['frontends']
+                        if view['frontend']==a.identity)['close_split_pane_commands']
+            assert command(dict(kind='select_pane',project=name,pane=new_pane,epoch=added['epoch']))['status']=='applied'
+            close=dict(kind='close_split_pane',project=name,pane=1,epoch=existing['tab_epoch'])
+            stale_close=command({**close,'epoch':'wrong-generation'})
+            assert stale_close['status']=='rejected' and stale_close['error']['code']=='stale_target',stale_close
+            close_op=str(uuid.uuid4());closed=command(close,close_op)
+            assert closed['status']=='applied' and closed['result']['pane']==new_pane,closed
+            wait(lambda:len(a.snapshot()['pane_layout']['panes'])==2,'typed split did not collapse back')
+            assert command(close,close_op)==closed and alive(original_pid) and not b.snapshot()['project_state']['split']
+            already_hidden=command(close)
+            assert already_hidden['status']=='rejected' and already_hidden['error']['code']=='pane_not_in_layout',already_hidden
+            assert next(view for view in api('frontends.list')['frontends']
+                        if view['frontend']==a.identity)['move_pane_to_edge_commands']
+            remaining_tree=a.snapshot()['project_state']['pane_tree']
+            edge=dict(kind='move_pane_to_edge',project=name,pane=1,epoch=existing['tab_epoch'],direction='down')
+            stale_edge=command({**edge,'epoch':'wrong-generation'})
+            assert stale_edge['status']=='rejected' and stale_edge['error']['code']=='stale_target',stale_edge
+            edge_op=str(uuid.uuid4());placement=command(edge,edge_op)
+            assert placement['status']=='applied' and placement['result']['pane']==1,placement
+            def at_bottom():
+                tree=a.snapshot()['project_state']['pane_tree']
+                return tree['axis']=='down' and tree['second']==dict(kind='leaf',id=0) and tree['first']==remaining_tree
+            wait(at_bottom,'typed edge move did not preserve the remaining branches')
+            assert command(edge,edge_op)==placement and alive(original_pid) and not b.snapshot()['project_state']['split']
+            assert command(close)['status']=='applied'
+            wait(lambda:a.snapshot()['project_state']['pane_tree']==remaining_tree,'edge pane close changed the retained tree')
+
             zoom=command(dict(kind='set_zoom',project=name,enabled=True));assert zoom['status']=='applied' and zoom['result']['zoomed']
             command(dict(kind='set_zoom',project=name,enabled=False))
             focused=command(dict(kind='focus_pane',project=name,direction='right'));assert focused['status']=='applied'
@@ -650,7 +880,7 @@ GLib.MainLoop().run()
             rejected=command(dict(kind='select_project',project=name));assert rejected['status']=='rejected' and rejected['error']['code']=='wrong_session'
             assert b.snapshot()['active_project']==name and b.snapshot()['controller_pid']==other and alive(original_pid)
             assert (tmp/'data/starflux/automation/frontends'/(pending+'.json')).stat().st_mode&0o777==0o600
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,targeted_acknowledgements=True,independent_views=True,epoch_guards=True,modal_protection=True,at_most_once=True,cancel_and_expiry=True,controller_restart_guards=True,lost_ack_not_repeated=True,cross_session_navigation=True,private_receipts=True,original_processes_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,targeted_acknowledgements=True,typed_pane_split_and_move=True,independent_views=True,epoch_guards=True,modal_protection=True,at_most_once=True,cancel_and_expiry=True,controller_restart_guards=True,lost_ack_not_repeated=True,cross_session_navigation=True,private_receipts=True,original_processes_preserved=True)))
             raise SystemExit(0)
         if args.query_upgrade:
             controller=a.snapshot()['controller_pid'];assert Path('/proc',str(controller),'exe').stat().st_ino==copied.stat().st_ino,'fixture controller did not load the disposable build'
@@ -880,6 +1110,7 @@ GLib.MainLoop().run()
             wait(lambda:'Saved screen' in (a.snapshot().get('terminal_review') or {}).get('source',''),'saved screen did not open')
             def restored():return any('BEFORE_COLD_RESTART' in ''.join(run['text'] for run in row['runs']) for frame in a.all_frames for row in frame['rows'])
             wait(restored,'saved screen pixels/cells were not restored')
+            assert a.snapshot()['terminal_review']['cursor']==old['cursor'],(a.snapshot()['terminal_review'],old['cursor'])
             assert not b.snapshot().get('terminal_review'),'saved review affected another frontend'
             assert not a.clipboards and not any(marker.exists() for marker in markers)
             assert archive(0,True)['formatted']==old['formatted'],'review changed archive'
@@ -891,6 +1122,26 @@ GLib.MainLoop().run()
             wait(lambda:'Read saved screen' in (a.snapshot().get('terminal_review') or {}).get('source',''),'invalid archive was not reported')
             assert not a.clipboards and all(alive(p['pid']) for p in a.snapshot()['panes'])
             previous.write_bytes(valid);a.key('escape');wait(lambda:not a.snapshot().get('terminal_review'),'failed preview did not close')
+            current=screens/'p0.screen.json'
+            corrupt=current.with_suffix('.fixture')
+            corrupt.write_text('{broken current')
+            corrupt.replace(current)
+            a.paste('REPAIR_CURRENT_SCREEN');a.key('enter')
+            wait(lambda:'REPAIR_CURRENT_SCREEN' in archive(0).get('formatted',''),
+                 'a new capture did not replace the corrupt current preview',timeout=20)
+            assert previous.read_bytes()==valid,'repair overwrote the previous-process preview'
+            os.mkfifo(corrupt);corrupt.replace(current)
+            a.paste('REPAIR_NONREGULAR_SCREEN');a.key('enter')
+            wait(lambda:current.is_file() and 'REPAIR_NONREGULAR_SCREEN' in archive(0).get('formatted',''),
+                 'a nonregular archive stalled screen capture',timeout=20)
+            assert previous.read_bytes()==valid,'nonregular archive repair changed the previous preview'
+            actual=json.loads(current.read_text())
+            switched=dict(actual,alternate=not actual['alternate'])
+            corrupt.write_text(json.dumps(switched));corrupt.replace(current)
+            a.action('screen-saving:on')
+            wait(lambda:archive(0).get('alternate')==actual['alternate'],
+                 'metadata-only buffer change did not update the snapshot',timeout=20)
+            assert previous.read_bytes()==valid,'metadata correction changed the previous-process preview'
             a.action('screen-saving:off')
             wait(lambda:not a.snapshot()['project_state']['save_terminal_screens'] and not list(screens.glob('p*.screen.json')) and not list(screens.glob('p*.previous-screen.json')),'screen saving did not pause and clear')
             a.paste('WHILE_PAUSED');a.key('enter');time.sleep(6)
@@ -904,7 +1155,7 @@ GLib.MainLoop().run()
             wait(lambda:new_receipt.exists(),'cold resume did not consume its launch intent')
             assert new_receipt.stat().st_mode&0o777==0o600
             assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'cold recovery changed imported source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_source_recovery_confirmed=args.native_sources,cold_runtime_restored=True,split_layout_restored=True,styled_unicode_screen=True,previous_process_screen=True,clock_correction_safe=True,saved_commands_not_restarted=True,consumed_intents_not_replayed=True,cold_conversation_resume=True,invalid_archive_reported=True,pause_clear_resume=True,review_is_read_only=True,independent_frontends=True,new_shell_input=True,unrelated_source_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_source_recovery_confirmed=args.native_sources,cold_runtime_restored=True,split_layout_restored=True,styled_unicode_screen=True,previous_process_screen=True,archived_cursor_restored=True,clock_correction_safe=True,saved_commands_not_restarted=True,consumed_intents_not_replayed=True,cold_conversation_resume=True,invalid_archive_reported=True,corrupt_current_repaired=True,metadata_only_preview_changes=True,pause_clear_resume=True,review_is_read_only=True,independent_frontends=True,new_shell_input=True,unrelated_source_preserved=True)))
             raise SystemExit(0)
         if args.narrow:
             def menu(title):return wait(lambda:(m if (m:=a.snapshot().get('context_menu')) and m['title']==title else None),'missing '+title)
@@ -1022,6 +1273,106 @@ GLib.MainLoop().run()
                 return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
             wait(lambda:a.snapshot()['panes'][0].get('agent_pid'),'fixture agent identity missing')
             first=report_for(name,'conversation-café-界')
+            if args.ssh_notification_client:
+                publish(name,first,'completed')
+                remote_helper=tmp/'notification SSH helper'
+                checked=tmp/'remote-attention-polled'
+                remote_helper.write_text(
+                    '#!/usr/bin/python3\nimport json, os, subprocess, sys\nfrom pathlib import Path\n'
+                    f"args = {[str(app)]!r} + sys.argv[1:]\n"
+                    f"env = {{**os.environ, **{ {k:env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH')}!r}}}\n"
+                    "result = subprocess.run(args,env=env,capture_output=True) if '--api' in args else None\n"
+                    "if result is None: os.execve(args[0],args,env)\n"
+                    f"if result.returncode==0 and any('ssh-attention' in arg for arg in args) and json.loads(result.stdout).get('ok'): Path({str(checked)!r}).touch()\n"
+                    "sys.stdout.buffer.write(result.stdout);sys.stderr.buffer.write(result.stderr)\n"
+                    "raise SystemExit(result.returncode)\n"
+                )
+                remote_helper.chmod(0o700)
+                client=tmp/'presentation';client.mkdir(mode=0o700)
+                local_config=client/'config/starflux';local_config.mkdir(mode=0o700,parents=True)
+                local_settings=api('notifications.settings')['settings']
+                local_settings.update(delivery='system',suppress_active=True)
+                (local_config/'notifications.json').write_text(json.dumps(local_settings))
+                presenter_env={**env,'XDG_CONFIG_HOME':str(client/'config'),
+                               'XDG_DATA_HOME':str(client/'data'),'TERM':'xterm-256color'}
+                identity='v-local-notifications'
+                ssh_profile=tmp/'notification-ssh-config'
+                ssh_profile.write_text(
+                    f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n'
+                    f' IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n'
+                    f' StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n'
+                )
+                argv=[str(app),'--ssh','proof','--ssh-config',str(ssh_profile),
+                      '--remote-executable',str(remote_helper),'--workspace',name,
+                      '--frontend',identity,'--cells','--ssh-notifications']
+                master,slave=pty.openpty()
+                termios.tcsetwinsize(slave,(32,100))
+                presenter=subprocess.Popen(argv,stdin=slave,stdout=slave,stderr=(tmp/'notification-presenter.log').open('w'),
+                                           env=presenter_env,start_new_session=True)
+                processes.append(presenter)
+                reporting=threading.Event()
+                def drain_presenter():
+                    tail=b''
+                    try:
+                        while chunk:=os.read(master,65536):
+                            tail+=chunk
+                            if b'\x1b[?1004h' in tail:
+                                reporting.set()
+                            tail=tail[-8:]
+                    except OSError:pass
+                threading.Thread(target=drain_presenter,daemon=True).start()
+                try:
+                    def forwarded_focus(expected):
+                        focus=api('attention.forward',dict(workspace=name,frontend=identity))['focus']
+                        return focus if focus and focus['focused'] is expected else None
+                    wait(checked.exists,'SSH presenter did not establish an attention baseline',timeout=20)
+                    wait(lambda:forwarded_focus(False),'SSH frontend focus record missing')
+                    wait(reporting.is_set,'SSH presenter did not enable terminal focus reporting')
+                    def focus_event(expected):
+                        next_send=0
+                        def sample():
+                            nonlocal next_send
+                            focus=forwarded_focus(expected)
+                            if focus: return focus
+                            if time.monotonic() >= next_send:
+                                tty.setraw(slave,termios.TCSANOW)
+                                os.write(master,b'\x1b[I' if expected else b'\x1b[O')
+                                next_send=time.monotonic()+.25
+                            return None
+                        return wait(sample,'SSH presenter did not forward the terminal focus event')
+                    focused=focus_event(True)
+                    assert focused['project']==name and focused['pane']==0
+                    api('attention.forward',dict(workspace='extra-a',frontend=identity),ok=False)
+                    publish(name,first,'working');publish(name,first,'needs_input')
+                    def suppressed():
+                        for path in (client/'data/starflux/notifications').glob('ssh-*.json'):
+                            try:
+                                if any(record['outcome']=='suppressed_active' for record in json.loads(path.read_text()).values()):
+                                    return True
+                            except (OSError,ValueError): pass
+                        return False
+                    wait(suppressed,'focused SSH pane was not suppressed',timeout=20)
+                    assert calls()==[],'SSH presenter delivered a focused or older item'
+                    focus_event(False)
+                    publish(name,first,'working');publish(name,first,'waiting_for_approval')
+                    wait(lambda:len(calls())==1,'new remote approval did not reach the local helper',timeout=20)
+                    assert any('Approval requested' in arg for arg in calls()[0]),calls()
+                    time.sleep(4.5)
+                    assert len(calls())==1,'a subsequent poll duplicated desktop delivery'
+                    subprocess.run([str(app),'--workspace',name,'--frontend',identity,
+                                    '--action','project:extra-a'],env=env,check=True,capture_output=True)
+                    wait(lambda:(forwarded_focus(False) or {}).get('project')=='extra-a',
+                         'forwarding did not follow the selected project')
+                    assert alive(original_pid)
+                    print(json.dumps(dict(result='PASS',ssh_desktop_forwarding=True,focused_pane_suppression=True,
+                                          follows_selected_project=True,
+                                          old_items_skipped=True,duplicate_suppressed=True,original_process_preserved=True)))
+                finally:
+                    subprocess.run([str(app),'--workspace',name,'--frontend',identity,'--close'],env=env,capture_output=True)
+                    if presenter.poll() is None:
+                        presenter.terminate();presenter.wait(timeout=5)
+                    os.close(master);os.close(slave)
+                raise SystemExit(0)
             old_settings=api('notifications.settings')['settings']
             assert old_settings['delivery']=='in_app'
             configure(delivery='system',suppress_active=True)
@@ -1033,16 +1384,25 @@ GLib.MainLoop().run()
             wait(lambda:len(api('notifications.delivery')['attempts'])==5 and all(v['outcome']=='submitted' for v in api('notifications.delivery')['attempts'].values()),'desktop helper did not accept all five notifications')
             page=api('attention.query',dict(limit=2));next_page=api('attention.query',dict(limit=2,offset=2))
             assert page['total']==5 and len(page['items'])==2 and len(next_page['items'])==2
+            empty=api('attention.query',dict(search='no fixture matches this',limit=2,offset=4))
+            assert empty['total']==0 and empty['offset']==0 and empty['items']==[],empty
             assert not {i['event']['id'] for i in page['items']} & {i['event']['id'] for i in next_page['items']}
             api('attention.query',dict(limit=251),ok=False)
             a.shortcut('char:i');menu('Attention inbox')
             wait(lambda:len(a.snapshot().get('attention_items',[]))==5,'inbox event rows missing')
             view_query=tmp/'data/starflux/projects'/f'{a.identity}.attention-query.json'
-            view_query.write_text(json.dumps({**a.snapshot()['attention_query'],'limit':2}))
+            view_query.write_text(json.dumps({**a.snapshot()['attention_query'],'limit':2,'offset':100}))
             a=restart(a);a.shortcut('char:i');menu('Attention inbox')
-            assert a.snapshot()['attention_total']==5 and len(a.snapshot()['attention_items'])==2
-            a.action('attention:next');wait(lambda:a.snapshot()['attention_query']['offset']==2 and len(a.snapshot()['attention_items'])==2,'next inbox page failed')
-            a.action('attention:previous');wait(lambda:a.snapshot()['attention_query']['offset']==0 and len(a.snapshot()['attention_items'])==2,'previous inbox page failed')
+            assert a.snapshot()['attention_total']==5 and len(a.snapshot()['attention_items'])==1
+            assert a.snapshot()['attention_query']['offset']==4 and json.loads(view_query.read_text())['offset']==4
+            a.action('attention:previous');wait(lambda:a.snapshot()['attention_query']['offset']==2,'clamped page did not move back')
+            menu('Attention inbox')
+            a.action('attention:previous');wait(lambda:a.snapshot()['attention_query']['offset']==0,'first inbox page did not restore')
+            menu('Attention inbox')
+            a.key('right');wait(lambda:a.snapshot()['attention_query']['offset']==2 and len(a.snapshot()['attention_items'])==2,'next inbox page failed')
+            menu('Attention inbox')
+            a.key('left');wait(lambda:a.snapshot()['attention_query']['offset']==0 and len(a.snapshot()['attention_items'])==2,'previous inbox page failed')
+            menu('Attention inbox')
             view_query.write_text(json.dumps({**a.snapshot()['attention_query'],'limit':100}))
             a=restart(a);a.shortcut('char:i');menu('Attention inbox')
             assert len(a.snapshot()['attention_items'])==5
@@ -1050,7 +1410,14 @@ GLib.MainLoop().run()
             a.paste('CAFÉ 界');a.accept();menu('Attention inbox')
             assert len(a.snapshot()['attention_items'])==5,'Unicode conversation search failed'
             a.action('attention:state');wait(lambda:a.snapshot()['attention_query']['state']=='needs_input' and len(a.snapshot()['attention_items'])==1,'state filter failed')
-            a.action('attention:mark');wait(lambda:len(query())==4,'matching mark-read failed')
+            a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'filtered inbox did not close')
+            a.action('attention:mark')
+            wait(lambda:'Open the attention inbox before marking a page read' in a.snapshot().get('status',''),
+                 'hidden page was allowed to mark notifications read')
+            assert len(query())==5
+            a.shortcut('char:i');inbox=menu('Attention inbox')
+            mark=next(i for i,item in enumerate(inbox['items']) if item['action']=='attention:mark')
+            a.action('menu:item:'+str(mark));wait(lambda:len(query())==4,'matching mark-read failed')
             menu('Attention inbox');wait(lambda:not a.snapshot()['attention_items'],'mark-read did not update filtered page')
             a.action('attention:read');wait(lambda:a.snapshot()['attention_query']['read']=='all' and len(a.snapshot()['attention_items'])==1,'read history missing')
             assert a.snapshot()['attention_items'][0]['event']['dismissed']
@@ -1078,8 +1445,9 @@ GLib.MainLoop().run()
             assert len(query(session=other['session_id']))==1
             assert len(query(project=name,source='reported'))==6 and not query(source='screen')
             assert len(query(search='fixture:provider completed'))==1
-            assert len(calls())==6,'failed delivery was retried during a new event'
-            wait(lambda:len(calls())==7,'other session notification missing')
+            wait(lambda:len(calls())>=7,'other session notification missing')
+            assert len(calls())==7 and any('Approval requested' in value for value in calls()[-1]), \
+                'failed delivery was retried during a new event'
             # Invalid/stale settings and an all-or-nothing per-project mark-read batch.
             latest=api('notifications.settings')['settings']
             api('notifications.configure',dict(settings={**latest,'retention_days':4000},expected_revision=latest['revision']),write=True,ok=False)
@@ -1116,6 +1484,22 @@ GLib.MainLoop().run()
             settings_path=tmp/'config/starflux/notifications.json';prior=settings_path.read_bytes();settings_path.write_text('{broken')
             publish(name,first,'working');publish(name,first,'waiting_for_approval')
             api('notifications.settings',ok=False);assert settings_path.read_text()=='{broken';settings_path.write_bytes(prior)
+            stale_project=other['active_project'];stale_event=query(project=stale_project)[0]['event']['id']
+            stale_target=api('panes.get',dict(project=stale_project,pane=1))['target']
+            assert api('panes.terminate',dict(target=stale_target,confirm='TERMINATE'),write=True)['terminated']
+            a.action(f'attention:view:{stale_project}:{stale_event}')
+            detail=menu('Attention item')
+            assert any(row['label']=='Original pane no longer exists' for row in detail['items'])
+            assert not any(row['action'].startswith('attention:open:') for row in detail['items'])
+            assert any(row['action']==f'attention:dismiss:{stale_project}:{stale_event}' for row in detail['items'])
+            copy=next(row['action'] for row in detail['items'] if row['label']=='Copy conversation ID')
+            copies=len(a.clipboards);a.action(copy)
+            wait(lambda:len(a.clipboards)>copies and a.clipboards[-1]=='other-conversation',
+                 'archived attention item did not copy the exact conversation ID')
+            a.action(f'attention:open:{stale_project}:{stale_event}')
+            wait(lambda:'Original pane no longer exists' in a.snapshot().get('status',''),
+                 'stale direct attention navigation was not rejected')
+            assert a.snapshot()['active_project']==name and query(project=stale_project)[0]['event']['id']==stale_event
             if args.notification_service:
                 native=[json.loads(line) for line in (tmp/'native-notifications').read_text().splitlines()]
                 assert len(native)==6 and all(n['app']=='STAR/FLUX' and n['title'].startswith('STAR/FLUX') for n in native),native
@@ -1150,6 +1534,317 @@ GLib.MainLoop().run()
             checked=wait(lambda:a.snapshot().get('machine_checks',{}).get(saved['id']),'connection probe missing',timeout=35)
             assert checked['connected'] and checked['project_terminals_ready'] and checked['workspace_api_ready'],checked
             assert (tmp/'machine-invocations').exists(),'probe did not invoke the remote helper'
+            # Two profiles use independent controllers and private data roots.
+            isolated=tmp/'second-controller'
+            isolated.mkdir(mode=0o700)
+            for directory in ('runtime','tmux'):
+                (isolated/directory).mkdir(mode=0o700)
+            second_env={**env,'XDG_RUNTIME_DIR':str(isolated/'runtime'),
+                        'XDG_DATA_HOME':str(isolated/'data'),'XDG_CONFIG_HOME':str(isolated/'config'),
+                        'TMUX_TMPDIR':str(isolated/'tmux')}
+            second_wrapper=tmp/'second workspace helper'
+            reject_prepare=tmp/'reject-remote-prepare'
+            hold_switch=tmp/'hold-switch'
+            switch_started=tmp/'switch-started'
+            switch_checked=tmp/'switch-checked'
+            second_command=shlex.join(['env',*[key+'='+second_env[key] for key in
+                ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL')],str(app)])
+            second_wrapper.write_text('#!/bin/sh\n'
+                + 'if [ "$1" = --prepare-pane-launch ] && [ -f '+shlex.quote(str(reject_prepare))
+                + ' ]; then echo "private destination failed after preflight" >&2; exit 2; fi\n'
+                + 'case "$1:$2" in --api:*machine-switch*) if [ -f '+shlex.quote(str(hold_switch))
+                + ' ]; then touch '+shlex.quote(str(switch_started))
+                + '; while [ -f '+shlex.quote(str(hold_switch))+' ]; do sleep .05; done; '
+                + second_command+' "$@"; result=$?; touch '+shlex.quote(str(switch_checked))
+                + '; exit "$result"; fi;; esac\n'
+                + 'exec '+second_command+' "$@"\n')
+            second_wrapper.chmod(0o700)
+            second=api('machines.save',dict(label='Second controller',target='proof',ssh_config=str(host_config),
+                                           remote_executable=str(second_wrapper)),write=True)
+            broken_page=api('machines.save',dict(label='Unavailable controller',target='proof',ssh_config=str(host_config),
+                                                remote_executable=str(tmp/'missing-agent-helper')),write=True)
+            second_project=None
+            try:
+                second_session=api('sessions.create',dict(name='Independent controller',directory=str(tmp)),
+                                   write=True,machine=second['id'])
+                second_project=second_session['project']
+                def agent_overview():
+                    pages=api('machines.agents',dict(machines=[saved['id'],second['id'],broken_page['id']]))
+                    hosts={entry['machine']:entry for entry in pages['machines']}
+                    assert 'error' in hosts[broken_page['id']],hosts
+                    first=hosts[saved['id']]['page']['agents']
+                    other=hosts[second['id']]['page']['agents']
+                    return first and other and (first,other)
+                first,other=wait(agent_overview,'independent controller agents not found',timeout=20)
+                assert any(row['project']==name and row['harness']=='codex' for row in first),first
+                assert [row['project'] for row in other]==[second_project],other
+                assert second_project not in [row['project'] for row in first]
+                removed_identity=str(uuid.uuid4())
+                surviving,missing=api('machines.agents',dict(machines=[second['id'],removed_identity]))['machines']
+                assert surviving['machine']==second['id'] and [row['project'] for row in surviving['page']['agents']]==[second_project]
+                assert missing==dict(machine=removed_identity,error='Saved machine not found'),missing
+                a.action('machines:list')
+                all_machines=menu('Machines')
+                assert any(item['action']=='machines:agents:0:0' for item in all_machines['items'])
+                a.action('machines:agents:0:0')
+                def rendered_agents():
+                    current=a.snapshot().get('context_menu') or {}
+                    labels=[item['label'] for item in current.get('items',[])]
+                    return current.get('title')=='Agents on saved machines' and any(
+                        'Independent controller · pane 1 · codex' in label for label in labels
+                    ) and any('SSH agent query failed' in label for label in labels)
+                wait(rendered_agents,'combined agent menu did not render both data and host errors',timeout=20)
+                items=a.snapshot()['context_menu']['items']
+                agent_row=next(item for item in items if item['label'].startswith('Independent controller · pane 1'))
+                copies=len(a.clipboards)
+                a.action(agent_row['action'])
+                wait(lambda:len(a.clipboards)>copies,'agent row did not copy its workspace command')
+                first_epoch=other[0]['epoch']
+                assert first_epoch
+                assert shlex.split(a.clipboards[-1])==[
+                    'starflux','--machine',second['id'],'--workspace',second_project,'--focus-pane','1',
+                    '--focus-pane-epoch',first_epoch,'--cells' if args.cells else '--graphical',
+                ]
+                a.action('machines:entry:'+second['id'])
+                details=menu('SSH machine')
+                scoped_action=next(item['action'] for item in details['items'] if item['label']=='Agents on this machine')
+                a.action(scoped_action)
+                def scoped_agents():
+                    current=a.snapshot().get('context_menu') or {}
+                    labels=[item['label'] for item in current.get('items',[])]
+                    return (current if any(item['action']==scoped_action for item in current.get('items',[]))
+                            and any('Independent controller · pane 1 · codex' in label for label in labels) else None)
+                scoped=wait(scoped_agents,'saved machine agent view did not render',timeout=20)
+                assert all(item['action'].startswith('machines:agent-workspace:'+second['id']+':')
+                           for item in scoped['items'] if item['action'].startswith('machines:agent-workspace:')),scoped
+                assert not any(item['label'].startswith(('SSH agent query failed','Next machines'))
+                               for item in scoped['items']),scoped
+                refresh=next(item['action'] for item in scoped['items'] if item['label']=='Refresh agent status')
+                assert refresh==scoped_action
+                a.action(refresh)
+                wait(scoped_agents,'saved machine agent view did not refresh',timeout=20)
+                for pane in range(2,10):
+                    api('panes.create',dict(project=second_project,label='Agent '+str(pane)),write=True,machine=second['id'])
+                a.action(refresh)
+                scoped_api=api('agents.live',dict(project=second_project,session=second_session['session'],
+                                                  offset=8,limit=1),machine=second['id'])
+                assert scoped_api['next_offset'] is None and [
+                    (row['project'],row['pane']) for row in scoped_api['agents']]==[(second_project,9)],scoped_api
+                filtered_hosts=api('machines.agents',dict(machines=[saved['id'],second['id'],broken_page['id']],
+                    session=second_session['session'],offset=8,limit=1))['machines']
+                by_id={host['machine']:host for host in filtered_hosts}
+                assert by_id[second['id']]['page']==scoped_api,by_id[second['id']]
+                assert by_id[saved['id']]['page']==dict(agents=[],warnings=[],next_offset=None)
+                assert 'error' in by_id[broken_page['id']]
+                scoped_host=api('machines.agents',dict(machines=[second['id']],project=second_project,
+                                                       offset=8,limit=1))['machines'][0]
+                assert scoped_host['page']==scoped_api,scoped_host
+                empty=api('agents.live',dict(project=second_project,session='another-session'),
+                          machine=second['id'])
+                assert empty==dict(agents=[],warnings=[],next_offset=None),empty
+                next_page=wait(lambda:next((item['action'] for item in
+                    (a.snapshot().get('context_menu') or {}).get('items',[]) if item['label']=='Next pane page'),None),
+                    'machine-specific next page missing',timeout=20)
+                assert next_page==scoped_action.rsplit(':',1)[0]+':8'
+                a.action('machines:agents:0:0')
+                direct_page=wait(lambda:next((item['action'] for item in
+                    (a.snapshot().get('context_menu') or {}).get('items',[])
+                    if item['label']=='More agents on Second controller'),None),
+                    'combined overview had no direct machine continuation',timeout=20)
+                assert direct_page==next_page+':0:0'
+                a.action(direct_page)
+                wait(lambda:any('Independent controller · pane 9 · codex' in item['label'] for item in
+                     (a.snapshot().get('context_menu') or {}).get('items',[])),
+                     'second page of the selected machine did not render',timeout=20)
+                ninth=next(item for item in a.snapshot()['context_menu']['items']
+                           if item['label'].startswith('Independent controller · pane 9 · codex'))
+                machine_page=a.snapshot()['context_menu']['items']
+                assert next(item['action'] for item in machine_page if item['label']=='Refresh agent status')==direct_page
+                back=next(item['action'] for item in machine_page if item['label']=='Back to combined agents')
+                assert back=='machines:agents:0:0'
+                a.action(back)
+                wait(rendered_agents,'back did not restore the combined view',timeout=20)
+                a.action(direct_page)
+                wait(lambda:any(item['action']==ninth['action'] for item in
+                     (a.snapshot().get('context_menu') or {}).get('items',[])),
+                     'return to the machine pane page failed',timeout=20)
+                copies=len(a.clipboards)
+                a.action(ninth['action'])
+                wait(lambda:len(a.clipboards)>copies,'pane 9 launch command was not copied')
+                launch_ninth=shlex.split(a.clipboards[-1])
+                ninth_target=api('panes.get',dict(project=second_project,pane=9),machine=second['id'])
+                ninth_pid=ninth_target['status']['pid']
+                ninth_epoch=ninth_target['epoch']
+                assert launch_ninth[-5:-1]==['--focus-pane','9','--focus-pane-epoch',ninth_epoch]
+                check_startup(second_project,ninth_pid,machine=second['id'],focus=9,
+                              controller_env=second_env,focus_epoch=ninth_epoch)
+                missing=subprocess.run([str(app),'--machine',second['id'],'--workspace',second_project,
+                                        '--frontend','v-missing-pane','--cells','--focus-pane','32'],
+                                       env=env,capture_output=True,timeout=15)
+                assert missing.returncode and b'Requested pane no longer exists' in missing.stderr,missing
+                assert not (Path(second_env['XDG_RUNTIME_DIR'])/'starflux/v-missing-pane.frontend.json').exists()
+                switch_identity='v-machine-switch-proof'
+                presenter_master,presenter_slave=pty.openpty()
+                termios.tcsetwinsize(presenter_slave,(35,100))
+                presenter=subprocess.Popen([str(app),'--cells','--workspace',name,'--frontend',switch_identity],
+                                           stdin=presenter_slave,stdout=presenter_slave,
+                                           stderr=(tmp/'machine-switch-presenter.log').open('w'),
+                                           env={**env,'TERM':'xterm-256color'},start_new_session=True)
+                os.close(presenter_slave);processes.append(presenter)
+                remote_rendered=threading.Event()
+                local_rendered_after_return=threading.Event()
+                origin_marker=('SESSION_PROOF_PID='+str(original_pid)).encode()
+                marker=('SESSION_PROOF_PID='+str(ninth_pid)).encode()
+                def drain_switch():
+                    tail=b''
+                    try:
+                        while chunk:=os.read(presenter_master,65536):
+                            tail+=chunk
+                            if remote_rendered.is_set() and origin_marker in tail:
+                                local_rendered_after_return.set()
+                            if marker in tail:remote_rendered.set()
+                            tail=tail[-64:]
+                    except OSError:pass
+                threading.Thread(target=drain_switch,daemon=True).start()
+                switch_state=state/(switch_identity+'.state.json')
+                def local_snapshot():
+                    try:return json.loads(switch_state.read_text())
+                    except (OSError,ValueError):return {}
+                def act_switch(action):
+                    subprocess.run([str(app),'--workspace',name,'--frontend',switch_identity,'--action',action],
+                                   env=env,check=True,capture_output=True)
+                remote_state=Path(second_env['XDG_RUNTIME_DIR'])/'starflux'
+                prior=set(remote_state.glob('*.frontend.json'))
+                try:
+                    wait(lambda:local_snapshot().get('viewport'),'local presenter did not attach')
+                    local_controller=local_snapshot()['controller_pid']
+                    act_switch('machines:switch-agent:'+second['id']+':'+second['revision']+':'+second_project+':32')
+                    wait(lambda:'remote pane is unavailable' in local_snapshot().get('status',''),
+                         'a missing destination did not preserve the local view')
+                    act_switch(scoped_action)
+                    opt=wait(lambda:next((item['action'] for item in (local_snapshot().get('context_menu') or {}).get('items',[])
+                                         if item['action'].startswith('machines:switch-agent:')),None),
+                             'local presenter did not offer machine switching')
+                    stale_switch=ninth['action'].replace('machines:agent-workspace:', 'machines:switch-agent:',1).rsplit(':',1)[0]+':obsolete'
+                    act_switch(stale_switch)
+                    wait(lambda:'Requested pane generation changed' in local_snapshot().get('status',''),
+                         'stale same-window pane action did not preserve the local view')
+                    assert presenter.poll() is None and local_snapshot()['controller_pid']==local_controller
+                    hold_switch.touch()
+                    act_switch(ninth['action'].replace('machines:agent-workspace:', 'machines:switch-agent:',1))
+                    wait(switch_started.exists,'private destination check did not start')
+                    wait(lambda:any(item['action']=='machines:cancel-switch' for item in
+                                     (local_snapshot().get('context_menu') or {}).get('items',[])),
+                         'pending destination check did not offer cancellation')
+                    act_switch('machines:cancel-switch')
+                    wait(lambda:local_snapshot().get('status')=='Machine switch canceled','cancel did not close the check')
+                    hold_switch.unlink()
+                    wait(switch_checked.exists,'canceled probe did not finish')
+                    time.sleep(.35)
+                    assert presenter.poll() is None and local_snapshot()['controller_pid']==local_controller
+                    assert set(remote_state.glob('*.frontend.json'))==prior,'canceled action opened a remote view'
+                    act_switch(ninth['action'].replace('machines:agent-workspace:', 'machines:switch-agent:',1))
+                    def switched():
+                        for path in set(remote_state.glob('*.frontend.json'))-prior:
+                            view=json.loads(path.read_text());identity=view['id']
+                            try:status=json.loads((remote_state/(identity+'.state.json')).read_text())
+                            except (OSError,ValueError):continue
+                            if status.get('active_project')==second_project and status.get('active')==8:
+                                return identity
+                    try:
+                        target_identity=wait(switched,'presenter did not switch controllers',timeout=25)
+                    except AssertionError:
+                        snap=local_snapshot()
+                        print(json.dumps(dict(local_status=snap.get('status'),history=snap.get('history'),
+                                              marker=(state/(switch_identity+'.machine-switch.json')).exists(),
+                                              presenter=presenter.poll())),flush=True)
+                        raise
+                    wait(remote_rendered.is_set,'the same terminal did not render the remote process')
+                    assert presenter.poll() is None and alive(original_pid) and alive(ninth_pid)
+                    assert a.snapshot()['active_project']==name
+                    def remote_action(action):
+                        subprocess.run([str(app),'--workspace',second_project,'--frontend',target_identity,'--action',action],
+                                       env=second_env,check=True,capture_output=True)
+                    remote_action('machines:list')
+                    def return_option():
+                        try:current=json.loads((remote_state/(target_identity+'.state.json')).read_text())
+                        except (OSError,ValueError):return None
+                        return next((item for item in (current.get('context_menu') or {}).get('items',[])
+                                     if item['action']=='machines:return-local'),None)
+                    option=wait(return_option,'machine menu did not offer return to local view')
+                    assert option['label']=='Return to local view'
+                    remote_action(option['action'])
+                    def returned():
+                        snap=local_snapshot()
+                        return snap.get('controller_pid') not in (None,local_controller) and snap.get('active_project')==name and snap.get('panes',[{}])[0].get('pid')==original_pid
+                    wait(returned,'detaching from the machine did not restore the local view')
+                    wait(local_rendered_after_return.is_set,'the same terminal did not render the restored local pane')
+                    assert presenter.poll() is None and alive(ninth_pid)
+                    local_controller=local_snapshot()['controller_pid']
+                    local_rendered_after_return.clear()
+                    reject_prepare.touch()
+                    act_switch(ninth['action'].replace('machines:agent-workspace:', 'machines:switch-agent:',1))
+                    wait(returned,'a failed remote launch did not restore the local view')
+                    wait(local_rendered_after_return.is_set,'failed launch did not render the local pane again')
+                    reject_prepare.unlink()
+                    assert presenter.poll() is None and alive(ninth_pid)
+                    api('sessions.default',dict(session=second_session['session']),write=True,machine=second['id'])
+                    act_switch('machines:entry:'+second['id'])
+                    wait(lambda:any(item['action']=='machines:switch-workspace' for item in
+                                     (local_snapshot().get('context_menu') or {}).get('items',[])),
+                         'machine details did not offer same-window workspace launch')
+                    prior=set(remote_state.glob('*.frontend.json'))
+                    local_controller=local_snapshot()['controller_pid']
+                    act_switch('machines:switch-workspace')
+                    def default_switched():
+                        for path in set(remote_state.glob('*.frontend.json'))-prior:
+                            view=json.loads(path.read_text())
+                            if view['workspace']==second_project:
+                                try:status=json.loads((remote_state/(view['id']+'.state.json')).read_text())
+                                except (OSError,ValueError):continue
+                                if status.get('viewport') and status.get('active_project')==second_project:
+                                    return view['id']
+                    target_identity=wait(default_switched,'saved default workspace did not open here',timeout=25)
+                    remote_action('machines:list')
+                    wait(return_option,'default workspace presenter did not attach')
+                    local_rendered_after_return.clear()
+                    remote_action('machines:return-local')
+                    wait(returned,'default workspace did not return to the local frontend')
+                    wait(local_rendered_after_return.is_set,'restored local presenter did not render')
+                    subprocess.run([str(app),'--workspace',name,'--frontend',switch_identity,'--close'],
+                                   env=env,check=True,capture_output=True)
+                    presenter.wait(timeout=10)
+                finally:
+                    if presenter.poll() is None:presenter.terminate();presenter.wait(timeout=5)
+                    os.close(presenter_master)
+                updated={k:v for k,v in second.items() if k!='revision'}
+                updated.update(expected_revision=second['revision'],label='Updated second controller')
+                second=api('machines.save',updated,write=True)
+                a.action(scoped_action)
+                wait(lambda:'Machine changed; reopen its menu' in a.snapshot().get('status',''),
+                     'stale scoped agent page reused a changed profile')
+                copies=len(a.clipboards)
+                a.action(agent_row['action'])
+                wait(lambda:'Machine changed' in a.snapshot().get('status',''),'stale row reused a changed machine profile')
+                assert len(a.clipboards)==copies
+                assert a.snapshot()['panes'][0]['pid']==original_pid and alive(original_pid)
+                api('panes.terminate',dict(target=ninth_target['target'],confirm='TERMINATE'),
+                    write=True,machine=second['id'])
+                replacement=api('panes.create',dict(project=second_project,label='Replacement pane'),
+                                write=True,machine=second['id'])
+                assert replacement['pane']==9 and replacement['epoch']!=ninth_epoch,replacement
+                obsolete=subprocess.run([str(app),*launch_ninth[1:-1],'--cells','--frontend','v-stale-pane'],
+                                        env=env,capture_output=True,timeout=15)
+                assert obsolete.returncode and b'Requested pane generation changed' in obsolete.stderr,obsolete
+                assert not (remote_state/'v-stale-pane.frontend.json').exists()
+                a.action('machines:entry:'+saved['id']);menu('SSH machine')
+            finally:
+                if second_project:
+                    subprocess.run(['tmux','-L','starflux-'+second_project,'kill-server'],
+                                   env=second_env,capture_output=True)
+                for profile in (second,broken_page):
+                    api('machines.remove',dict(machine=profile['id'],expected_revision=profile['revision']),write=True)
+
             remote=api('sessions.list',machine=saved['id'])
             assert any(e['id']=='base' for e in remote['sessions']),remote
             check_startup(name,original_pid,machine=saved['id'])
@@ -1221,7 +1916,7 @@ GLib.MainLoop().run()
             api('machines.save',{**valid,'label':'Must not overwrite'},write=True,ok=False)
             assert catalog.read_text()=='{broken';catalog.write_bytes(prior)
             assert alive(original_pid) and alive(child_pid) and a.process.poll() is None and b.process.poll() is None
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,keyboard_onboarding=True,connection_probe=True,saved_workspace_launch=True,remote_api_forwarding=True,remote_project=True,profile_editing=True,concurrent_profiles=True,stale_edits_rejected=True,strict_host_key_check=True,failed_endpoint_isolation=True,removal_preserves_processes=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,keyboard_onboarding=True,connection_probe=True,saved_workspace_launch=True,remote_api_forwarding=True,combined_agent_pages=True,combined_agent_menu=True,scoped_agent_pagination=True,scoped_agent_api=True,machine_agent_api_filters=True,agent_workspace_command=True,exact_pane_launch=True,stale_pane_generation_rejected=True,same_terminal_machine_switch=True,default_workspace_switch=True,cancelled_machine_check=True,returns_to_local_view=True,machine_return_menu=True,failed_switch_launch_returns=True,stale_agent_workspace_rejected=True,remote_project=True,profile_editing=True,concurrent_profiles=True,stale_edits_rejected=True,strict_host_key_check=True,failed_endpoint_isolation=True,removal_preserves_processes=True)))
             raise SystemExit(0)
         if args.worktrees:
             import uuid
@@ -1245,6 +1940,41 @@ GLib.MainLoop().run()
             listing=api('worktrees.list',dict(project=name));target=next(t for t in listing['worktrees'] if t['path']==str(path))
             assert api('worktrees.open',dict(project=name,target=target),True)['project']==child
             assert api('panes.get',dict(project=child,pane=1))['target']['pid']==child_pid,'reopening worktree replaced its shell'
+            def worktree_list(locked):
+                menu=a.snapshot().get('context_menu') or {}
+                if not any(item['action']=='worktrees:entry:1' for item in menu.get('items',[])):return False
+                fresh=next(t for t in api('worktrees.list',dict(project=name))['worktrees'] if t['path']==str(path))
+                return (fresh['locked'] is not None)==locked
+            a.action('worktrees:project:'+name);wait(lambda:worktree_list(False),'worktree list did not load')
+            a.action('worktrees:entry:1')
+            wait(lambda:any(item['action']=='worktrees:lock:1' for item in
+                            (a.snapshot().get('context_menu') or {}).get('items',[])),'worktree lock action missing')
+            for detail,value in [('path',str(path)),('head',target['head'])]:
+                action=f'worktrees:copy-{detail}:1'
+                assert any(item['action']==action for item in a.snapshot()['context_menu']['items'])
+                before=len(a.clipboards);a.action(action)
+                wait(lambda:len(a.clipboards)>before and a.clipboards[-1]==value,
+                     f'worktree {detail} did not copy exactly')
+            a.action('worktrees:lock:1');wait(lambda:worktree_list(True),'worktree lock did not refresh its list')
+            menu=a.snapshot()['context_menu'];assert menu['items'][menu['selected']]['action']=='worktrees:entry:1'
+            a.key('enter')
+            locked_menu=wait(lambda:(m if (m:=a.snapshot().get('context_menu')) and m['title']=='Git worktree' else None),'locked worktree menu missing')
+            assert not any(item['action']=='worktrees:remove:1' for item in locked_menu['items'])
+            changed=next(t for t in api('worktrees.list',dict(project=name))['worktrees'] if t['path']==str(path))
+            unlocked=api('worktrees.set_lock',dict(project=name,target=changed,locked=False),True)['worktree']
+            api('worktrees.set_lock',dict(project=name,target=unlocked,locked=True,reason='New lock from another client'),True)
+            a.action('worktrees:unlock:1')
+            wait(lambda:worktree_list(True) and 'stale_worktree' in a.snapshot().get('status',''),
+                 'stale action did not report the conflict and refresh its list')
+            retained=next(t for t in api('worktrees.list',dict(project=name))['worktrees'] if t['path']==str(path))
+            assert retained['locked']=='New lock from another client'
+            menu=a.snapshot()['context_menu'];assert menu['items'][menu['selected']]['action']=='worktrees:entry:1'
+            a.key('enter')
+            wait(lambda:any(item['action']=='worktrees:unlock:1' for item in
+                            (a.snapshot().get('context_menu') or {}).get('items',[])),'refreshed unlock action missing')
+            a.action('worktrees:unlock:1');wait(lambda:worktree_list(False),'worktree unlock did not refresh its list')
+            assert alive(child_pid) and a.snapshot()['active_project']==child
+            a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'worktree menu did not close')
             rejected=api('worktrees.remove',dict(project=name,target=target,confirm='REMOVE'),True,False)
             assert 'running terminal' in rejected['message'] and path.exists() and alive(child_pid),rejected
             b.action('project:'+child);wait(lambda:b.snapshot()['active_project']==child,'second view did not open grouped worktree project')
@@ -1269,6 +1999,14 @@ GLib.MainLoop().run()
             # A project already opened inside an external linked worktree keeps
             # its identity and subdirectory, then acquires repository grouping.
             external_path=tmp/'external tree';external=api('worktrees.create',dict(project=name,branch='existing/source',path=str(external_path)),True)['target']
+            locked=api('worktrees.set_lock',dict(project=name,target=external,locked=True,reason='Keep café 界'),True)['worktree']
+            assert locked['locked']=='Keep café 界'
+            stale_lock=api('worktrees.set_lock',dict(project=name,target=external,locked=False),True,False)
+            assert stale_lock['code']=='stale_worktree' and stale_lock['outcome']=='not_applied',stale_lock
+            locked_remove=api('worktrees.remove',dict(project=name,target=locked,confirm='REMOVE'),True,False)
+            assert locked_remove['code']=='locked_worktree' and locked_remove['outcome']=='not_applied',locked_remove
+            external=api('worktrees.set_lock',dict(project=name,target=locked,locked=False),True)['worktree']
+            assert external['locked'] is None
             (external_path/'subdir').mkdir()
             existing='existing-tree';existing_config=json.loads((configs/(name+'.json')).read_text());existing_config.update(workspace=existing,label='Existing worktree',directory=str(external_path/'subdir'))
             (configs/(existing+'.json')).write_text(json.dumps(existing_config));(configs/(existing+'.model.json')).write_text((configs/(name+'.model.json')).read_text())
@@ -1297,13 +2035,35 @@ GLib.MainLoop().run()
             raise SystemExit(0)
         if args.automation:
             import uuid
-            def api(method,params,write=False):
+            def api(method,params,write=False,ok=True,operation=None):
                 request=dict(version=1,id='ui-proof',method=method,params=params)
-                if write:request['operation_id']=str(uuid.uuid4())
+                if write:request['operation_id']=operation or str(uuid.uuid4())
                 command=[str(app),'--api',json.dumps(request)]
                 if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH')],*command])]
-                response=json.loads(subprocess.check_output(command,env=env));assert response['ok'],response
-                return response['result']
+                response=json.loads(subprocess.check_output(command,env=env));assert response['ok']==ok,response
+                return response['result'] if ok else response['error']
+            entry=next(s for s in api('sessions.list',{})['sessions'] if s['id']=='base')
+            rename=dict(session='base',expected_name=entry['name'],name='Renamed session 界')
+            operation=str(uuid.uuid4())
+            renamed=api('sessions.rename',rename,True,operation=operation)
+            assert renamed['name']==rename['name']
+            assert api('sessions.rename',rename,True,operation=operation)==renamed
+            rejected=api('sessions.rename',{**rename,'name':'Stale overwrite'},True,ok=False)
+            assert 'Session name changed' in rejected['message'],rejected
+            updated=next(s for s in api('sessions.list',{})['sessions'] if s['id']=='base')
+            assert updated['name']==rename['name'] and updated['is_default']==entry['is_default']
+            assert updated['project']==entry['project']
+            picker(a);row(a,rename['name'])
+            a.key('f:2')
+            wait(lambda:a.snapshot().get('modal_open') and not a.snapshot().get('session_manager'),
+                 'F2 did not open the session rename dialog')
+            a.key('char:e',2);a.key('char:u',2);a.paste('Picker rename café');a.accept()
+            wait(lambda:not a.snapshot().get('modal_open'),'session rename dialog did not close')
+            picker(b);row(b,'Picker rename café')
+            b.key('escape')
+            wait(lambda:not b.snapshot().get('session_manager'),'session picker did not close')
+            wait(lambda:alive(original_pid) and all(c.snapshot().get('panes',[{}])[0].get('pid')==original_pid for c in (a,b)),
+                 'session rename changed a running terminal')
             created=api('panes.create',dict(project=name,label='API tab'),True)
             wait(lambda:all(len(c.snapshot()['project_state']['terminals'])==2 for c in (a,b)),'API tab was not shared with both frontends')
             assert a.snapshot()['active']==0 and b.snapshot()['active']==0,'headless API stole frontend focus'
@@ -1316,14 +2076,71 @@ GLib.MainLoop().run()
             api('panes.terminate',dict(target=target,confirm='TERMINATE'),True)
             wait(lambda:all(len(c.snapshot()['project_state']['terminals'])==1 for c in (a,b)),'API termination did not update both views')
             assert all(c.snapshot()['panes'][0]['pid']==original_pid for c in (a,b)) and alive(original_pid)
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,api_changes_shared=True,independent_focus_preserved=True,guarded_pane_input=True,guarded_termination=True,original_process_preserved=True)))
+            doomed=api('sessions.create',dict(name='Disposable delete target',directory=str(tmp)),True)
+            doomed_pid=api('panes.get',dict(project=doomed['project'],pane=1))['target']['pid']
+            deletion=dict(session=doomed['session'],expected_projects=[doomed['project']],
+                          fallback_project=name,confirm='DELETE')
+            wrong=api('sessions.delete',{**deletion,'expected_projects':[]},True,ok=False)
+            assert 'Session membership changed' in wrong['message'] and alive(doomed_pid),wrong
+            wrong=api('sessions.delete',{**deletion,'confirm':'NO'},True,ok=False)
+            assert 'Type DELETE' in wrong['message'] and alive(doomed_pid),wrong
+            wrong=api('sessions.delete',{**deletion,'fallback_project':doomed['project']},True,ok=False)
+            assert 'another session' in wrong['message'] and alive(doomed_pid),wrong
+            delete_operation=str(uuid.uuid4())
+            deleted=api('sessions.delete',deletion,True,operation=delete_operation)
+            assert deleted['deleted'] and api('sessions.delete',deletion,True,operation=delete_operation)==deleted
+            wait(lambda:not alive(doomed_pid),'session deletion did not stop its owned terminal')
+            assert not any(item['id']==doomed['session'] for item in api('sessions.list',{})['sessions'])
+            external=next(item for item in api('sessions.external',{})['sources']
+                          if item['source']=='tmux' and item['name']=='Fixture')
+            imported=api('sessions.import',dict(reference=external['reference']),True)
+            api('sessions.delete',dict(session=imported['session'],expected_projects=[imported['project']],
+                                       fallback_project=name,confirm='DELETE'),True)
+            assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
+            assert alive(original_pid),'session deletion stopped the fallback terminal'
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,api_changes_shared=True,session_rename_guarded=True,session_rename_replay=True,session_picker_rename=True,session_delete_guarded=True,session_delete_replay=True,imported_source_preserved=True,independent_focus_preserved=True,guarded_pane_input=True,guarded_termination=True,original_process_preserved=True)))
             raise SystemExit(0)
         if args.terminal_history:
             def review():return a.snapshot().get('terminal_review') or {}
             def live(client,text):return any(text in t['text'] for t in client.snapshot().get('direct_terminals',[]))
             a.paste('HISTORY\n');wait(lambda:live(a,'ROW 119') and live(b,'ROW 119'),'history fixture did not finish')
+            def search_api(project,cursor=None,stale=False,ignore_case=False,unavailable=False):
+                request=dict(version=1,id='history-proof',method='panes.search_history',
+                             params=dict(project=project,pane=1,query='NEEDLE 界é',limit=1))
+                if ignore_case:
+                    request['params'].update(query='needle 界É',ignore_case=True)
+                if cursor:request['params']['cursor']=cursor
+                command=[str(app),'--api',json.dumps(request)]
+                if args.ssh:
+                    command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in
+                        ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','HERDR_CONFIG_PATH') if k in env],*command])]
+                response=json.loads(subprocess.check_output(command,env=env))
+                if stale:
+                    assert not response['ok'] and response['error']['code']=='stale_history',response
+                    return
+                if unavailable:
+                    assert not response['ok'],response
+                    return
+                assert response['ok'],response
+                found=response['result']
+                assert found['read_only'] and found['total']==2 and len(found['matches'])==1,found
+                hit=found['matches'][0]
+                row='075' if cursor else '007'
+                assert hit['column']==9 and hit['row']>0 and hit['excerpt']==f'ROW {row} NEEDLE 界é',hit
+                assert bool(found['next_cursor']) is (not cursor),found
+                return found
+            first_page=search_api(name)
+            assert first_page['source']=='tmux'
+            api_cursor=first_page['next_cursor']
+            assert search_api(name,api_cursor)['matches'][0]['row']>first_page['matches'][0]['row']
+
+            folded=search_api(name,ignore_case=True)
+            assert folded['matches']==first_page['matches']
             a.shortcut('char:/');wait(lambda:review().get('editing'),'search shortcut did not open')
-            a.paste('NEEDLE 界éX');a.key('left');a.key('left');a.key('right');a.key('delete');a.key('enter')
+            a.paste('needle 界ÉX');a.key('left');a.key('left');a.key('right');a.key('delete')
+            a.key('char:t',2)
+            wait(lambda:review().get('ignore_case'),'case toggle did not reach history review')
+            a.key('enter')
             wait(lambda:review().get('matches')==2 and review().get('offset',0)>0,'search missed retained history or Unicode')
             def frame_text():return '\n'.join(''.join(run['text'] for run in row['runs']) for row in a.frames.get(0,{}).get('rows',[]))
             wait(lambda:'NEEDLE 界é' in frame_text(),'searched history was not rendered')
@@ -1336,6 +2153,7 @@ GLib.MainLoop().run()
             wait(lambda:live(a,'REPLY=OUTPUT_WHILE_REVIEWING') and live(b,'REPLY=OUTPUT_WHILE_REVIEWING'),'review paused the underlying terminal')
             assert review()['retained_rows']==retained and review()['cursor']==position,'new output shifted the review snapshot'
             assert 'OUTPUT_WHILE_REVIEWING' not in frame_text(),'live output replaced the frozen rendered history'
+            search_api(name,api_cursor,stale=True)
             a.key('enter');wait(lambda:a.clipboards and not a.snapshot().get('terminal_review'),'search match did not copy and exit')
             assert a.clipboards[-1]=='NEEDLE 界é',a.clipboards
             a.shortcut('space');wait(lambda:review().get('retained_rows') and not review().get('loading'),'copy-mode shortcut did not open')
@@ -1368,6 +2186,7 @@ GLib.MainLoop().run()
             wait(lambda:'ROW 119' in tmux('capture-pane','-p','-t','Fixture'),'tmux source history fixture missing')
             picker(a,external=True);choose(a,'Fixture')
             wait(lambda:a.snapshot().get('panes') and a.snapshot()['panes'][0].get('pid')==source_pid,'history tmux import did not attach')
+            assert search_api(a.snapshot()['active_project'])['source']=='tmux'
             a.shortcut('char:/');wait(lambda:review().get('editing'),'imported tmux search did not open')
             a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')=='tmux','imported tmux retained history missing')
             assert tmux('display-message','-p','-t','Fixture','#{pane_in_mode}')=='0','read-only search changed tmux copy mode'
@@ -1377,14 +2196,22 @@ GLib.MainLoop().run()
                 picker(a,external=True);choose(a,'default')
                 wait(lambda:a.snapshot().get('collection')=='herdr-default' and a.snapshot().get('direct_terminals'),'Herdr history import missing')
                 a.paste('HISTORY\n');wait(lambda:live(a,'ROW 119'),'Herdr history fixture missing')
+                herdr_project=a.snapshot()['active_project']
+                herdr_page=search_api(herdr_project,ignore_case=True)
+                assert herdr_page['source']=='herdr'
+                assert search_api(herdr_project,herdr_page['next_cursor'],ignore_case=True)['matches'][0]['row']>herdr_page['matches'][0]['row']
                 a.shortcut('char:/');wait(lambda:review().get('editing'),'Herdr search did not open')
                 a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')=='herdr','Herdr retained history missing')
                 a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),'Herdr history did not copy')
                 assert all(alive(pid) for pid in herdr_pids),'history capture replaced a Herdr source process'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_tmux_history=True,imported_herdr_history=args.herdr)))
+                subprocess.run(['herdr','server','stop'],env=env,check=True,capture_output=True)
+                herdr.wait(timeout=5)
+                search_api(herdr_project,unavailable=True)
+                assert not (tmp/'config/herdr/herdr.sock').exists(),'history capture started the stopped source'
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,headless_styled_history_search=True,ignore_case_search=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_tmux_history=True,imported_herdr_history=args.herdr,guarded_herdr_history_api=args.herdr)))
             raise SystemExit(0)
         if args.pane_layouts:
-            def leaves(client=a):return client.snapshot().get('pane_layout',{}).get('panes',[])
+            def leaves(client=None):return (client or a).snapshot().get('pane_layout',{}).get('panes',[])
             def native_frames_match():
                 boxes=leaves()
                 if not all(p['pane'] in a.frames for p in boxes):return False
@@ -1437,8 +2264,80 @@ GLib.MainLoop().run()
             a.action('terminal:focus-up');wait(lambda:a.snapshot()['active']==1,'vertical pane focus failed')
             a.action('terminal:move-left');wait(lambda:a.snapshot()['project_state']['pane_tree']!=tree,'pane movement did not rearrange layout')
             assert a.snapshot()['active']==1 and all(alive(pid) for pid in pids.values())
+            a.shortcut('char:x')
+            edge_action='pane-edge:1:menu'
+            pane_menu=wait(lambda:(m if (m:=a.snapshot().get('context_menu'))
+                                     and any(item['action']==edge_action for item in m['items']) else None),
+                           'tab menu did not offer edge placement')
+            index=next(i for i,item in enumerate(pane_menu['items']) if item['action']==edge_action)
+            a.action('menu:item:'+str(index))
+            wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Move pane to edge',
+                 'pane edge menu did not open')
+            a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'pane edge menu did not close')
+            a.shortcut('char:e',1)
+            wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Move pane to edge',
+                 'pane edge shortcut did not open the picker')
+            before_edge=a.snapshot()['project_state']['pane_tree']
+            bottom=a.snapshot()['context_menu']['items'][3]['action']
+            assert bottom.rsplit(':',1)[-1]==a.snapshot()['project_state']['terminal_epochs']['1']
+            a.action(bottom.rsplit(':',1)[0]+':recycled-generation')
+            wait(lambda:'Terminal changed while the edge picker was open' in a.snapshot().get('status',''),
+                 'stale edge selection was not rejected')
+            assert a.snapshot()['project_state']['pane_tree']==before_edge
+            for _ in range(3):a.key('down')
+            a.key('enter')
+            def placed(axis,side):
+                tree=a.snapshot()['project_state'].get('pane_tree') or {}
+                return tree.get('axis')==axis and tree.get(side)==dict(kind='leaf',id=1)
+            wait(lambda:placed('down','second') and len(leaves())==4,'visible pane did not move to bottom edge')
+            assert a.snapshot()['active']==1 and all(alive(pid) for pid in pids.values())
             a.action('terminal:close-pane');wait(lambda:len(a.snapshot()['pane_layout']['panes'])==3,'closing a pane collapsed unrelated branches')
             assert len(a.snapshot()['project_state']['terminals'])==4 and all(alive(pid) for pid in pids.values()),'closing view terminated a session'
+            remainder=a.snapshot()['project_state']['pane_tree']
+            a.action('pane-edge:1:left')
+            wait(lambda:placed('right','first') and len(leaves())==4,'hidden tab did not join the left edge')
+            assert a.snapshot()['project_state']['pane_tree']['second']==remainder
+            assert a.snapshot()['active']==1 and len(leaves(b))==1 and all(alive(pid) for pid in pids.values())
+            a=restart(a)
+            wait(lambda:placed('right','first') and len(leaves())==4,'edge placement did not survive reattachment')
+            assert a.snapshot()['project_state']['pane_tree']['second']==remainder
+            assert all(alive(pid) for pid in pids.values())
+            a.action('terminal:0');wait(lambda:a.snapshot()['active']==0,'could not focus a retained branch')
+            a.action('close-pane:1')
+            wait(lambda:len(leaves())==3,'closing moved pane did not restore the remaining branches')
+            assert a.snapshot()['active']==0 and a.snapshot()['project_state']['pane_tree']==remainder
+            a.action('close-pane:1')
+            wait(lambda:a.snapshot().get('status')=='Terminal is outside the current split layout',
+                 'closing a hidden tab was not rejected')
+            assert a.snapshot()['active']==0 and a.snapshot()['project_state']['pane_tree']==remainder
+            a.shortcut('char:x')
+            existing='split-existing:0:menu'
+            existing_menu=wait(lambda:(m if (m:=a.snapshot().get('context_menu'))
+                                         and any(item['action']==existing for item in m['items']) else None),
+                               'tab menu did not offer the existing terminal')
+            index=next(i for i,item in enumerate(existing_menu['items']) if item['action']==existing)
+            a.action('menu:item:'+str(index))
+            wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Split with existing tab',
+                 'existing terminal selector did not open')
+            a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'existing terminal selector did not close')
+            a.shortcut('char:s',1)
+            wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Split with existing tab',
+                 'existing terminal shortcut did not open the selector')
+            split_options=[item['action'] for item in a.snapshot()['context_menu']['items']]
+            assert [action.split(':')[:4] for action in split_options]==[
+                ['split-existing','0','1','right'],['split-existing','0','1','down']]
+            assert split_options[1].rsplit(':',1)[-1]==a.snapshot()['project_state']['terminal_epochs']['1']
+            a.action(split_options[1].rsplit(':',1)[0]+':recycled-generation')
+            wait(lambda:'A terminal changed while the split picker was open' in a.snapshot().get('status',''),
+                 'stale existing-tab split was not rejected')
+            assert a.snapshot()['project_state']['pane_tree']==remainder
+            a.key('down');a.key('enter')
+            wait(lambda:len(leaves())==4 and a.snapshot()['active']==1,'existing tab did not join the split')
+            positions={p['pane']:p['rect'] for p in leaves()}
+            assert positions[0]['x']==positions[1]['x'] and positions[1]['y']>positions[0]['y']
+            assert len(a.snapshot()['project_state']['terminals'])==4 and all(alive(pid) for pid in pids.values())
+            a.action('terminal:0');a.action('close-pane:1')
+            wait(lambda:a.snapshot()['project_state']['pane_tree']==remainder,'existing tab close damaged other branches')
             a.shortcut('char:x');wait(lambda:a.snapshot().get('context_menu'),'pane menu did not open')
             a.input(dict(kind='pointer',action='scroll_down',button=0,x=5,y=5,modifiers=0))
             wait(lambda:a.snapshot()['context_menu']['selected']>=8,'context menu wheel navigation failed')
@@ -1469,7 +2368,7 @@ GLib.MainLoop().run()
             a.paste('TERMINATE');a.accept()
             wait(lambda:1 not in a.snapshot()['project_state']['terminals'] and not alive(new_pid),'confirmed termination did not stop only its terminal')
             assert all(alive(pid) for pane,pid in pids.items() if pane!=1) and len(a.snapshot()['pane_layout']['panes'])==3,'termination damaged unrelated panes'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,nested_right_down=True,native_frames_do_not_overlap=True,pointer_focus_and_input=True,zoom_fills_canvas=True,layout_reattach=True,directional_focus_and_move=True,close_keeps_process=True,independent_frontends=True,hidden_exit_preserves_tree=True)))
+            print(json.dumps(dict(result='PASS',edge_placement=True,ssh=args.ssh,cells=args.cells,nested_right_down=True,native_frames_do_not_overlap=True,pointer_focus_and_input=True,zoom_fills_canvas=True,layout_reattach=True,directional_focus_and_move=True,close_keeps_process=True,independent_frontends=True,hidden_exit_preserves_tree=True)))
             raise SystemExit(0)
         if args.agent_lifecycle:
             def cli(*arguments,success=True,workspace=None):
@@ -1480,16 +2379,87 @@ GLib.MainLoop().run()
                 return json.loads(result.stdout) if success else None
             info=cli('--agent-status')['panes'][0]
             assert info['status']['health']['agent_process']=='running'
+            assert info['status']['health']['report_status']=='unregistered'
             run=secrets.token_hex(16)
-            report=dict(run_id=run,sequence=1,epoch=info['epoch'],agent_pid=info['status']['agent_pid'],agent_start_ticks=info['status']['agent_start_ticks'],boot_id=info['status']['boot_id'],harness='codex',source='fixture:hook',state='working',conversation_id='exact-thread',resume_argv=[str(shell),'exact-thread'])
+            conversation=provider_resume[-1] if provider_resume else 'exact-thread'
+            if provider_resume:
+                # Use a managed hook only inside this disposable Codex mount
+                # namespace. Forward just the STAR/FLUX binding across the
+                # fixture's otherwise empty Bubblewrap environment.
+                managed=tmp/'codex-managed';managed.mkdir()
+                direct_result=tmp/'codex-direct-hook-result.json'
+                direct_hook=managed/'register.py'
+                binding_shim=tmp/'codex-binding-fixture.py'
+                binding_shim.write_text(
+                    "import os, sys\n"
+                    "argv = sys.argv[1:]\n"
+                    "bindings = []\n"
+                    "for key in ('STARFLUX_WORKSPACE', 'STARFLUX_PANE', 'STARFLUX_PANE_EPOCH'):\n"
+                    "    bindings.extend(['--setenv', key, os.environ[key]])\n"
+                    "index = argv.index('--clearenv') + 1\n"
+                    "os.execvp(argv[0], argv[:index] + bindings + argv[index:])\n"
+                )
+                generated=generated_session_hooks('codex',[*provider_resume[:-1],'{session_id}'],env)
+                generated_command=shlex.split(generated[0]['hooks'][0]['command'])
+                direct_hook.write_text(
+                    "import json, subprocess, sys\nfrom pathlib import Path\n"
+                    f"command = {generated_command!r}\n"
+                    "result = subprocess.run(command,input=sys.stdin.buffer.read(),capture_output=True)\n"
+                    f"result_path = Path({str(direct_result)!r})\n"
+                    "temporary = result_path.with_suffix('.tmp')\n"
+                    "temporary.write_text(json.dumps(dict(code=result.returncode,error=result.stderr.decode(errors='replace'))))\n"
+                    "temporary.replace(result_path)\n"
+                    "raise SystemExit(result.returncode)\n"
+                )
+                managed_command=shlex.join([sys.executable,'/etc/codex/register.py'])
+                (managed/'requirements.toml').write_text(
+                    '[features]\nhooks = true\n'
+                    '[[hooks.SessionStart]]\nmatcher = "^resume$"\n'
+                    '[[hooks.SessionStart.hooks]]\ntype = "command"\n'
+                    f'command = {json.dumps(managed_command)}\n'
+                )
+                boundary=provider_resume.index('--chdir')
+                private_launch=['--bind',str(tmp),str(tmp),'--tmpfs','/etc',
+                                '--ro-bind',str(managed),'/etc/codex']
+                for key in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR'):
+                    private_launch.extend(['--setenv',key,env[key]])
+                provider_resume=[sys.executable,str(binding_shim),*provider_resume[:boundary],*private_launch,*provider_resume[boundary:]]
+            resume_argv=provider_resume or [str(shell),'exact-thread']
+            report=dict(run_id=run,sequence=1,epoch=info['epoch'],agent_pid=info['status']['agent_pid'],agent_start_ticks=info['status']['agent_start_ticks'],boot_id=info['status']['boot_id'],harness='codex',source='fixture:hook',state='working',conversation_id=conversation,resume_argv=resume_argv)
+            if provider_resume:
+                hook=[str(app),'--agent-session-hook',
+                      '--workspace',name,'--pane','1',
+                      '--epoch',info['epoch'],'--',*provider_resume[:-1],'{session_id}']
+                event=os.environ['STARFLUX_TEST_CODEX_EVENT']
+                rejected=subprocess.run(hook,input=event,text=True,env=env,capture_output=True,timeout=10)
+                assert rejected.returncode!=0 and 'not a descendant' in rejected.stderr,rejected.stderr
+                hook_request.write_text(json.dumps(dict(argv=hook,event=event)))
+                a.paste('RUN_SESSION_HOOK');a.key('enter')
+                wait(hook_result.exists,'the bound pane did not invoke its Codex hook')
+                result=json.loads(hook_result.read_text())
+                assert result['code']==0,result['error']
+                registered=cli('--agent-status')['panes'][0]['status']['agent_record']
+                assert registered['conversation_id']==conversation and registered['resume_argv']==resume_argv
+                hook_result.unlink()
+                late={**json.loads(event),'source':'startup','session_id':str(uuid.uuid4())}
+                hook_request.write_text(json.dumps(dict(argv=hook,event=json.dumps(late))))
+                a.paste('RUN_SESSION_HOOK');a.key('enter')
+                wait(hook_result.exists,'late startup callback did not finish')
+                result=json.loads(hook_result.read_text())
+                assert result['code']!=0 and 'Startup event cannot replace' in result['error'],result
+                assert cli('--agent-status')['panes'][0]['status']['agent_record']==registered
+                run=registered['run_id']
+                report.update(run_id=run,sequence=2,source='codex:session-start')
             cli('--pane','1','--agent-report',json.dumps(report))
             def health():return next((s['health'] for s in a.snapshot().get('sessions',[]) if s['pane']==0),{}) or {}
-            wait(lambda:health().get('health',{}).get('source')=='integration','structured lifecycle report did not reach the UI')
-            assert health()['state']=='working' and health()['agent_record']['conversation_id']=='exact-thread'
+            wait(lambda:(observed:=health()).get('health',{}).get('source')=='integration'
+                 and observed.get('state')=='working','structured lifecycle report did not reach the UI')
+            assert health()['health']['report_status']=='current'
+            assert health()['state']=='working' and health()['agent_record']['conversation_id']==conversation
             cli('--pane','1','--agent-report',json.dumps(report),success=False)
-            stale={**report,'sequence':2,'epoch':'recycled-pane'}
+            stale={**report,'sequence':report['sequence']+1,'epoch':'recycled-pane'}
             cli('--pane','1','--agent-report',json.dumps(stale),success=False)
-            report.update(sequence=2,state='completed')
+            report.update(sequence=report['sequence']+1,state='completed')
             cli('--pane','1','--agent-report',json.dumps(report))
             wait(lambda:health().get('state')=='completed','completion report did not replace working state')
             wait(lambda:a.snapshot().get('attention_unread',0)==1,'completion did not produce an in-app notification')
@@ -1503,12 +2473,13 @@ GLib.MainLoop().run()
             wait(lambda:(a.snapshot().get('context_menu') or {}).get('items',[{}])[0].get('label')=='No unread attention items','dismissal did not update inbox')
             wait(lambda:a.snapshot().get('attention_unread')==0,'dismissed item remained in unread count')
             a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'attention inbox did not close')
-            report['sequence']=3;cli('--pane','1','--agent-report',json.dumps(report))
+            report['sequence']+=1;cli('--pane','1','--agent-report',json.dumps(report))
             b.action('sessions:new');wait(lambda:b.snapshot().get('modal_open'),'second session dialog missing')
             b.paste('Attention other session');b.accept()
             wait(lambda:b.snapshot().get('session_id')!='base' and b.snapshot().get('panes',[{}])[0].get('agent_pid'),'second session agent missing')
             other_workspace=b.snapshot()['active_project']
             other=cli('--agent-status',workspace=other_workspace)['panes'][0]
+            assert uuid.UUID(other['epoch']).version==4,'new session first pane has no durable generation'
             pending={**report,'run_id':secrets.token_hex(16),'sequence':1,'epoch':other['epoch'],'agent_pid':other['status']['agent_pid'],'agent_start_ticks':other['status']['agent_start_ticks'],'boot_id':other['status']['boot_id'],'state':'waiting_for_approval','conversation_id':'other-thread','resume_argv':None}
             cli('--pane','1','--agent-report',json.dumps(pending),workspace=other_workspace)
             a.shortcut('char:i');wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Attention inbox','global inbox missing')
@@ -1523,15 +2494,62 @@ GLib.MainLoop().run()
             wait(lambda:a.snapshot()['project_activity'][name]['failed']==1,'failed agent missing from sidebar activity')
             a.action('agent-status:0')
             wait(lambda:any(i['action'].startswith('agent-resume:') for i in (a.snapshot().get('context_menu') or {}).get('items',[])),'exact conversation resume command missing')
-            a.action('agent-resume:0:'+run)
-            wait(lambda:len(a.snapshot()['project_state']['terminals'])==2 and any('RESUMED_EXACT_THREAD' in t['text'] for t in a.snapshot().get('direct_terminals',[])),'saved conversation did not resume in its own tab')
+            assert any(i['label']=='Report: backend failure shown by terminal'
+                       for i in a.snapshot()['context_menu']['items'])
+            a.key('escape')
+            wait(lambda:not a.snapshot().get('context_menu'),'agent status menu did not close')
+            def api(method,params,operation=None):
+                request=dict(version=1,id='resume-command-proof',method=method,params=params)
+                if operation:request['operation_id']=operation
+                response=cli('--api',json.dumps(request))
+                assert response['ok'],response
+                return response['result']
+            lease=next(view['target'] for view in api('frontends.list',{})['frontends']
+                       if view['frontend']==a.identity)
+            resume_command=dict(kind='resume_conversation',project=name,pane=1,
+                                epoch=info['epoch'],run_id=run)
+            stale=api('frontends.command',dict(target=lease,command={**resume_command,'epoch':'wrong-epoch'}),
+                      str(uuid.uuid4()))
+            assert stale['status']=='rejected' and stale['error']['code']=='stale_target',stale
+            assert len(a.snapshot()['project_state']['terminals'])==1
+            operation=str(uuid.uuid4())
+            command_params=dict(target=lease,command=resume_command)
+            applied=api('frontends.command',command_params,operation)
+            assert applied['status']=='applied' and applied['result']['pane']==2,applied
+            assert api('frontends.command',command_params,operation)==applied
+            def terminal_contains(text):
+                return any(text in t['text'] for t in a.snapshot().get('direct_terminals',[]))
+            if provider_resume:
+                wait(lambda:len(a.snapshot()['project_state']['terminals'])==2
+                    and terminal_contains('show current session configuration'),
+                    'interactive Codex did not start in the resumed tab',timeout=30)
+                a.paste('/status')
+                wait(lambda:terminal_contains('› /status'),'interactive Codex did not receive status command')
+                a.key('enter')
+                wait(lambda:terminal_contains(conversation),'Codex did not confirm the original thread ID')
+                resumed=next(p for p in cli('--agent-status')['panes'] if p['pane']!=1)
+                a.paste('Offline lifecycle fixture')
+                wait(lambda:terminal_contains('› Offline lifecycle fixture'),'Codex did not receive the private turn')
+                a.key('enter')
+                wait(direct_result.exists,'Codex did not invoke the bound STAR/FLUX hook',timeout=20)
+                result=json.loads(direct_result.read_text())
+                assert result['code']==0,result['error']
+                registered=next(p for p in cli('--agent-status')['panes'] if p['pane']==resumed['pane'])['status']['agent_record']
+                assert registered['conversation_id']==conversation and registered['source']=='codex:session-start'
+
+            else:
+                wait(lambda:len(a.snapshot()['project_state']['terminals'])==2 and terminal_contains('RESUMED_EXACT_THREAD'),'saved conversation did not resume in its own tab')
             assert alive(original_pid),'resuming terminated the original client'
-            commands=a.snapshot()['project_state']['terminal_commands'];assert len(commands)==1 and 'exact-thread' in next(iter(commands.values()))
+            commands=a.snapshot()['project_state']['terminal_commands'];assert len(commands)==1 and shlex.split(next(iter(commands.values())))==resume_argv
             resumed_pids={s['pane']:s['health']['pid'] for s in a.snapshot()['sessions'] if (s.get('health') or {}).get('pid')}
             a=restart(a)
             assert a.snapshot()['project_state']['terminal_commands']==commands,'resume command was not durable across refresh'
             wait(lambda:all(next((s['health'].get('pid') for s in a.snapshot()['sessions'] if s['pane']==pane and s.get('health')),None)==pid for pane,pid in resumed_pids.items()),'reattachment replaced a resumed process')
-            saved=cli('--agent-status')['records'];assert len(saved)==1 and saved[0]['conversation_id']=='exact-thread'
+            saved=cli('--agent-status')['records'];assert len(saved)==(2 if provider_resume else 1) and all(r['conversation_id']==conversation for r in saved)
+            scoped=cli('--agent-status','--agent-status-pane','1')
+            assert [pane['pane'] for pane in scoped['panes']]==[1] and [record['pane'] for record in scoped['records']]==[0],scoped
+            missing=cli('--agent-status','--agent-status-pane','32')
+            assert missing['panes']==[] and missing['records']==[],missing
             a.shortcut('char:i');wait(lambda:(a.snapshot().get('context_menu') or {}).get('title')=='Attention inbox','reattached inbox missing')
             entries=[i for i in a.snapshot()['context_menu']['items'] if i['action'].startswith('attention:view:')];assert len(entries)==1 and 'Backend unavailable' in entries[0]['label'],entries
             a.key('escape');wait(lambda:not a.snapshot().get('context_menu'),'inbox did not close after reattach')
@@ -1544,7 +2562,7 @@ GLib.MainLoop().run()
             a.paste('RECOVER');a.accept()
             wait(lambda:str(resumed_pane) not in a.snapshot()['project_state']['terminal_commands'],'recover to shell retained an automatic agent resume command')
             assert alive(original_pid),'recovery of resumed pane killed its source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,structured_lifecycle=True,layered_health=True,backend_failure_detected=True,stale_reports_rejected=True,exact_conversation_resume=True,original_process_preserved=True,durable_identity=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,structured_lifecycle=True,layered_health=True,backend_failure_detected=True,stale_reports_rejected=True,exact_conversation_resume=True,typed_resume_command=True,provider_thread_id_confirmed=bool(provider_resume),provider_hook_binding_verified=bool(provider_resume),provider_direct_callback_verified=bool(provider_resume),original_process_preserved=True,durable_identity=True)))
             raise SystemExit(0)
         # Use both real input paths, including canvas keys with overlays open.
         a.key('f:1')
@@ -1652,6 +2670,15 @@ GLib.MainLoop().run()
         if args.herdr:
             picker(a,external=True);choose(a,'default')
             wait(lambda:a.snapshot().get('collection')=='herdr-default' and len(a.snapshot().get('project_order',[]))>=2,'Herdr projects did not import')
+            a.action('agent-status:0')
+            def source_diagnostic():
+                menu=a.snapshot().get('context_menu') or {}
+                return next((item for item in menu.get('items',[])
+                             if item['label'].startswith('Herdr pane ')),None)
+            identity=wait(source_diagnostic,'Herdr source process identity did not appear in Agent status')
+            assert identity['action']=='menu:panel' and any(identity['label'].endswith('PID '+str(pid)) for pid in herdr_pids),identity
+            a.key('escape')
+            wait(lambda:not a.snapshot().get('context_menu'),'Agent status did not close')
             delete(a,'Herdr / default')
             assert all(alive(pid) for pid in herdr_pids),'Deleting import killed original Herdr programs'
             assert {p['pane_id'] for p in herdr_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in snapshot['panes']}
@@ -1666,6 +2693,7 @@ GLib.MainLoop().run()
         assert alive(source_pid),'Deleting an owned session killed the tmux source'
         print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,list_select_create_delete=True,default_startup=True,explicit_workspace_overrides_default=True,drag_order_persists=True,closed_project_keeps_order=True,cancel_preserves_process=True,independent_views=True,cross_session_reattach=True,delete_launch_session=True,tmux_import_preserves_pids_and_topology=True,herdr_import_preserves_pids=args.herdr)))
     finally:
+        if args.native_launch_race:(gate/'release').touch()
         for path in state.glob('v-*.state.json'):path.with_name(path.name.removesuffix('.state.json')+'.close').touch()
         for process in processes:
             if process.poll() is None:

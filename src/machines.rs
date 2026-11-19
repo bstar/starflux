@@ -148,19 +148,16 @@ pub fn list() -> Result<Vec<Machine>> {
     Ok(catalog.machines)
 }
 pub fn get(id: &str) -> Result<Machine> {
-    let machines = list()?;
-    let matches = machines
-        .into_iter()
-        .filter(|m| m.id == id || m.label == id)
-        .collect::<Vec<_>>();
+    resolve(&list()?, id).cloned()
+}
+fn resolve<'a>(machines: &'a [Machine], id: &str) -> Result<&'a Machine> {
+    let mut matches = machines.iter().filter(|m| m.id == id || m.label == id);
+    let machine = matches.next().context("Saved machine not found")?;
     ensure!(
-        matches.len() <= 1,
+        matches.next().is_none(),
         "Ambiguous machine label; use its identity"
     );
-    matches
-        .into_iter()
-        .next()
-        .context("Saved machine not found")
+    Ok(machine)
 }
 fn write(machines: Vec<Machine>) -> Result<()> {
     crate::automation::persist(
@@ -265,7 +262,7 @@ fn ssh(m: &Machine, argv: &[&str]) -> Command {
     c.arg(shell_words::join(argv));
     c
 }
-fn output(mut command: Command) -> Result<(bool, String, String)> {
+pub(crate) fn output(mut command: Command) -> Result<(bool, String, String)> {
     let mut out = tempfile::tempfile()?;
     let mut err = tempfile::tempfile()?;
     let mut child = command
@@ -343,6 +340,162 @@ pub fn test(m: &Machine) -> Result<Value> {
         "checked_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64}),
     )
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOverview {
+    pub machines: Vec<String>,
+    #[serde(default)]
+    pub offset: usize,
+    pub limit: Option<usize>,
+    pub project: Option<String>,
+    pub session: Option<String>,
+}
+
+/// Query independent controllers concurrently and retain each host's outcome.
+pub fn agent_overview(request: AgentOverview) -> Result<Value> {
+    let limit = request.limit.unwrap_or(8);
+    ensure!((1..=16).contains(&limit), "limit must be 1..16");
+    ensure!(
+        (1..=8).contains(&request.machines.len()),
+        "Select between one and eight saved machines"
+    );
+    let mut selected = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let catalog = list()?;
+    for id in &request.machines {
+        let machine = resolve(&catalog, id);
+        let identity = machine.as_ref().map_or(id, |machine| &machine.id);
+        ensure!(seen.insert(identity), "Duplicate machine");
+        selected.push((id, machine));
+    }
+    let mut params = json!({"offset":request.offset,"limit":limit});
+    if let Some(project) = request.project {
+        params["project"] = json!(project);
+    }
+    if let Some(session) = request.session {
+        crate::session_catalog::valid(&session)?;
+        params["session"] = json!(session);
+    }
+    let query = json!({"version":1,"id":"machine-agents","method":"agents.live","params":params})
+        .to_string();
+    let results = std::thread::scope(|scope| {
+        let jobs = selected
+            .into_iter()
+            .map(|(id, machine)| {
+                let query = &query;
+                scope.spawn(move || {
+                    let machine = match machine {
+                        Ok(machine) => machine,
+                        Err(error) => return json!({"machine":id,"error":format!("{error:#}")}),
+                    };
+                    let result = query_agent_page(machine, query);
+                    match result {
+                        Ok(page) => json!({"machine":machine.id,"label":machine.label,
+                                           "revision":machine.revision,"page":page}),
+                        Err(error) => json!({"machine":machine.id,"label":machine.label,
+                                             "revision":machine.revision,"error":format!("{error:#}")}),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        jobs.into_iter()
+            .map(|job| {
+                job.join()
+                    .map_err(|_| anyhow::anyhow!("Machine agent query failed"))
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
+    Ok(json!({"machines":results}))
+}
+
+fn query_agent_page(machine: &Machine, query: &str) -> Result<Value> {
+    ensure!(machine.enabled, "Saved machine is disabled");
+    let (ok, stdout, stderr) = output(ssh(machine, &[&machine.remote_executable, "--api", query]))?;
+    ensure!(ok, "SSH agent query failed: {}", stderr.trim());
+    let response: Value = serde_json::from_str(stdout.trim())
+        .context("SSH controller did not return a clean JSON response")?;
+    ensure!(
+        response["version"] == 1 && response["id"] == "machine-agents",
+        "Incompatible remote automation response"
+    );
+    ensure!(
+        response["ok"] == true && response["result"]["agents"].is_array(),
+        "Remote controller does not provide a live agent page: {}",
+        response["error"]["message"]
+            .as_str()
+            .unwrap_or("invalid response")
+    );
+    Ok(response["result"].clone())
+}
+
+pub(crate) fn check_pane(
+    machine: &Machine,
+    project: &str,
+    pane: u8,
+    epoch: Option<&str>,
+) -> Result<()> {
+    let query = json!({"version":1,"id":"machine-switch","method":"panes.get",
+                       "params":{"project":project,"pane":pane}})
+    .to_string();
+    let (ok, stdout, stderr) =
+        output(ssh(machine, &[&machine.remote_executable, "--api", &query]))?;
+    ensure!(ok, "SSH pane check failed: {}", stderr.trim());
+    let response: Value = serde_json::from_str(&stdout)?;
+    ensure!(
+        response["id"] == "machine-switch"
+            && response["ok"] == true
+            && response["result"]["project"] == project
+            && response["result"]["pane"] == pane
+            && response["result"]["status"]["alive"] == true,
+        "The remote pane is unavailable"
+    );
+    ensure!(
+        epoch.is_none_or(|expected| response["result"]["epoch"] == expected),
+        "Requested pane generation changed"
+    );
+    Ok(())
+}
+
+pub(crate) fn check_workspace(machine: &Machine) -> Result<String> {
+    let project = if let Some(project) = &machine.workspace {
+        project.clone()
+    } else {
+        let (ok, stdout, stderr) = output(ssh(
+            machine,
+            &[&machine.remote_executable, "--default-workspace"],
+        ))?;
+        ensure!(
+            ok,
+            "Could not read the remote default workspace: {}",
+            stderr.trim()
+        );
+        stdout.trim().to_owned()
+    };
+    ensure!(
+        !project.is_empty()
+            && project.len() <= 32
+            && project
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+        "Remote controller returned an invalid workspace"
+    );
+    let query = r#"{"version":1,"id":"machine-switch","method":"projects.list"}"#;
+    let (ok, stdout, stderr) = output(ssh(machine, &[&machine.remote_executable, "--api", query]))?;
+    ensure!(ok, "SSH workspace check failed: {}", stderr.trim());
+    let response: Value = serde_json::from_str(&stdout)?;
+    ensure!(
+        response["id"] == "machine-switch"
+            && response["ok"] == true
+            && response["result"]["projects"]
+                .as_array()
+                .is_some_and(|projects| projects
+                    .iter()
+                    .any(|entry| entry["id"] == project || entry["project"] == project)),
+        "The remote workspace is unavailable"
+    );
+    Ok(project)
+}
+
 /// Register a new project on an endpoint. Reconnection is handled independently by its existing terminal owner.
 pub fn create_project(
     machine: &Machine,
@@ -394,10 +547,6 @@ pub fn create_project(
                 .exists(),
         "A project with this identity already exists"
     );
-    crate::project_state::ProjectState {
-        app_command: String::new(),
-        ..Default::default()
-    }
-    .save(&config)?;
+    crate::project_state::ProjectState::new_owned().save(&config)?;
     Ok(config)
 }

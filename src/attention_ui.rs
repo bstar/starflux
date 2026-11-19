@@ -113,6 +113,12 @@ impl Workspace {
                 return Ok(true);
             }
             "mark" => {
+                ensure!(
+                    self.context_menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.title == "Attention inbox"),
+                    "Open the attention inbox before marking a page read"
+                );
                 let items = self
                     .attention_items
                     .iter()
@@ -232,8 +238,36 @@ impl Workspace {
             .into_iter()
             .find(|e| e.id == id)
             .context("Attention item no longer exists")?;
+        let pane_matches = |state: &ProjectState| {
+            state.terminal_ids().contains(&event.pane)
+                && state.terminal_epochs.get(&event.pane) == event.epoch.as_ref()
+        };
+        let conversation = || {
+            crate::agent_state::records(&config)
+                .ok()?
+                .into_iter()
+                .find_map(|record| {
+                    let report = record.report;
+                    (report.run_id == event.run_id
+                        && record.pane == event.pane
+                        && report.epoch == event.epoch)
+                        .then_some(report.conversation_id)
+                        .flatten()
+                })
+        };
         match operation {
             "view" => {
+                let pane_item = match ProjectState::load(&config) {
+                    Ok(state) if pane_matches(&state) => item(
+                        format!("Open pane {}", event.pane + 1),
+                        format!("attention:open:{workspace}:{id}"),
+                    ),
+                    Ok(_) => item("Original pane no longer exists".into(), "menu:panel".into()),
+                    Err(_) => item(
+                        "Original pane could not be checked".into(),
+                        "menu:panel".into(),
+                    ),
+                };
                 self.release();
                 self.context_menu = Some(crate::shelf::ContextMenu {
                     position: [16, 16],
@@ -253,16 +287,24 @@ impl Workspace {
                             ),
                             "menu:panel".into(),
                         ),
-                        item(
-                            format!("Open pane {}", event.pane + 1),
-                            format!("attention:open:{workspace}:{id}"),
-                        ),
+                        pane_item,
                         item(
                             "Dismiss notification".into(),
                             format!("attention:dismiss:{workspace}:{id}"),
                         ),
-                        item("Back to inbox".into(), "attention:inbox".into()),
-                    ],
+                    ]
+                    .into_iter()
+                    .chain(conversation().map(|_| {
+                        item(
+                            "Copy conversation ID".into(),
+                            format!("attention:copy-conversation:{workspace}:{id}"),
+                        )
+                    }))
+                    .chain(std::iter::once(item(
+                        "Back to inbox".into(),
+                        "attention:inbox".into(),
+                    )))
+                    .collect(),
                     selected: Some(0),
                 });
             }
@@ -270,11 +312,15 @@ impl Workspace {
                 crate::agent_state::dismiss(&config, id)?;
                 self.attention_action("attention:inbox")?;
             }
+            "copy-conversation" => {
+                let text = conversation().context("Saved conversation ID is unavailable")?;
+                self.effects.push(ServerMessage::Clipboard { text });
+                self.note("Conversation ID copied".into());
+            }
             "open" => {
                 let state = ProjectState::load(&config)?;
                 ensure!(
-                    state.terminal_ids().contains(&event.pane)
-                        && state.terminal_epochs.get(&event.pane) == event.epoch.as_ref(),
+                    pane_matches(&state),
                     "Original pane no longer exists; notification retained"
                 );
                 if self.projects.iter().any(|c| c.workspace == workspace) {
@@ -282,10 +328,13 @@ impl Workspace {
                 } else {
                     self.open_session(config.clone())?;
                 }
+                // Keep the generation check, focus change and read receipt in
+                // one model transaction after the destination has opened.
+                let _lock = crate::project_sync::transaction(&config)?;
+                self.sync_project()?;
                 self.context_menu = None;
                 ensure!(
-                    self.state.terminal_ids().contains(&event.pane)
-                        && self.state.terminal_epochs.get(&event.pane) == event.epoch.as_ref(),
+                    pane_matches(&self.state),
                     "Pane changed while opening its session; notification retained"
                 );
                 self.action(&format!("terminal:{}", event.pane))?;
@@ -331,7 +380,14 @@ impl Workspace {
             hint: String::new(),
             action: action.into(),
         };
-        self.attention_query.offset = result.offset;
+        if self.attention_query.offset != result.offset {
+            self.attention_query.offset = result.offset;
+            if let Err(error) =
+                crate::notifications::save_query(&self.controller_id, &self.attention_query)
+            {
+                self.note(format!("Save attention page: {error:#}"));
+            }
+        }
         self.attention_total = result.total;
         let selected = self
             .context_menu
