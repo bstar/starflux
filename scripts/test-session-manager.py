@@ -1728,7 +1728,10 @@ GLib.MainLoop().run()
             assert api('machines.list')['machines']==[]
             # An installed helper with a path containing spaces, under private SSH environment.
             wrapper=tmp/'workspace helper'
-            wrapper.write_text('#!/usr/bin/python3\nimport os,sys,json\nfrom pathlib import Path\nwith Path('+repr(str(tmp/'machine-invocations'))+').open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\nos.execv('+repr(str(app))+',['+repr(str(app))+',*sys.argv[1:]])\n');wrapper.chmod(0o700)
+            # SSH sessions start with the host's default PATH. Keep the test's own
+            # PATH so the helper drives the same tmux as the controller (a Nix
+            # shell's tmux cannot be reached by a different system tmux).
+            wrapper.write_text('#!/usr/bin/python3\nimport os,sys,json\nfrom pathlib import Path\nos.environ["PATH"]='+repr(os.environ.get('PATH',''))+'\nwith Path('+repr(str(tmp/'machine-invocations'))+').open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\nos.execv('+repr(str(app))+',['+repr(str(app))+',*sys.argv[1:]])\n');wrapper.chmod(0o700)
             a.shortcut('char:m',1);menu('Machines')
             a.key('enter');wait(lambda:a.snapshot().get('modal_open'),'machine onboarding missing')
             for i,value in enumerate(['Build machine 界','proof',str(host_config),str(wrapper),name]):fill(i,value)
