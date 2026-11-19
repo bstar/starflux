@@ -540,6 +540,9 @@ impl Source {
                 }
             }
         }
+        if self.owner.advance_animations(Instant::now()) {
+            self.revision = self.revision.saturating_add(1);
+        }
         match self.owner.pump(8192, Instant::now()) {
             Ok(n) if n > 0 => self.revision = self.revision.saturating_add(1),
             Ok(_) => (),

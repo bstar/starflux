@@ -12,8 +12,13 @@ proof `scripts/native/test-native-presenter-kitty.py` cover the presenter. The
 default tmux backend does not carry images. Saved screens archive and redisplay the
 visible images. Unicode placeholders (`U=1` virtual placements shown through
 U+10EEEE cells) are supported: each placeholder cell shows its image tile in
-the image planes and reaches the host terminal as a blank cell. File and
-shared-memory transfers and animation are not supported. File, temporary-file
+the image planes and reaches the host terminal as a blank cell. Animation is
+supported: frames (`a=f`, drawn over a base frame or a background colour,
+blended or replacing) and playback control (`a=a`: stop, loading and running
+modes, loop counts, per-frame gaps and showing a frame) run on the host's
+clock, at most 256 frames per image within the image byte limit, and each
+frame change redraws the views. Frame composition (`a=c`) is not supported.
+File, temporary-file
 and shared-memory transfers are refused deliberately, because they would let a
 terminal program make the host read arbitrary local paths or memory. Existing
 App Space streaming is separate.
@@ -377,8 +382,8 @@ This remains a candidate, not an installed backend or completed graphics parity.
 Remaining requirements include production source recovery/cleanup, compatible
 observation of existing sources, buffer-switch/resize/load coverage, host
 placement-loss recovery, larger/chunked image transport and constrained-network
-media acceptance. File/shared-memory transfers are refused by design; animation
-remains unsupported protocol work. The original parity goal
+media acceptance. File/shared-memory transfers are refused by design, and frame
+composition (`a=c`) is unsupported. The original parity goal
 and its unchecked requirements remain active.
 
 The final delivery implementation is asynchronous: the local relay admits an

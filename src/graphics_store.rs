@@ -2,7 +2,17 @@
 //! source order; this model never sends input or replies to a source.
 use crate::graphics_resources::{Budget, Lease, Resources};
 use crate::graphics_transfer::{Controls, Error, Pixels, Transmission};
-use std::{collections::VecDeque, ops::Deref, sync::Arc};
+use std::{
+    collections::VecDeque,
+    ops::Deref,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+/// Frames an animated image may hold, including its root frame.
+const MAX_FRAMES: usize = 256;
+/// Gap of a frame transmitted without `z`, as Kitty uses.
+const DEFAULT_GAP: i32 = 40;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Generation {
@@ -56,7 +66,47 @@ struct Image {
     key: u64,
     id: u32,
     alternate: bool,
+    /// The frame currently shown.
     pixels: Arc<ImageData>,
+    /// Every frame of an animated image, the root frame first; empty for a
+    /// still image.
+    frames: Vec<Frame>,
+    animation: Animation,
+}
+#[derive(Clone)]
+struct Frame {
+    data: Arc<ImageData>,
+    /// Milliseconds the frame is shown; zero or less skips it.
+    gap: i32,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Playback {
+    #[default]
+    Stopped,
+    /// Run, waiting at the last frame for more frames instead of looping.
+    Loading,
+    Running,
+}
+#[derive(Clone, Default)]
+struct Animation {
+    playback: Playback,
+    current: usize,
+    /// Plays left before stopping at the last frame; `None` loops forever.
+    loops: Option<u32>,
+    due: Option<Instant>,
+}
+impl Image {
+    fn charged(&self) -> usize {
+        if self.frames.is_empty() {
+            self.pixels.rgba.capacity()
+        } else {
+            self.frames.iter().map(|f| f.data.rgba.capacity()).sum()
+        }
+    }
+    fn show(&mut self, frame: usize) {
+        self.animation.current = frame;
+        self.pixels = self.frames[frame].data.clone();
+    }
 }
 struct ImageData {
     pixels: Pixels,
@@ -250,7 +300,7 @@ impl Store {
     fn remove(&mut self, key: u64) {
         if let Some(index) = self.images.iter().position(|i| i.key == key) {
             let image = self.images.remove(index).unwrap();
-            self.bytes -= image.pixels.rgba.capacity();
+            self.bytes -= image.charged();
             self.placements.retain(|p| p.image != key);
             self.virtuals.retain(|p| p.image != key);
         }
@@ -387,6 +437,8 @@ impl Store {
                     id,
                     alternate,
                     pixels: Arc::new(ImageData { pixels, retained }),
+                    frames: Vec::new(),
+                    animation: Animation::default(),
                 });
                 if virtual_placement {
                     return Ok(self.place_virtual(place));
@@ -418,6 +470,19 @@ impl Store {
                     return Err(Error::TooLarge.into());
                 }
                 self.finish_placement(Some(place), controls)
+            }
+            b'f' => {
+                let pixels = pixels.ok_or(Error::Invalid)?;
+                Self::validate_pixels(&pixels)?;
+                self.add_frame(alternate, id, controls, pixels)?;
+                Ok(Outcome::default())
+            }
+            b'a' => {
+                if pixels.is_some() {
+                    return Err(Error::Invalid.into());
+                }
+                self.control_animation(alternate, id, controls)?;
+                Ok(Outcome::default())
             }
             b'd' => {
                 if pixels.is_some() {
@@ -488,6 +553,227 @@ impl Store {
             return Err(Error::TooLarge);
         }
         Ok(())
+    }
+    /// `a=f`: edit frame `r` or add a frame, starting from frame `c` (or a
+    /// blank canvas of colour `Y`) and drawing the data at `x`,`y`, blended
+    /// unless `X=1`. Frames are full-size canvases of the root image.
+    fn add_frame(
+        &mut self,
+        alternate: bool,
+        id: u32,
+        controls: &Controls,
+        data: Pixels,
+    ) -> Result<(), Failure> {
+        let index = self
+            .images
+            .iter()
+            .position(|i| id != 0 && i.id == id && i.alternate == alternate)
+            .ok_or(Failure::Missing)?;
+        let image = &self.images[index];
+        let (width, height) = (image.pixels.width, image.pixels.height);
+        let frames = image.frames.len().max(1);
+        let edit = controls.number(b'r', 0)? as usize;
+        let base = controls.number(b'c', 0)? as usize;
+        if edit > frames || base > frames || (edit == 0 && frames >= MAX_FRAMES) {
+            return Err(Error::Invalid.into());
+        }
+        let (x, y) = (controls.number(b'x', 0)?, controls.number(b'y', 0)?);
+        if x >= width || y >= height {
+            return Err(Error::Invalid.into());
+        }
+        let frame = |n: usize| -> &Pixels {
+            if image.frames.is_empty() {
+                &image.pixels.pixels
+            } else {
+                &image.frames[n].data.pixels
+            }
+        };
+        let mut canvas = if edit != 0 {
+            frame(edit - 1).rgba.clone()
+        } else if base != 0 {
+            frame(base - 1).rgba.clone()
+        } else {
+            let colour = controls.number(b'Y', 0)?.to_be_bytes();
+            colour.repeat((width * height) as usize)
+        };
+        let replace = controls.number(b'X', 0)? == 1;
+        let columns = data.width.min(width - x);
+        let rows = data.height.min(height - y);
+        for row in 0..rows {
+            for column in 0..columns {
+                let from = ((row * data.width + column) * 4) as usize;
+                let to = (((y + row) * width + x + column) * 4) as usize;
+                let source = &data.rgba[from..from + 4];
+                let target = &mut canvas[to..to + 4];
+                if replace || source[3] == 255 {
+                    target.copy_from_slice(source);
+                } else if source[3] != 0 {
+                    let a = u32::from(source[3]);
+                    let b = u32::from(target[3]) * (255 - a) / 255;
+                    let out = a + b;
+                    for c in 0..3 {
+                        target[c] = ((u32::from(source[c]) * a + u32::from(target[c]) * b)
+                            / out.max(1)) as u8;
+                    }
+                    target[3] = out as u8;
+                }
+            }
+        }
+        let gap = if controls.has(b'z') {
+            Some(controls.signed_number(b'z', 0)?)
+        } else {
+            None
+        };
+        let allocation = canvas.capacity();
+        let old = if edit != 0 && !image.frames.is_empty() {
+            image.frames[edit - 1].data.rgba.capacity()
+        } else if edit != 0 {
+            image.pixels.rgba.capacity()
+        } else {
+            0
+        };
+        if self.bytes - old + allocation > self.limits.bytes {
+            return Err(Error::TooLarge.into());
+        }
+        let retained = self.retained.reserve(allocation).ok_or(Error::Busy)?;
+        let data = Arc::new(ImageData {
+            pixels: Pixels {
+                width,
+                height,
+                rgba: canvas,
+            },
+            retained,
+        });
+        self.bytes = self.bytes - old + allocation;
+        let image = &mut self.images[index];
+        if image.frames.is_empty() {
+            image.frames.push(Frame {
+                data: image.pixels.clone(),
+                gap: DEFAULT_GAP,
+            });
+        }
+        if edit != 0 {
+            let frame = &mut image.frames[edit - 1];
+            frame.data = data;
+            if let Some(gap) = gap {
+                frame.gap = gap;
+            }
+        } else {
+            image.frames.push(Frame {
+                data,
+                gap: gap.unwrap_or(DEFAULT_GAP),
+            });
+        }
+        let current = image.animation.current;
+        image.show(current);
+        Ok(())
+    }
+    /// `a=a`: `s` stops (1), runs in loading mode (2) or runs (3); `v` sets
+    /// the loop count (1 loops forever, n plays n-1 times); `r` with `z` sets
+    /// that frame's gap; `c` shows a frame.
+    fn control_animation(
+        &mut self,
+        alternate: bool,
+        id: u32,
+        controls: &Controls,
+    ) -> Result<(), Failure> {
+        let image = self
+            .images
+            .iter_mut()
+            .find(|i| id != 0 && i.id == id && i.alternate == alternate)
+            .ok_or(Failure::Missing)?;
+        let frames = image.frames.len().max(1);
+        let edit = controls.number(b'r', 0)? as usize;
+        if edit > frames {
+            return Err(Error::Invalid.into());
+        }
+        if edit != 0 && controls.has(b'z') {
+            if image.frames.is_empty() {
+                image.frames.push(Frame {
+                    data: image.pixels.clone(),
+                    gap: DEFAULT_GAP,
+                });
+            }
+            image.frames[edit - 1].gap = controls.signed_number(b'z', 0)?;
+        }
+        match controls.number(b'v', 0)? {
+            0 => (),
+            1 => image.animation.loops = None,
+            n => image.animation.loops = Some(n - 1),
+        }
+        let show = controls.number(b'c', 0)? as usize;
+        if show > frames {
+            return Err(Error::Invalid.into());
+        }
+        if show != 0 && !image.frames.is_empty() {
+            image.show(show - 1);
+            image.animation.due = None;
+        }
+        image.animation.playback = match controls.number(b's', 0)? {
+            0 => image.animation.playback,
+            1 => Playback::Stopped,
+            2 => Playback::Loading,
+            3 => Playback::Running,
+            _ => return Err(Error::Invalid.into()),
+        };
+        if image.animation.playback == Playback::Stopped {
+            image.animation.due = None;
+        }
+        Ok(())
+    }
+    /// Move running animations to the frame due at `now`. Returns whether any
+    /// shown frame changed. A clock that fell behind resumes from `now`
+    /// instead of replaying the frames it missed.
+    pub fn advance(&mut self, now: Instant) -> bool {
+        let mut changed = false;
+        for image in &mut self.images {
+            let count = image.frames.len();
+            if count < 2 || image.animation.playback == Playback::Stopped {
+                continue;
+            }
+            let gap = |image: &Image| {
+                Duration::from_millis(image.frames[image.animation.current].gap.max(0) as u64)
+            };
+            let Some(mut due) = image.animation.due else {
+                image.animation.due = Some(now + gap(image));
+                continue;
+            };
+            // Each step shows one frame; skipped (gapless) frames take no time.
+            for _ in 0..count * 2 {
+                if due > now {
+                    break;
+                }
+                let next = image.animation.current + 1;
+                let next = if next < count {
+                    next
+                } else if image.animation.playback == Playback::Loading {
+                    break;
+                } else {
+                    match &mut image.animation.loops {
+                        Some(0) => {
+                            image.animation.playback = Playback::Stopped;
+                            break;
+                        }
+                        Some(n) => {
+                            *n -= 1;
+                            0
+                        }
+                        None => 0,
+                    }
+                };
+                image.show(next);
+                changed = true;
+                due += gap(image);
+            }
+            image.animation.due = if image.animation.playback == Playback::Stopped {
+                None
+            } else if due + Duration::from_secs(1) < now {
+                Some(now + gap(image))
+            } else {
+                Some(due)
+            };
+        }
+        changed
     }
     /// Record a virtual placement; the cursor does not move.
     fn place_virtual(&mut self, placement: Option<Placement>) -> Outcome {
@@ -710,6 +996,59 @@ mod tests {
     use crate::graphics_transfer::Assembler;
     use base64::{Engine, engine::general_purpose::STANDARD};
     #[test]
+    fn animation_frames_play_loop_and_stop_on_the_store_clock() {
+        let mut store = Store::new(generation());
+        let shown = |store: &Store| {
+            let key = store.placements(false).next().unwrap().image;
+            store.pixels(key).unwrap().rgba.clone()
+        };
+        apply(&mut store, 1, false, &image("a=T,i=3", [255, 0, 0, 255])).unwrap();
+        apply(
+            &mut store,
+            2,
+            false,
+            &image("a=f,i=3,z=100", [0, 0, 255, 255]),
+        )
+        .unwrap();
+        // A half-transparent frame drawn over frame 1 blends with it.
+        apply(
+            &mut store,
+            3,
+            false,
+            &image("a=f,i=3,c=1,z=50", [0, 255, 0, 128]),
+        )
+        .unwrap();
+        assert_eq!(
+            shown(&store),
+            [255, 0, 0, 255],
+            "frames do not play until run"
+        );
+        let start = Instant::now();
+        assert!(!store.advance(start));
+        apply(&mut store, 4, false, &command("a=a,i=3,s=3,v=2")).unwrap();
+        assert!(!store.advance(start), "running starts the clock");
+        assert!(store.advance(start + Duration::from_millis(40)));
+        assert_eq!(shown(&store), [0, 0, 255, 255]);
+        assert!(store.advance(start + Duration::from_millis(140)));
+        assert_eq!(shown(&store), [127, 128, 0, 255]);
+        // v=2 plays once more, then stops on the last frame.
+        assert!(store.advance(start + Duration::from_millis(190)));
+        assert_eq!(shown(&store), [255, 0, 0, 255]);
+        assert!(store.advance(start + Duration::from_millis(400)));
+        assert_eq!(shown(&store), [127, 128, 0, 255]);
+        assert!(!store.advance(start + Duration::from_secs(5)));
+        // c shows a frame directly; frames beyond the image are refused.
+        apply(&mut store, 5, false, &command("a=a,i=3,c=2")).unwrap();
+        assert_eq!(shown(&store), [0, 0, 255, 255]);
+        assert_eq!(
+            apply(&mut store, 6, false, &command("a=a,i=3,c=9")),
+            Err(Failure::Protocol(Error::Invalid))
+        );
+        assert_eq!(store.usage()[0], 12);
+        apply(&mut store, 7, false, &command("a=d,d=I,i=3")).unwrap();
+        assert_eq!(store.usage()[0], 0);
+    }
+    #[test]
     fn virtual_placements_show_only_through_unicode_placeholder_tiles() {
         let mut store = Store::new(generation());
         let transmission = Assembler::default()
@@ -928,7 +1267,7 @@ mod tests {
     ) -> Result<Outcome, Failure> {
         let decoded = if matches!(
             t.controls.character(b'a', b't').unwrap(),
-            b't' | b'T' | b'q'
+            b't' | b'T' | b'q' | b'f'
         ) {
             t.decode_image().map(Some)
         } else {

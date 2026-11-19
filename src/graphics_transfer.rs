@@ -146,7 +146,7 @@ impl Assembler {
         }
         // Deletion explicitly cancels a pending upload. It is a complete new
         // command, not a malformed continuation or a reason to retain pixels.
-        if matches!(controls.character(b'a', b't')?, b'd' | b'p') {
+        if matches!(controls.character(b'a', b't')?, b'd' | b'p' | b'a') {
             if controls.character(b'a', b't')? == b'd' {
                 self.cancel();
             }
@@ -210,8 +210,10 @@ impl Transmission {
         self.bytes.capacity()
     }
     pub fn decode_image(&self) -> Result<Pixels> {
-        if !matches!(self.controls.character(b'a', b't')?, b't' | b'T' | b'q')
-            || self.controls.character(b't', b'd')? != b'd'
+        if !matches!(
+            self.controls.character(b'a', b't')?,
+            b't' | b'T' | b'q' | b'f'
+        ) || self.controls.character(b't', b'd')? != b'd'
         {
             return Err(Error::Unsupported);
         }
@@ -483,7 +485,7 @@ mod tests {
     }
     #[test]
     fn files_shared_memory_and_unknown_formats_are_never_opened_or_decoded() {
-        for header in ["t=f", "t=t", "t=s", "o=x", "a=f", "f=17"] {
+        for header in ["t=f", "t=t", "t=s", "o=x", "a=f,t=f", "a=f,t=s", "f=17"] {
             assert_eq!(
                 transfer(header, b"/proc/self/environ").decode_image(),
                 Err(Error::Unsupported)

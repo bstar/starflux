@@ -370,7 +370,7 @@ impl Owner {
                     job: None,
                 };
                 let action = job.transmission.controls.character(b'a', b't');
-                if matches!(action, Ok(b't' | b'T' | b'q')) {
+                if matches!(action, Ok(b't' | b'T' | b'q' | b'f')) {
                     self.pending = Some(Pending {
                         job: Some(job),
                         ..pending
@@ -457,6 +457,10 @@ impl Owner {
     }
     pub fn store(&self) -> &Store {
         &self.store
+    }
+    /// Advance running image animations; true when a shown frame changed.
+    pub fn advance_animations(&mut self, now: std::time::Instant) -> bool {
+        self.store.advance(now)
     }
     pub fn set_palette(&mut self, palette: [[u8; 3]; 2]) {
         self.parser.callbacks_mut().palette = palette;
