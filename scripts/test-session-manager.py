@@ -482,15 +482,26 @@ GLib.MainLoop().run()
                 "index = argv.index('--clearenv') + 1\n"
                 "os.execvp(argv[0], argv[:index] + bindings + argv[index:])\n"
             )
-            resume=[sys.executable,str(shim),conversation]
+            automatic=os.environ.get('STARFLUX_TEST_CLAUDE_AUTOMATIC')=='1'
             launch=claude_resume[:-1]
             mount=launch.index('--chdir')
             launch[mount:mount]=['--bind',str(tmp),str(tmp)]
             settings_index=launch.index('--settings')+1
-            settings=json.loads(launch[settings_index])
-            settings['hooks']['SessionStart'].extend(generated_session_hooks('claude',
-                [*resume[:-1],'{session_id}'],env))
-            launch[settings_index]=json.dumps(settings)
+            if automatic:
+                # STAR/FLUX must add the SessionStart hook itself: the sandboxed
+                # Claude gets no settings except those the launch supplies.
+                del launch[settings_index-1:settings_index+1]
+                bindir=tmp/'claude-bin';bindir.mkdir(exist_ok=True)
+                wrapper=bindir/'claude'
+                wrapper.write_text('#!'+sys.executable+'\n'+shim.read_text().replace("+ sys.argv[1:]","[:-1] + sys.argv[1:]"))
+                wrapper.chmod(0o700)
+                resume=[str(wrapper),'--resume',conversation]
+            else:
+                resume=[sys.executable,str(shim),conversation]
+                settings=json.loads(launch[settings_index])
+                settings['hooks']['SessionStart'].extend(generated_session_hooks('claude',
+                    [*resume[:-1],'{session_id}'],env))
+                launch[settings_index]=json.dumps(settings)
             launch_args.write_text(json.dumps(launch))
             run=str(uuid.uuid4())
             report=dict(run_id=run,sequence=1,epoch=pane['epoch'],agent_pid=health['agent_pid'],
@@ -508,7 +519,7 @@ GLib.MainLoop().run()
                            for r in agent_status()['records'])
             wait(confirmed,'Claude did not register the exact thread in the new pane',timeout=25)
             assert alive(original_pid),'resume stopped the source process'
-            print(json.dumps(dict(result='PASS',claude_exact_resume=True,
+            print(json.dumps(dict(result='PASS',claude_exact_resume=True,claude_automatic_hook=automatic,
                                   claude_direct_callback=True,original_process_preserved=True)))
             raise SystemExit(0)
         if args.native_launch_race:

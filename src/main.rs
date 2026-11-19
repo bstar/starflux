@@ -1,5 +1,6 @@
 mod activity;
 mod adoption;
+mod agent_hooks;
 mod agent_mux;
 mod agent_state;
 mod app_audio;

@@ -82,7 +82,9 @@ with tempfile.TemporaryDirectory(prefix="starflux-claude-proof-") as directory:
                     child.kill()
                     child.wait()
 
-    for presentation in ([["--cells"], ["--ssh", "--cells"]] if args.starflux else []):
+    # The SSH runs keep the hook explicit: automatic hooks are added to local launches only.
+    runs = [(["--cells"], "1"), (["--cells"], "0"), (["--ssh", "--cells"], "0")]
+    for presentation, automatic in (runs if args.starflux else []):
         subprocess.run(
             [sys.executable, str(Path(__file__).with_name("test-session-manager.py")),
              "--agent-lifecycle", *presentation],
@@ -90,6 +92,7 @@ with tempfile.TemporaryDirectory(prefix="starflux-claude-proof-") as directory:
                 **os.environ,
                 "STARFLUX_TEST_APP": str(args.starflux.resolve(strict=True)),
                 "STARFLUX_TEST_CLAUDE_RESUME": json.dumps([*command, "--resume", session_id]),
+                "STARFLUX_TEST_CLAUDE_AUTOMATIC": automatic,
             },
             check=True,
         )

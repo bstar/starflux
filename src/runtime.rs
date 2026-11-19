@@ -498,7 +498,14 @@ impl Config {
             req["argv"] = json!(terminal.argv());
             req["recover_proxy"] = json!(true);
         } else if let Some(command) = agent_command.filter(|_| !recovered_boot) {
-            req["argv"] = json!(shell_words::split(command)?);
+            let mut argv = shell_words::split(command)?;
+            if !self.remote(pane) {
+                argv = crate::agent_hooks::with_session_hook(
+                    argv,
+                    &std::env::current_exe()?.to_string_lossy(),
+                );
+            }
+            req["argv"] = json!(argv);
         }
         if !req["recover_proxy"].as_bool().unwrap_or(false) {
             let state = crate::project_state::ProjectState::load(self)?;

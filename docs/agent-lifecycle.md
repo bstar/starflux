@@ -106,7 +106,16 @@ verifies Claude Code the same way. With Claude Code 2.1.328 in a disposable,
 network-disabled profile, `SessionStart` reported the exact startup and resume
 IDs, and the STAR/FLUX Agent Status resume action relaunched that exact Claude
 session locally and over loopback SSH in cells, keeping the original process.
-Automatic registration and the daemon-backed Codex path remain unverified.
+Claude Code launches on local panes are registered automatically. STAR/FLUX
+adds a `SessionStart` hook to the launch with Claude's per-launch `--settings`,
+so the user's own settings are untouched; the hook's resume template keeps the
+launch's `--model`, `--permission-mode`, `--agent` and `--fallback-model`
+choices. A launch that already passes `--settings` is left unchanged, and
+`STARFLUX_AGENT_HOOKS=0` disables the addition. The fixture's automatic run
+starts a sandboxed Claude without any settings and passed with Claude Code
+2.1.328. Remote panes and Codex keep the explicit hook: Codex requires persisted
+hook trust, and STAR/FLUX never bypasses it. The daemon-backed Codex path remains
+unverified.
 
 An opt-in local adapter is available at `scripts/agent-session-hook.py`. Add it
 as a **synchronous** Codex `SessionStart` command for the bound launch and
