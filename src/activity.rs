@@ -132,6 +132,9 @@ pub fn screen_state(text: &str) -> &'static str {
     }
     for line in footer.lines().rev() {
         let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•■".contains(c));
+        if claude_working(line) {
+            return "working";
+        }
         if line.starts_with("automatic reconnect could not restore this session")
             || line.starts_with("server connection could not be restored")
         {
@@ -160,6 +163,28 @@ pub fn screen_state(text: &str) -> &'static str {
         }
     }
     "idle"
+}
+/// Claude Code's busy line: a spinner glyph, one changing verb ending in an
+/// ellipsis, then a parenthesis that offers interruption, e.g.
+/// `✻ cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)`.
+fn claude_working(line: &str) -> bool {
+    let line = line.trim_start_matches(|c: char| c.is_whitespace() || "✻✶✳✢✽·*●•+".contains(c));
+    let Some((label, tail)) = line.split_once('(') else {
+        return false;
+    };
+    let label = label.trim();
+    let Some(word) = label
+        .strip_suffix('…')
+        .or_else(|| label.strip_suffix("..."))
+    else {
+        return false;
+    };
+    !word.is_empty()
+        && word.len() <= 40
+        && word.chars().all(|c| c.is_alphabetic() || c == '-')
+        && tail
+            .split_once(')')
+            .is_some_and(|(inside, _)| inside.contains("esc to interrupt"))
 }
 pub fn screen_observation(command: Command) -> Option<(String, String)> {
     let bytes = read_output(command)?;
@@ -308,6 +333,28 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn claude_code_busy_lines_are_working() {
+        for line in [
+            "✻ Cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)",
+            "✶ Pondering… (esc to interrupt · ctrl+t to show todos)",
+            "· Brewing... (3s · esc to interrupt)",
+        ] {
+            assert_eq!(
+                screen_state(&format!("output\n{line}\n> ")),
+                "working",
+                "{line}"
+            );
+        }
+        // A finished turn, prose that mentions interruption and a bare ellipsis are idle.
+        for screen in [
+            "✻ Worked for 2m 10s",
+            "Loading… the docs say (esc to interrupt) works",
+            "> Waiting…",
+        ] {
+            assert_eq!(screen_state(screen), "idle", "{screen}");
+        }
+    }
     #[test]
     fn current_footer_distinguishes_work_requests_and_idle() {
         assert_eq!(
