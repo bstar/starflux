@@ -1925,10 +1925,12 @@ GLib.MainLoop().run()
                 local_rendered_after_return=threading.Event()
                 origin_marker=('SESSION_PROOF_PID='+str(original_pid)).encode()
                 marker=('SESSION_PROOF_PID='+str(ninth_pid)).encode()
+                switch_output=[0,b'']
                 def drain_switch():
                     tail=b''
                     try:
                         while chunk:=os.read(presenter_master,65536):
+                            switch_output[0]+=len(chunk);switch_output[1]=(switch_output[1]+chunk)[-6000:]
                             tail+=chunk
                             if remote_rendered.is_set() and origin_marker in tail:
                                 local_rendered_after_return.set()
@@ -1992,8 +1994,14 @@ GLib.MainLoop().run()
                     try:wait(remote_rendered.is_set,'the same terminal did not render the remote process',timeout=45)
                     except AssertionError:
                         snap=local_snapshot()
+                        try:remote_view=json.loads((remote_state/(target_identity+'.state.json')).read_text())
+                        except (OSError,ValueError):remote_view={}
                         print(json.dumps(dict(switch_history=snap.get('history'),target=target_identity,
-                                              presenter=presenter.poll(),
+                                              presenter=presenter.poll(),output_bytes=switch_output[0],
+                                              output_tail=switch_output[1].decode('utf-8','replace')[-3000:],
+                                              remote_status=remote_view.get('status'),remote_active=remote_view.get('active'),
+                                              remote_terminals=[(t.get('pane'),t.get('text','')[-300:]) for t in remote_view.get('direct_terminals',[])],
+                                              expected_marker=marker.decode(),
                                               presenter_log=(tmp/'machine-switch-presenter.log').read_text()[-2000:])),flush=True)
                         raise
                     assert presenter.poll() is None and alive(original_pid) and alive(ninth_pid)
