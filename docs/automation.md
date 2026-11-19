@@ -29,6 +29,8 @@ Responses contain `version`, the supplied `id`, `ok`, and either `result` or `er
 | `sessions.import` | `reference` from discovery; register the existing source without opening a frontend or restarting terminals |
 | `sessions.default` | Explicit `session` ID, or null to clear |
 | `projects.list` | Empty params; project/session IDs, labels, host and directory |
+| `projects.create` | `session`, `label`, `directory`; adds a local project to an existing session and returns its `project` ID |
+| `projects.rename` | `project`, `label`; changes the display name; processes and identity are unchanged |
 | `panes.list` | `project`; terminal membership, epochs and labels |
 | `panes.get` | `project`, `pane`, optional `allow_unavailable`; layered health, guarded target and capabilities |
 | `panes.search_history` | `project`, `pane`, literal `query` (1–128 printable characters), optional `limit` (1–100, default 30), `ignore_case` (default false), and `cursor`. Returns the total, bounded excerpts and `next_cursor` in capture order. Pass the cursor back with the same project, pane, query and case mode to read more. If the captured history changed, the API returns `stale_history`. Rows and Unicode character columns are one-based within that capture. ANSI styles and hyperlink metadata are excluded. |
@@ -154,7 +156,7 @@ Retention is bounded to 2,048 events and 2 MiB of event records. If a cursor fal
 
 `duration_ms` defaults to 30,000 and accepts 100–600,000. Optional `max_events` accepts 1–100,000 matching events; replay counts toward the limit. Heartbeats do not. Streams apply stdout backpressure without an unbounded outbound queue. Close the output pipe or terminate the API process to disconnect; source processes and presenters remain running.
 
-The API currently covers the methods above. Structured frontend-command acknowledgements, remaining session/import workflows, guarded input for imported agent-multiplexer panes and APIs for forthcoming machine/plugin features remain part of the broader parity work.
+The API covers the methods above, including acknowledged frontend commands, session/project/pane management, imports, machines and plugins. Guarded input for imported agent-multiplexer panes is intentionally not offered, because that tool's input API cannot carry the expected terminal or process identity.
 
 `snapshots.status` takes no parameters and reports collector liveness, process/boot identity and bounded capture diagnostics. Live views provide expiring coverage; the read-only collector takes over after the last view closes. See [cold-start recovery](cold-start.md).
 

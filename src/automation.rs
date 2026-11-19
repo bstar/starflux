@@ -122,6 +122,8 @@ fn mutating(method: &str) -> bool {
             | "worktrees.remove"
             | "worktrees.set_lock"
             | "sessions.default"
+            | "projects.create"
+            | "projects.rename"
             | "panes.create"
             | "panes.rename"
             | "panes.send"
@@ -198,6 +200,8 @@ const METHODS: &[&str] = &[
     "sessions.import",
     "sessions.default",
     "projects.list",
+    "projects.create",
+    "projects.rename",
     "panes.list",
     "panes.get",
     "panes.capture",
@@ -900,6 +904,56 @@ fn dispatch(request: &Request) -> Result<Value> {
         "projects.list" => {
             let _: Empty = params(p)?;
             Ok(json!({"projects":metadata(None)?["projects"]}))
+        }
+        "projects.create" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                session: String,
+                label: String,
+                directory: String,
+            }
+            let p: P = params(p)?;
+            crate::project_state::validate_label(&p.label)?;
+            ensure!(
+                crate::session_catalog::list()?
+                    .iter()
+                    .any(|entry| entry.id == p.session),
+                "Session not found"
+            );
+            let directory = std::fs::canonicalize(&p.directory)
+                .context("Choose an existing project directory")?;
+            ensure!(directory.is_dir(), "Choose a directory");
+            let config = Config {
+                workspace: format!("work-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
+                label: Some(p.label),
+                collection: Some(p.session),
+                agent_mux: None,
+                tmux: None,
+                adopted: Default::default(),
+                native_terminals: false,
+                theme: "system".into(),
+                host: None,
+                ssh_config: None,
+                directory: Some(directory.to_string_lossy().into_owned()),
+                agent: None,
+                executable: std::env::current_exe()?.to_string_lossy().into_owned(),
+                project_host: true,
+                desktop_helper: crate::runtime::default_desktop_helper(),
+            };
+            crate::project_state::register(&config)?;
+            Ok(json!({"project":config.workspace,"label":config.label,"session":config.collection}))
+        }
+        "projects.rename" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                project: String,
+                label: String,
+            }
+            let p: P = params(p)?;
+            let renamed = crate::project_state::rename(&project(&p.project)?, &p.label)?;
+            Ok(json!({"project":renamed.workspace,"label":renamed.label}))
         }
         "snapshots.status" => {
             let _: Empty = params(p)?;

@@ -132,6 +132,7 @@ python3 scripts/test-session-manager.py
 python3 scripts/test-session-manager.py --ssh --cells
 python3 scripts/test-session-manager.py --move-project
 python3 scripts/test-session-manager.py --ssh --cells --move-project-ui
+python3 scripts/test-project-api.py
 python3 scripts/test-agent-session-hook.py
 python3 scripts/test-native-terminal.py --app-capabilities
 python3 scripts/test-native-terminal.py --render-cache

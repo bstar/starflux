@@ -3311,8 +3311,6 @@ impl Workspace {
                         project_host: true,
                         desktop_helper: "starflux".into(),
                     };
-                    config.validate()?;
-                    ensure!(!values[2].is_empty(), "Project directory is required");
                     ensure!(
                         !self
                             .projects
@@ -3320,22 +3318,7 @@ impl Workspace {
                             .any(|c| c.workspace == config.workspace),
                         "A project with that name already exists"
                     );
-                    {
-                        let _transaction = crate::project_sync::transaction(&config)?;
-                        let root = project_state::data_root()?;
-                        ensure!(
-                            !config_path.exists()
-                                && ["json", "model.json", "layout.json"].iter().all(|suffix| {
-                                    !root.join(format!("{}.{suffix}", config.workspace)).exists()
-                                }),
-                            "A project with that name already exists"
-                        );
-                        ProjectState::new_owned().save(&config)?;
-                    }
-                    starcore::fs::write_private(
-                        &crate::runtime::config_path(&config.workspace)?,
-                        &serde_json::to_vec_pretty(&config)?,
-                    )?;
+                    project_state::register(&config)?;
                     let id = config.workspace.clone();
                     self.navigation.open_project(&id);
                     self.navigation.touch(&id, crate::navigation::now());

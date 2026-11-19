@@ -77,6 +77,47 @@ pub struct AppTarget {
     pub directory: String,
     pub helper: String,
 }
+/// Register a new project: its owned model first, then its configuration. The
+/// name must not belong to any saved configuration or model.
+pub fn register(config: &Config) -> Result<()> {
+    config.validate()?;
+    ensure!(
+        config.directory.as_deref().is_some_and(|d| !d.is_empty()),
+        "Project directory is required"
+    );
+    let config_path = crate::runtime::config_path(&config.workspace)?;
+    {
+        let _transaction = crate::project_sync::transaction(config)?;
+        let root = data_root()?;
+        ensure!(
+            !config_path.exists()
+                && ["json", "model.json", "layout.json"]
+                    .iter()
+                    .all(|suffix| !root.join(format!("{}.{suffix}", config.workspace)).exists()),
+            "A project with that name already exists"
+        );
+        ProjectState::new_owned().save(config)?;
+    }
+    starcore::fs::write_private(&config_path, &serde_json::to_vec_pretty(config)?)?;
+    Ok(())
+}
+
+/// Give a project a new display name; its identity and processes are unchanged.
+pub fn rename(original: &Config, label: &str) -> Result<Config> {
+    validate_label(label)?;
+    let mut config = original.clone();
+    config.label = Some(label.into());
+    let _transaction = crate::project_sync::transaction(&config)?;
+    // Saving merges only the configuration fields that differ from the loaded
+    // one, so load with the original and save with the renamed configuration.
+    ProjectState::load(original)?.save(&config)?;
+    starcore::fs::write_private(
+        &crate::runtime::config_path(&config.workspace)?,
+        &serde_json::to_vec_pretty(&config)?,
+    )?;
+    Ok(config)
+}
+
 pub fn validate_label(label: &str) -> Result<()> {
     ensure!(!label.trim().is_empty(), "Enter a name");
     ensure!(
