@@ -84,7 +84,9 @@ if provider_resume:
     assert provider_resume[0]=='bwrap' and '--unshare-net' in provider_resume
 claude_resume=json.loads(os.environ.get('STARFLUX_TEST_CLAUDE_RESUME','null')) if args.agent_lifecycle else None
 
-with tempfile.TemporaryDirectory(prefix='starflux-session-proof-') as directory:
+# Unix socket paths are limited to about 108 bytes, and the second controller's
+# tmux socket sits several levels deep. Nix shells set a long TMPDIR, so use /tmp.
+with tempfile.TemporaryDirectory(prefix='starflux-session-proof-',dir='/tmp' if os.path.isdir('/tmp') else None) as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     name='sessions-'+secrets.token_hex(4)
     shell=tmp/'fake-shell'
