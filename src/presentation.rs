@@ -111,7 +111,9 @@ pub fn run(launch: Launch, mode: Mode) -> Result<()> {
     ANNOUNCE_LOCAL_RETURN.store(crate::refresh::has_local_return(), Ordering::Relaxed);
     *ANNOUNCE_LOCAL_MACHINES.lock().unwrap() = crate::refresh::local_machines_notice();
     REQUIRE_GRAPHICAL.store(mode == Mode::Graphical, Ordering::Relaxed);
-    client::run_with_preference(
+    // `event` maps complete OSC 72 messages to `Input::Osc72`, so this frontend
+    // opts in to desktop file-drop negotiation (STAR/CORE keeps it off otherwise).
+    client::run_with_osc72_preference(
         launch,
         event,
         notice,

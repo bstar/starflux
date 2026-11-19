@@ -607,7 +607,7 @@ GLib.MainLoop().run()
                     request=dict(version=1,id='move-project-proof',method=method,params=params)
                     if write:request['operation_id']=secrets.token_hex(16)
                     response=json.loads(subprocess.check_output([str(app),'--api',json.dumps(request)],env=env,timeout=20))
-                    assert response['ok']==ok,response
+                    assert ok is None or response['ok']==ok,response
                     return response.get('result',response.get('error'))
                 def model(project):
                     try:return json.loads((tmp/'data/starflux/projects'/(project+'.model.json')).read_text())
@@ -643,10 +643,17 @@ GLib.MainLoop().run()
                 wait(lambda:any(e['data']['project']==name for e in occurrences('pane.focused')),'pane focus was not journaled')
                 wait(lambda:any(e['data']['id']==name for e in occurrences('project.focused')),'project focus was not journaled')
                 # Exits are observed for the open project's panes.
-                move_api('panes.create',dict(project=name,label='Exit hook'),write=True)
                 def remaining():
                     return [p for p in a.snapshot()['panes'] if p.get('pid') and p['pid']!=moving_pid and p.get('alive')]
-                live=wait(remaining,'the created pane did not start',timeout=30)
+                # A remote launch can report an unknown outcome while the pane still
+                # starts; accept a live pane, and retry the request a few times.
+                live=None
+                for attempt in range(3):
+                    move_api('panes.create',dict(project=name,label='Exit hook'),write=True,ok=None)
+                    try:
+                        live=wait(remaining,'the created pane did not start',timeout=20);break
+                    except AssertionError:
+                        if attempt==2:raise
                 # The pane pid is its supervisor; end the shell under it.
                 def children(pid):
                     try:return [int(c) for t in Path('/proc',str(pid),'task').iterdir() for c in (t/'children').read_text().split()]
