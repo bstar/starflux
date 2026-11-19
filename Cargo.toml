@@ -13,7 +13,7 @@ exclude = ["vendor/vt100"]
 resolver = "2"
 
 [workspace.dependencies]
-starcore = { git = "https://github.com/bstar/starcore", tag = "v0.25.0", version = "0.25", default-features = false, features = ["terminal-graphics", "media"] }
+starcore = { git = "https://github.com/bstar/starcore", tag = "v0.25.1", version = "0.25.1", default-features = false, features = ["terminal-graphics", "media"] }
 
 [features]
 default = ["lossless-canvas", "gpu-renderer"]

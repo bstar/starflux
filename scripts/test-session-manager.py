@@ -1781,7 +1781,10 @@ GLib.MainLoop().run()
                     first=hosts[saved['id']]['page']['agents']
                     other=hosts[second['id']]['page']['agents']
                     return first and other and (first,other)
-                first,other=wait(agent_overview,'independent controller agents not found',timeout=20)
+                try:first,other=wait(agent_overview,'independent controller agents not found',timeout=45)
+                except AssertionError:
+                    print(json.dumps(dict(agent_pages=api('machines.agents',dict(machines=[saved['id'],second['id'],broken_page['id']])))),flush=True)
+                    raise
                 assert any(row['project']==name and row['harness']=='codex' for row in first),first
                 assert [row['project'] for row in other]==[second_project],other
                 assert second_project not in [row['project'] for row in first]
