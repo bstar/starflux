@@ -25,7 +25,7 @@ impl Source {
         Ok(())
     }
     pub fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new("tmux");
+        let mut command = crate::host_env::command("tmux");
         command
             .args(["-u", "-S", &self.socket.to_string_lossy()])
             .args(args)

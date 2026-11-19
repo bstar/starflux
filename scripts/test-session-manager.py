@@ -907,7 +907,9 @@ GLib.MainLoop().run()
                 subprocess.run([str(app),'--workspace',name,'--frontend',client.identity,'--close'],env=env,check=True,capture_output=True)
                 client.process.wait(timeout=5)
             subprocess.run(['tmux','-L','starflux-'+name,'send-keys','-t','p0','AFTER_LAST_VIEW_CLOSED','Enter'],env=env,check=True,capture_output=True)
-            wait(lambda:'REPLY=AFTER_LAST_VIEW_CLOSED' in archive(),'collector did not take over after last view closed',timeout=30)
+            # Coverage expires 15 s after the last view, scans run every 5 s and a live pane
+            # is recaptured after 10 s, so a handoff can legitimately take about 30 s.
+            wait(lambda:'REPLY=AFTER_LAST_VIEW_CLOSED' in archive(),'collector did not take over after last view closed',timeout=60)
             assert service()['pid']==initial['pid'] and alive(original_pid)
             wait(lambda:service()['covered']==0 and service()['captures']>initial['captures'],'collector handoff diagnostics did not advance')
             print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,live_controller_coverage=True,no_duplicate_captures=True,last_view_close_failover=True,retained_terminal=True)))

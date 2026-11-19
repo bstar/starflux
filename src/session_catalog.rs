@@ -302,7 +302,7 @@ pub fn external() -> Vec<Entry> {
         sockets.insert(socket);
     }
     for socket in sockets {
-        let mut command = Command::new("tmux");
+        let mut command = crate::host_env::command("tmux");
         command.args([
             "-u",
             "-S",

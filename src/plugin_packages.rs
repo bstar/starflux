@@ -11,7 +11,6 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
@@ -386,7 +385,7 @@ fn build(
     }
     Store::open(staging.path().into())?.write("owner.json",&serde_json::to_vec(&json!({"version":1,"pid":std::process::id(),"start_ticks":crate::agent_state::process_start(std::process::id()),"boot":crate::agent_state::boot_id().map(|b|b.to_string())}))?)?;
     let request = json!({"repository":repository,"reference":reference,"subdirectory":subdirectory,"stage":staging.path()});
-    let mut command = Command::new("python3");
+    let mut command = crate::host_env::command("python3");
     command.args([
         "-c",
         include_str!("../scripts/plugin-package.py"),

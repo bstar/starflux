@@ -155,7 +155,7 @@ fn host(config: &Config, action: &str, mut request: Value) -> Result<Value> {
         ));
         c
     } else {
-        let mut c = Command::new("python3");
+        let mut c = crate::host_env::command("python3");
         c.args(["-c", HELPER, &encoded]);
         c
     };

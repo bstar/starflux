@@ -431,7 +431,7 @@ pub fn worker(project: &str, category: &str, id: &str) -> Result<()> {
         valid(&config, &r)?;
         let workspace = root.join("workspace");
         starcore::terminal_graphics::session::private_root(&workspace)?;
-        let mut child = Command::new("python3")
+        let mut child = crate::host_env::command("python3")
             .args(["-u", "-c", include_str!("../scripts/category-provider.py")])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

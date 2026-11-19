@@ -109,7 +109,7 @@ pub fn read(config: &Config) -> Result<Status> {
         ));
         cmd
     } else {
-        let mut cmd = Command::new("python3");
+        let mut cmd = crate::host_env::command("python3");
         cmd.args(["-c", HELPER, &directory]);
         cmd
     };

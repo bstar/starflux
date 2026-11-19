@@ -6,7 +6,6 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     os::unix::{net::UnixStream, process::CommandExt},
     path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -145,7 +144,7 @@ impl Terminal {
         args
     }
     pub fn bridge_alive(&self, pane: usize) -> Result<bool> {
-        let result = Command::new("tmux")
+        let result = crate::host_env::command("tmux")
             .args([
                 "-L",
                 &self.server,
@@ -175,7 +174,7 @@ impl Terminal {
         // Retained owners can predate current footer detection. Observe the
         // live screen here instead of trusting their cached interpretation.
         if health["alive"] == true && matches!(health["agent"].as_str(), Some("codex" | "claude")) {
-            let mut command = Command::new("tmux");
+            let mut command = crate::host_env::command("tmux");
             command.args([
                 "-L",
                 &self.server,
@@ -194,7 +193,7 @@ impl Terminal {
     }
 }
 fn python(script: &str, args: &[&str]) -> Result<()> {
-    Err(Command::new("python3")
+    Err(crate::host_env::command("python3")
         .args(["-c", script])
         .args(args)
         .exec())

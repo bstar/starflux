@@ -1,11 +1,8 @@
 use anyhow::Result;
-use std::{
-    io::{self, Write},
-    process::Command,
-};
+use std::io::{self, Write};
 pub fn run(workspace: &str) -> Result<()> {
     let state = |s: &str| {
-        let _ = Command::new("tmux")
+        let _ = crate::host_env::command("tmux")
             .args([
                 "-L",
                 &format!("starflux-{workspace}"),

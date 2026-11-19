@@ -167,7 +167,7 @@ mod geometry_tests {
                 _ => {}
             }
         };
-        let result = Command::new("python3")
+        let result = crate::host_env::command("python3")
             .args(["-c", include_str!("../../scripts/profile-egl.py")])
             .env("WAYLAND_DISPLAY", socket)
             .output()

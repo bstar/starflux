@@ -34,6 +34,7 @@ mod graphics_store;
 mod graphics_stream;
 mod graphics_transfer;
 mod herdr;
+mod host_env;
 #[cfg(test)]
 mod inline_graphics_tests;
 mod keyboard;
@@ -313,7 +314,7 @@ fn run() -> Result<()> {
             .iter()
             .take_while(|arg| *arg != "--")
             .any(|arg| arg == "--print-config");
-        let mut hook = Command::new("python3");
+        let mut hook = crate::host_env::command("python3");
         hook.arg("-c")
             .arg(include_str!("../scripts/agent-session-hook.py"));
         if !print_config {
