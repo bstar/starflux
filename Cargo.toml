@@ -3,7 +3,7 @@ name = "starflux"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "A STAR/KIT workspace with native terminals and persistent local/SSH apps"
+description = "A STAR/CORE workspace with native terminals and persistent local/SSH apps"
 repository = "https://github.com/bstar/starflux"
 readme = "README.md"
 
@@ -13,12 +13,12 @@ exclude = ["vendor/vt100"]
 resolver = "2"
 
 [workspace.dependencies]
-starkit = { git = "https://github.com/bstar/starkit", tag = "v0.24.0", version = "0.24", default-features = false, features = ["terminal-graphics", "media"] }
+starcore = { git = "https://github.com/bstar/starcore", tag = "v0.25.0", version = "0.25", default-features = false, features = ["terminal-graphics", "media"] }
 
 [features]
 default = ["lossless-canvas", "gpu-renderer"]
 lossless-canvas = []
-gpu-renderer = ["starkit/gpu-renderer"]
+gpu-renderer = ["starcore/gpu-renderer"]
 
 [dependencies]
 anyhow = "1"
@@ -26,7 +26,7 @@ unicode-width = "0.2"
 regex = { version = "1", default-features = false, features = ["std", "unicode-case", "perf"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-starkit.workspace = true
+starcore.workspace = true
 crossbeam-channel = "0.5"
 shell-words = "1"
 libc = "0.2"

@@ -387,7 +387,7 @@ fn root() -> Result<PathBuf> {
         .parent()
         .context("No automation data directory")?
         .join("automation/frontends");
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     Ok(root)
 }
 fn id(value: &str) -> Result<String> {

@@ -153,7 +153,7 @@ composition rejects more than 16 million viewport pixels, 64 million placement/
 mask pixel operations or 128 MiB of payload. These are bounded payload budgets,
 not an accounting of all process memory.
 
-The cells fallback emits validated KIT grids with colored half blocks. Negative
+The cells fallback emits validated CORE grids with colored half blocks. Negative
 images preserve source glyphs and respect nondefault terminal backgrounds;
 positive images can replace covered glyphs. Wide glyphs are replaced as whole
 clusters so no continuation cell is left dangling. Combining text and attributes
@@ -313,9 +313,9 @@ keeps the bounded half-block fallback.
 `image-planes-v1` is an explicit retained-owner capability and `Watch.pixels`
 defaults to false for existing protocol callers. A current STAR/FLUX local helper
 adds `image_planes_v1` to its font report; graphical controllers request planes
-only after that report. The immutable STAR/KIT pin is unchanged. Older helpers
+only after that report. The immutable STAR/CORE pin is unchanged. Older helpers
 keep their existing behavior. This helper negotiation currently depends on the
-existing Kitty font-watcher report and is not a universal new KIT capability.
+existing Kitty font-watcher report and is not a universal new CORE capability.
 
 The display-side `graphics_frontend.rs` validates geometry and bounded inline
 PNG data, allocates its own image IDs, and places the planes below/above native

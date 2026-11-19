@@ -40,7 +40,7 @@ fn root() -> Result<PathBuf> {
         .parent()
         .context("No session directory")?
         .join("sessions");
-    starkit::terminal_graphics::session::private_root(&path)?;
+    starcore::terminal_graphics::session::private_root(&path)?;
     Ok(path)
 }
 pub(crate) fn valid(id: &str) -> Result<()> {
@@ -269,7 +269,7 @@ fn create_with_source(
         ProjectState::default()
     };
     state.save(&config)?;
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &runtime::config_path(&config.workspace)?,
         &serde_json::to_vec_pretty(&config)?,
     )?;
@@ -538,14 +538,14 @@ pub fn delete_checked(
                 .file_stem()
                 .is_some_and(|name| anchors.contains(name.to_string_lossy().as_ref()))
             {
-                starkit::fs::write_private(&path, &serde_json::to_vec_pretty(fallback)?)?;
+                starcore::fs::write_private(&path, &serde_json::to_vec_pretty(fallback)?)?;
             } else {
                 fs::remove_file(path)?;
             }
         }
     }
     for anchor in anchors.intersection(&identities) {
-        starkit::fs::write_private(
+        starcore::fs::write_private(
             &runtime::config_path(anchor)?,
             &serde_json::to_vec_pretty(fallback)?,
         )?;

@@ -25,7 +25,7 @@ the user's explicit priority. Restoring a shell is not successful AI recovery.
 - Canonical test fixtures and documentation have uncommitted changes. No commit
   or push was made during this work. Preserve the user's existing worktree edits.
 - Shared dependency pins and canonical `Cargo.lock` are unchanged. Do not edit
-  the immutable Cargo KIT checkout or a sibling KIT project to continue this.
+  the immutable Cargo CORE checkout or a sibling CORE project to continue this.
 
 ## Reconstruct the latest candidate
 

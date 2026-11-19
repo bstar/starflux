@@ -1,6 +1,6 @@
 # Building and verification
 
-Use Nix for builds and checks. The application and terminal client belong to one Cargo workspace and inherit the same immutable STAR/KIT pin. Never commit a lockfile generated with a path override. `scripts/dev-candidate.py` keeps candidate manifests and locks disposable.
+Use Nix for builds and checks. The application and terminal client belong to one Cargo workspace and inherit the same immutable STAR/CORE pin. Never commit a lockfile generated with a path override. `scripts/dev-candidate.py` keeps candidate manifests and locks disposable.
 
 ```sh
 ./scripts/build-local.sh

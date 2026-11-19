@@ -1,17 +1,17 @@
-//! Fixed local endpoint used by the STAR/KIT Kitty watcher; no host commands run here.
+//! Fixed local endpoint used by the STAR/CORE Kitty watcher; no host commands run here.
 #[path = "../../src/font_frontend.rs"]
 mod font_frontend;
 use anyhow::{Result, ensure};
-use starkit::terminal_graphics::{client, protocol::Input};
-fn event(event: &starkit::crossterm::event::Event) -> Option<Input> {
+use starcore::terminal_graphics::{client, protocol::Input};
+fn event(event: &starcore::crossterm::event::Event) -> Option<Input> {
     match event {
-        starkit::crossterm::event::Event::FocusLost => Some(Input::Notice {
+        starcore::crossterm::event::Event::FocusLost => Some(Input::Notice {
             message: "window-focus:lost".into(),
         }),
-        starkit::crossterm::event::Event::FocusGained => Some(Input::Notice {
+        starcore::crossterm::event::Event::FocusGained => Some(Input::Notice {
             message: "focus-canvas:terminals".into(),
         }),
-        starkit::crossterm::event::Event::Osc72(text) => {
+        starcore::crossterm::event::Event::Osc72(text) => {
             font_frontend::event(text).or_else(|| Some(Input::Osc72 { text: text.clone() }))
         }
         _ => None,
@@ -55,7 +55,7 @@ fn record_error(error: &anyhow::Error) {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().collect();
     if args.get(1).is_some_and(|a| a == "--check-audio") {
-        use starkit::terminal_graphics::{
+        use starcore::terminal_graphics::{
             audio,
             media::{ToClient, ToHost},
             protocol::ClientMessage,
@@ -104,7 +104,7 @@ fn run() -> Result<()> {
     }
     if args.len() == 1 || args[1] == "--help" || args[1] == "-h" {
         println!(
-            "STAR/FLUX audio-enabled local terminal frontend\nUsage: starflux-terminal-client SOCKET\nStarted by the STAR/KIT Kitty watcher on the listening machine."
+            "STAR/FLUX audio-enabled local terminal frontend\nUsage: starflux-terminal-client SOCKET\nStarted by the STAR/CORE Kitty watcher on the listening machine."
         );
         return Ok(());
     }

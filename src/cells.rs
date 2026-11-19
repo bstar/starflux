@@ -1,6 +1,6 @@
 //! Cell layout and input adapter for the shared workspace controller.
 use super::*;
-use starkit::ratatui::{
+use starcore::ratatui::{
     buffer::Buffer,
     layout::Rect as CellRect,
     style::{Color, Modifier, Style},
@@ -128,7 +128,7 @@ fn menu_rect(menu: &crate::shelf::ContextMenu, v: Viewport) -> Rect {
         .items
         .iter()
         .map(|item| {
-            starkit::ratatui::text::Line::from(format!("{}  {}", item.label, item.hint)).width()
+            starcore::ratatui::text::Line::from(format!("{}  {}", item.label, item.hint)).width()
         })
         .max()
         .unwrap_or(0);
@@ -334,7 +334,7 @@ impl Workspace {
             let (mut x, mut y) = (0, 1);
             for (label, action) in buttons {
                 let label = format!("[{label}]");
-                let width = starkit::ratatui::text::Line::from(label.as_str()).width() as u16;
+                let width = starcore::ratatui::text::Line::from(label.as_str()).width() as u16;
                 if x + width > v.columns {
                     x = 0;
                     y += 1;
@@ -368,7 +368,7 @@ impl Workspace {
                 .map(|id| {
                     (
                         *id,
-                        starkit::ratatui::text::Line::from(self.terminal_label(*id))
+                        starcore::ratatui::text::Line::from(self.terminal_label(*id))
                             .width()
                             .clamp(8, 24) as u16
                             + 3,
@@ -931,7 +931,7 @@ impl Workspace {
                 accent,
             );
         } else if let Some(menu) = &self.context_menu {
-            use starkit::ratatui::widgets::{Block, Borders, Clear, Widget};
+            use starcore::ratatui::widgets::{Block, Borders, Clear, Widget};
             let r = menu_rect(menu, self.viewport);
             let area = CellRect::new(r.x, r.y, r.width, r.height);
             Clear.render(area, b);

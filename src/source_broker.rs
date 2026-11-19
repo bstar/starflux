@@ -646,10 +646,10 @@ impl Broker {
             token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()),
             "Invalid broker token"
         );
-        starkit::terminal_graphics::session::private_root(
+        starcore::terminal_graphics::session::private_root(
             socket.parent().context("Socket parent unavailable")?,
         )?;
-        starkit::terminal_graphics::session::private_root(receipts)?;
+        starcore::terminal_graphics::session::private_root(receipts)?;
         let listener = service::bind_socket(socket)
             .context("Broker socket already exists or cannot be created")?;
         listener.set_nonblocking(true)?;

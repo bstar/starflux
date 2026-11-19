@@ -77,7 +77,7 @@ mod worktrees;
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use runtime::{Config, config_path, root};
-use starkit::terminal_graphics::{
+use starcore::terminal_graphics::{
     client::{self, Launch},
     protocol::Input,
     session,
@@ -216,9 +216,9 @@ struct Args {
     #[arg(long)]
     png: Option<PathBuf>,
 }
-fn terminal_event(event: &starkit::crossterm::event::Event) -> Option<Input> {
+fn terminal_event(event: &starcore::crossterm::event::Event) -> Option<Input> {
     match event {
-        starkit::crossterm::event::Event::FocusLost => Some(Input::Notice {
+        starcore::crossterm::event::Event::FocusLost => Some(Input::Notice {
             message: "window-focus:lost".into(),
         }),
         _ => presentation::event(event),
@@ -714,7 +714,7 @@ fn run() -> Result<()> {
     }
     if a.themes {
         println!("system\tFollow the desktop palette (Kanagawa fallback)");
-        for builtin in starkit::theme::BUILTINS {
+        for builtin in starcore::theme::BUILTINS {
             let theme = appearance::Appearance::load(builtin.id)?;
             println!("{}\t{}", builtin.id, theme.name);
         }
@@ -983,7 +983,7 @@ fn run() -> Result<()> {
             .exists()
     {
         let existing = saved(&a.workspace)?;
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&existing)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&existing)?)?;
     }
     if path.exists() {
         let existing = saved(&a.workspace)?;
@@ -1003,7 +1003,7 @@ fn run() -> Result<()> {
                 std::env::current_dir()?.display().to_string()
             });
         }
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
     }
     if let Some(helper) = &a.desktop_helper {
         config.desktop_helper = helper.clone();
@@ -1014,14 +1014,14 @@ fn run() -> Result<()> {
         state.save(&config)?;
     }
     if a.desktop_helper.is_some() {
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
     }
     if let Some(path) = a.png {
         let mut ui = ui::Workspace::new(config)?;
         // The local reference renderer supports artwork without a peer handshake.
         ui.native_skins = true;
         let scene = session::Controller::scene(&mut ui, Default::default());
-        starkit::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
+        starcore::terminal_graphics::renderer::render_reference(&scene)?.save(path)?;
         return Ok(());
     }
     if mode != presentation::Mode::Cells {
@@ -1029,7 +1029,7 @@ fn run() -> Result<()> {
         if handoff.is_some() {
             font_frontend::select_terminal_client()?;
         }
-        if let Some(bridge) = starkit::terminal_graphics::terminal_bridge::probe()? {
+        if let Some(bridge) = starcore::terminal_graphics::terminal_bridge::probe()? {
             if let Some(handoff) = &mut handoff {
                 handoff.attached();
             }

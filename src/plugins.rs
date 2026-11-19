@@ -121,7 +121,7 @@ pub fn data_path() -> PathBuf {
 }
 pub fn store() -> Result<Store> {
     let path = data_path();
-    starkit::terminal_graphics::session::private_root(&path)?;
+    starcore::terminal_graphics::session::private_root(&path)?;
     Store::open(path)
 }
 pub fn registry() -> Result<Registry> {
@@ -306,7 +306,7 @@ pub fn list() -> Result<Value> {
 pub(crate) fn registry_lock_path() -> Result<PathBuf> {
     let path = config_path();
     let parent = path.parent().context("No plugin registry directory")?;
-    starkit::terminal_graphics::session::private_root(parent)?;
+    starcore::terminal_graphics::session::private_root(parent)?;
     Ok(parent.join("plugins.lock"))
 }
 pub(crate) fn edit(
@@ -315,7 +315,7 @@ pub(crate) fn edit(
 ) -> Result<Value> {
     let path = config_path();
     let parent = path.parent().unwrap();
-    starkit::terminal_graphics::session::private_root(parent)?;
+    starcore::terminal_graphics::session::private_root(parent)?;
     let _lock = crate::project_sync::Transaction::acquire(parent.join("plugins.lock"))?;
     let mut r = registry()?;
     if r.revision != expected {
@@ -406,7 +406,7 @@ pub fn directories(store: &Store, id: &str) -> Result<(PathBuf, PathBuf)> {
         .join("plugin-config")
         .join(id);
     let state = data_path().join(format!("state-{id}"));
-    starkit::terminal_graphics::session::private_root(&config)?;
+    starcore::terminal_graphics::session::private_root(&config)?;
     store.child(&format!("state-{id}"))?;
     Ok((config, state))
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private SSH app audio: isolation, bounded credits, live reconnect and local KIT mute.
+"""Private SSH app audio: isolation, bounded credits, live reconnect and local CORE mute.
 All audio goes into disposable null sinks; no user app is stopped or modified.
 """
 import getpass,json,math,os,shlex,socket,struct,subprocess,tempfile,threading,time,uuid
@@ -99,13 +99,13 @@ threading.Thread(target=sound,daemon=True).start();App().run([])
   address='unix:'+str(tmp/'kitty.sock')
   kitty=subprocess.Popen(['/usr/bin/kitty','--hold','--class','starflux-audio-proof','--listen-on',address,'-o','allow_remote_control=yes',str(app),'--ssh','audio-test','--ssh-config',str(cfg),'--remote-executable',str(app),'--workspace',name],env=dict(os.environ,PULSE_SINK=output_sink,PIPEWIRE_NODE=output_sink,STAR_GRAPHICS_RENDERER='gpu'),stdout=subprocess.DEVNULL,stderr=(out/'kitty.log').open('w'));children.append(kitty)
   def state():return json.loads((runtime/(name+'.state.json')).read_text())
-  wait(lambda:state().get('audio',{}).get('capable') and state()['audio'].get('active'),'Local KIT frontend did not open audio')
+  wait(lambda:state().get('audio',{}).get('capable') and state()['audio'].get('active'),'Local CORE frontend did not open audio')
   def amplitude():
    p=subprocess.Popen(['parec','--raw','--format=s16le','--rate=48000','--channels=2','--latency-msec=20','--device='+output_sink+'.monitor'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
    try:
     b=p.stdout.read(19200);return max(map(abs,struct.unpack('<'+'h'*(len(b)//2),b)))
    finally:p.terminate();p.wait(timeout=4)
-  audible=wait(lambda:amplitude() if amplitude()>500 else None,'KIT output device received no audio',timeout=20)
+  audible=wait(lambda:amplitude() if amplitude()>500 else None,'CORE output device received no audio',timeout=20)
   def action(value):subprocess.check_call([str(app),'--workspace',name,'--action',value],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   view=state()['viewport'];side=state()['project_navigation']['sidebar_width'];theme=150 if view['width']-side>850 else 100
   subprocess.check_output(['kitten','@','--to',address,'send-key','--match','state:focused','ctrl+escape'])

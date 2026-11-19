@@ -41,7 +41,7 @@ use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use serde_json::{Value, json};
-use starkit::{
+use starcore::{
     content_view::ContentView,
     input::TextInput,
     native_surface::{HitRegion, PixelRect},
@@ -343,7 +343,7 @@ pub struct Workspace {
     status: String,
     history: Vec<String>,
     effects: Vec<ServerMessage>,
-    browser: starkit::terminal_graphics::frontend_actions::Requests,
+    browser: starcore::terminal_graphics::frontend_actions::Requests,
     quit: bool,
     last_inspect: Instant,
     sessions_retry_at: Instant,
@@ -353,7 +353,7 @@ pub struct Workspace {
     receiving_image: Option<&'static str>,
     receiving_mime: u64,
     #[cfg(feature = "lossless-canvas")]
-    remote_drop: Option<starkit::terminal_graphics::drop_receive::Incoming>,
+    remote_drop: Option<starcore::terminal_graphics::drop_receive::Incoming>,
     drop_stage: Option<tempfile::TempDir>,
     drop_enabled: bool,
     hover: Option<usize>,
@@ -685,7 +685,7 @@ impl Workspace {
             self.note(format!("Save session: {error:#}"));
         }
         if let Ok(root) = project_state::data_root() {
-            let _ = starkit::fs::write_private(
+            let _ = starcore::fs::write_private(
                 &root.join(format!("{}.workspace.json", self.controller_id)),
                 &serde_json::to_vec(&self.config.workspace).unwrap(),
             );
@@ -1839,7 +1839,7 @@ impl Workspace {
         };
         #[cfg(feature = "lossless-canvas")]
         if self.remote_drop.is_some() && fields.get("t").copied() == Some("r") {
-            use starkit::terminal_graphics::drop_receive::Progress;
+            use starcore::terminal_graphics::drop_receive::Progress;
             match self.remote_drop.as_mut().unwrap().receive(text) {
                 Ok(Progress::Chunk) => {}
                 Ok(Progress::Next(request)) => self.osc(&request, None),
@@ -1874,7 +1874,8 @@ impl Workspace {
                     Some("text/uri-list image/png image/jpeg image/webp image/gif".into()),
                 );
                 #[cfg(feature = "lossless-canvas")]
-                if let Some(identity) = starkit::terminal_graphics::drop_receive::machine_identity()
+                if let Some(identity) =
+                    starcore::terminal_graphics::drop_receive::machine_identity()
                 {
                     self.osc("t=a:x=1:i=1", Some(identity));
                 }
@@ -1982,7 +1983,7 @@ impl Workspace {
                             #[cfg(feature = "lossless-canvas")]
                             {
                                 let incoming =
-                                    starkit::terminal_graphics::drop_receive::Incoming::new(
+                                    starcore::terminal_graphics::drop_receive::Incoming::new(
                                         &text,
                                         self.receiving_mime,
                                     )?;
@@ -1994,7 +1995,7 @@ impl Workspace {
                             }
                             #[cfg(not(feature = "lossless-canvas"))]
                             anyhow::bail!(
-                                "Remote file drops require the current STAR/KIT candidate"
+                                "Remote file drops require the current STAR/CORE candidate"
                             );
                         }
                         let paths = uri_paths(&text)?;
@@ -3124,7 +3125,7 @@ impl Workspace {
                             .unwrap_or(ProjectState::load(&config)?)
                     };
                     state.save(&config)?;
-                    starkit::fs::write_private(
+                    starcore::fs::write_private(
                         &crate::runtime::config_path(id)?,
                         &serde_json::to_vec_pretty(&config)?,
                     )?;
@@ -3239,7 +3240,7 @@ impl Workspace {
                         );
                         ProjectState::new_owned().save(&config)?;
                     }
-                    starkit::fs::write_private(
+                    starcore::fs::write_private(
                         &crate::runtime::config_path(&config.workspace)?,
                         &serde_json::to_vec_pretty(&config)?,
                     )?;
@@ -3392,7 +3393,7 @@ impl Workspace {
             modal.selected = (modal.selected + modal.fields.len() - 1) % modal.fields.len();
             return Ok(());
         }
-        use starkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use starcore::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let key = match code.as_str() {
             "backspace" => KeyCode::Backspace,
             "delete" => KeyCode::Delete,
@@ -4368,7 +4369,7 @@ impl Workspace {
         match action {
             "audio:toggle" | "audio:mute" | "audio:unmute" => {
                 if !self.audio_capable && action != "audio:mute" {
-                    self.note("Audio needs a local player. Install the STAR/KIT Kitty bridge on the listening machine, or launch starflux --ssh HOST --workspace NAME locally. Restarting only the server frontend cannot enable local audio.".into());
+                    self.note("Audio needs a local player. Install the STAR/CORE Kitty bridge on the listening machine, or launch starflux --ssh HOST --workspace NAME locally. Restarting only the server frontend cannot enable local audio.".into());
                     return Ok(());
                 }
                 self.navigation.audio_muted = if action == "audio:toggle" {
@@ -4380,7 +4381,7 @@ impl Workspace {
                 self.sync_audio();
                 self.navigation.save(&self.navigation_scope)?;
                 if !self.audio_capable && !self.navigation.audio_muted {
-                    self.note("Local audio requires an audio-enabled STAR/KIT frontend. From your listening machine run starflux --ssh HOST --workspace NAME, or use the Kitty STAR/KIT bridge".into());
+                    self.note("Local audio requires an audio-enabled STAR/CORE frontend. From your listening machine run starflux --ssh HOST --workspace NAME, or use the Kitty STAR/CORE bridge".into());
                 }
             }
             "projects:sort:mode"
@@ -4698,8 +4699,8 @@ impl Workspace {
             let surface =
                 crate::shelf::minimum_surface(v.width as u16, v.height as u16, &self.appearance);
             self.chrome_hits = surface.hits.clone();
-            let buffer = starkit::ratatui::buffer::Buffer::empty(
-                starkit::ratatui::layout::Rect::new(0, 0, v.columns, v.rows),
+            let buffer = starcore::ratatui::buffer::Buffer::empty(
+                starcore::ratatui::layout::Rect::new(0, 0, v.columns, v.rows),
             );
             let mut scene = Scene::from_buffer(&buffer, v, 0);
             scene.spans.clear();
@@ -5107,7 +5108,7 @@ impl Workspace {
         if let Some(rect) = self.focus_rect() {
             foreground
                 .nodes
-                .push(starkit::native_surface::Primitive::Border {
+                .push(starcore::native_surface::Primitive::Border {
                     rect,
                     color: self.appearance.accent.clone(),
                     radius: 0,
@@ -5121,7 +5122,7 @@ impl Workspace {
             .cloned()
             .collect();
         let mut scene = Scene::from_buffer(
-            &starkit::ratatui::buffer::Buffer::empty(starkit::ratatui::layout::Rect::new(
+            &starcore::ratatui::buffer::Buffer::empty(starcore::ratatui::layout::Rect::new(
                 0, 0, v.columns, v.rows,
             )),
             v,
@@ -5229,7 +5230,7 @@ impl Workspace {
 impl Controller for Workspace {
     fn capabilities(
         &mut self,
-        capabilities: starkit::terminal_graphics::capabilities::Capabilities,
+        capabilities: starcore::terminal_graphics::capabilities::Capabilities,
     ) {
         self.browser.set_available(capabilities.open_urls_v1);
         self.close_audio();
@@ -5264,7 +5265,7 @@ impl Controller for Workspace {
             }
             if self.desktop.is_none() && !self.native_terminal_cells {
                 self.note(
-                    "Update the local STAR/KIT terminal frontend to enable native Kitty terminals"
+                    "Update the local STAR/CORE terminal frontend to enable native Kitty terminals"
                         .into(),
                 );
             }
@@ -6304,7 +6305,7 @@ impl Controller for Workspace {
                     snapshot["terminal_presentation"]["renderer_owner"] = json!("host Kitty");
                     snapshot["terminal_presentation"]["terminal_virtual_desktop"] = json!(false);
                 }
-                let _ = starkit::fs::write_private(
+                let _ = starcore::fs::write_private(
                     &root.join(format!("{}.state.json", self.controller_id)),
                     &serde_json::to_vec_pretty(&snapshot).unwrap(),
                 );
@@ -6844,8 +6845,8 @@ impl Controller for Workspace {
         self.close_audio();
         self.audio_capable = false;
     }
-    fn media(&mut self, message: starkit::terminal_graphics::media::ToHost) {
-        use starkit::terminal_graphics::media::ToHost;
+    fn media(&mut self, message: starcore::terminal_graphics::media::ToHost) {
+        use starcore::terminal_graphics::media::ToHost;
         self.video.receive(&message);
         match message {
             ToHost::AudioCredit {
@@ -6895,7 +6896,7 @@ impl Controller for Workspace {
             }
         }
     }
-    fn frontend_action(&mut self, message: starkit::terminal_graphics::frontend_actions::ToHost) {
+    fn frontend_action(&mut self, message: starcore::terminal_graphics::frontend_actions::ToHost) {
         if let Some(result) = self.browser.receive(message) {
             self.note(match result {
                 Ok(()) => "Link sent to the browser on this computer".into(),

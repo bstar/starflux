@@ -63,7 +63,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use starkit::native_surface::style::workspace::Wallpaper;
+use starcore::native_surface::style::workspace::Wallpaper;
 smithay::backend::renderer::element::render_elements! {
     DesktopElement<=GlesRenderer>;
     Window=smithay::desktop::space::SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -779,7 +779,7 @@ pub(super) fn run(
                 let raw = state.renderer.map_texture(&mapping)?;
                 let mut pixels = raw.to_vec();
                 // Smithay defines `flipped` relative to a lower-left origin: true
-                // already means top-down rows, as required by GStreamer and KIT.
+                // already means top-down rows, as required by GStreamer and CORE.
                 if !flipped {
                     let stride = state.settings.width as usize * 4;
                     for y in 0..state.settings.height as usize / 2 {

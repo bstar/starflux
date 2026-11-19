@@ -296,7 +296,7 @@ fn over(destination: &mut [u8], source: [u8; 4]) {
 pub struct CellView {
     pub stream: String,
     pub generation: u64,
-    pub rect: starkit::terminal_graphics::protocol::Rect,
+    pub rect: starcore::terminal_graphics::protocol::Rect,
     pub focused: bool,
 }
 fn background(mut rgb: [u8; 3], pixel: [u8; 4]) -> [u8; 3] {
@@ -378,8 +378,8 @@ pub fn cells(
     raster: &Raster,
     view: CellView,
     color: impl Fn(vt100::Color, bool) -> [u8; 3],
-) -> Result<starkit::terminal_graphics::terminal_cells::Frame, Error> {
-    use starkit::terminal_graphics::terminal_cells::{Frame, Row, Run};
+) -> Result<starcore::terminal_graphics::terminal_cells::Frame, Error> {
+    use starcore::terminal_graphics::terminal_cells::{Frame, Row, Run};
     let rect = view.rect;
     let [cw, ch] = raster.view.cell;
     let (rows, cols) = screen.size();
@@ -598,14 +598,14 @@ mod tests {
     fn fallback(
         screen: &vt100::Screen,
         raster: &Raster,
-    ) -> starkit::terminal_graphics::terminal_cells::Frame {
+    ) -> starcore::terminal_graphics::terminal_cells::Frame {
         cells(
             screen,
             raster,
             CellView {
                 stream: "private".into(),
                 generation: 1,
-                rect: starkit::terminal_graphics::protocol::Rect {
+                rect: starcore::terminal_graphics::protocol::Rect {
                     x: 0,
                     y: 0,
                     width: screen.size().1,
@@ -717,7 +717,7 @@ mod tests {
             Err(Error::TooLarge)
         ));
         assert_eq!(resources.working.used(), 0);
-        // KIT's grid bound must be checked before visiting cells or allocating runs.
+        // CORE's grid bound must be checked before visiting cells or allocating runs.
         let parser = vt100::Parser::new(1, 513, 0);
         let raster = compose(
             &World::new().store,
@@ -733,7 +733,7 @@ mod tests {
                 CellView {
                     stream: "private".into(),
                     generation: 1,
-                    rect: starkit::terminal_graphics::protocol::Rect {
+                    rect: starcore::terminal_graphics::protocol::Rect {
                         x: 0,
                         y: 0,
                         width: 513,

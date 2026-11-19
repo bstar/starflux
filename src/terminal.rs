@@ -1,8 +1,8 @@
-//! PTY-backed terminals drawn as STAR/KIT text surfaces, without a display server.
+//! PTY-backed terminals drawn as STAR/CORE text surfaces, without a display server.
 use anyhow::{Context, Result, ensure};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use starkit::native_surface::{PixelRect as R, Primitive, Surface};
+use starcore::native_surface::{PixelRect as R, Primitive, Surface};
 use std::{
     fs,
     io::{Read, Write},
@@ -206,7 +206,7 @@ pub struct Terminal {
     mouse_button: Option<u8>,
     clipboard: Option<String>,
     padding: [u16; 2],
-    native_previous: Option<starkit::terminal_graphics::terminal_cells::Frame>,
+    native_previous: Option<starcore::terminal_graphics::terminal_cells::Frame>,
     native_dirty: bool,
     links: Vec<crate::terminal_links::Link>,
     link_wraps: Vec<bool>,
@@ -370,7 +370,7 @@ impl Terminal {
     fn surface(&self, width: u16, height: u16, background: &str) -> Surface {
         let mut surface = Surface::new(width, height, background.into()).with_physical_text();
         surface.cell_size = Some(self.cell_size());
-        // Additive wire hint: the pinned older KIT ignores it; the installed
+        // Additive wire hint: the pinned older CORE ignores it; the installed
         // candidate keeps fractional font sizes and shapes complete terminal runs.
         let mut value = serde_json::to_value(&surface).expect("native surface serialization");
         value["terminal_font_millipixels"] = serde_json::json!(self.font_millipixels());
@@ -477,7 +477,7 @@ impl Terminal {
     }
     pub fn resize_native(
         &mut self,
-        rect: starkit::terminal_graphics::protocol::Rect,
+        rect: starcore::terminal_graphics::protocol::Rect,
         padding: [u16; 2],
         cell: [u16; 2],
     ) -> Result<()> {
@@ -505,11 +505,11 @@ impl Terminal {
         &mut self,
         stream: String,
         generation: u64,
-        rect: starkit::terminal_graphics::protocol::Rect,
+        rect: starcore::terminal_graphics::protocol::Rect,
         theme: &crate::appearance::Appearance,
         focused: bool,
-    ) -> Option<starkit::terminal_graphics::terminal_cells::Frame> {
-        use starkit::terminal_graphics::terminal_cells::{Frame, Row, Run};
+    ) -> Option<starcore::terminal_graphics::terminal_cells::Frame> {
+        use starcore::terminal_graphics::terminal_cells::{Frame, Row, Run};
         let screen = self.display_screen();
         let (row, col) = screen.cursor_position();
         let cursor = (focused
@@ -1014,11 +1014,11 @@ impl Terminal {
     /// Cell-only composition for popup overlays; never rasterize terminal text.
     pub fn paint_cells(
         &self,
-        buffer: &mut starkit::ratatui::buffer::Buffer,
-        rect: starkit::terminal_graphics::protocol::Rect,
+        buffer: &mut starcore::ratatui::buffer::Buffer,
+        rect: starcore::terminal_graphics::protocol::Rect,
         theme: &crate::appearance::Appearance,
     ) {
-        use starkit::ratatui::style::{Color, Modifier, Style};
+        use starcore::ratatui::style::{Color, Modifier, Style};
         let screen = self.display_screen();
         let (rows, cols) = screen.size();
         for row in 0..rows.min(rect.height) {
@@ -1366,7 +1366,7 @@ mod tests {
         )
         .unwrap();
         let theme = crate::appearance::Appearance::load("kanagawa").unwrap();
-        let mut rect = starkit::terminal_graphics::protocol::Rect {
+        let mut rect = starcore::terminal_graphics::protocol::Rect {
             x: 0,
             y: 0,
             width: 8,
@@ -1394,7 +1394,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut terminal =
             Terminal::spawn(&["cat".into()], temp.path().join("native.sock")).unwrap();
-        let rect = starkit::terminal_graphics::protocol::Rect {
+        let rect = starcore::terminal_graphics::protocol::Rect {
             x: 5,
             y: 7,
             width: 20,
@@ -1409,8 +1409,8 @@ mod tests {
             .native_frame("native".into(), 1, rect, &theme, true)
             .unwrap();
         first.validate().unwrap();
-        let mut backdrop = starkit::ratatui::buffer::Buffer::empty(
-            starkit::ratatui::layout::Rect::new(0, 0, 25, 12),
+        let mut backdrop = starcore::ratatui::buffer::Buffer::empty(
+            starcore::ratatui::layout::Rect::new(0, 0, 25, 12),
         );
         terminal.paint_cells(&mut backdrop, rect, &theme);
         assert_eq!(backdrop[(5, 7)].symbol(), "H");
@@ -1419,11 +1419,11 @@ mod tests {
         assert!(
             backdrop[(5, 7)]
                 .modifier
-                .contains(starkit::ratatui::style::Modifier::BOLD)
+                .contains(starcore::ratatui::style::Modifier::BOLD)
         );
         assert_eq!(
             backdrop[(5, 7)].fg,
-            starkit::ratatui::style::Color::Rgb(
+            starcore::ratatui::style::Color::Rgb(
                 first.rows[0].runs[0].foreground[0],
                 first.rows[0].runs[0].foreground[1],
                 first.rows[0].runs[0].foreground[2]
@@ -1486,7 +1486,7 @@ os.write(1, report.hex().encode() + b'\r\n')
         .unwrap();
         terminal
             .resize_native(
-                starkit::terminal_graphics::protocol::Rect {
+                starcore::terminal_graphics::protocol::Rect {
                     x: 0,
                     y: 0,
                     width: 240,
@@ -1684,7 +1684,7 @@ mod osc8_cache_tests {
         let directory = tempfile::tempdir().unwrap();
         let mut terminal =
             Terminal::spawn(&["sleep".into(), "5".into()], directory.path().join("pty")).unwrap();
-        let rect = starkit::terminal_graphics::protocol::Rect {
+        let rect = starcore::terminal_graphics::protocol::Rect {
             x: 0,
             y: 0,
             width: 20,

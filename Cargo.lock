@@ -3610,54 +3610,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "starflux"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "crossbeam-channel",
- "flate2",
- "gio",
- "gio-unix",
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "libc",
- "percent-encoding",
- "png 0.17.16",
- "portable-pty",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "shell-words",
- "smithay",
- "starkit",
- "tempfile",
- "tracing",
- "unicode-width",
- "uuid",
- "vt100",
- "vte",
-]
-
-[[package]]
-name = "starflux-terminal-client"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "base64",
- "crossbeam-channel",
- "serde_json",
- "starkit",
- "tempfile",
-]
-
-[[package]]
-name = "starkit"
-version = "0.24.0"
-source = "git+https://github.com/bstar/starkit?tag=v0.24.0#ccaf9207bacc6e6e2aaac69d16137fccbcc60650"
+name = "starcore"
+version = "0.25.0"
+source = "git+https://github.com/bstar/starcore?tag=v0.25.0#8c72e94fc0d74a71371b5da640dd4ae8e0bf86f7"
 dependencies = [
  "anyhow",
  "base64",
@@ -3688,6 +3643,51 @@ dependencies = [
  "unicode-width",
  "url",
  "vello",
+]
+
+[[package]]
+name = "starflux"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "crossbeam-channel",
+ "flate2",
+ "gio",
+ "gio-unix",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "libc",
+ "percent-encoding",
+ "png 0.17.16",
+ "portable-pty",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shell-words",
+ "smithay",
+ "starcore",
+ "tempfile",
+ "tracing",
+ "unicode-width",
+ "uuid",
+ "vt100",
+ "vte",
+]
+
+[[package]]
+name = "starflux-terminal-client"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "crossbeam-channel",
+ "serde_json",
+ "starcore",
+ "tempfile",
 ]
 
 [[package]]

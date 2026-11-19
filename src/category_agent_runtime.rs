@@ -162,7 +162,7 @@ pub fn start(config: &Config, category: &str, mode: &str, prompt: &str) -> Resul
         "Portfolio message exceeds its limit"
     );
     let root = category_agent::root_path(config, category)?;
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     let _configuration = crate::project_sync::Transaction::acquire(root.join("coordinator.lock"))?;
     let _lock = crate::project_sync::Transaction::acquire(root.join("runtime.lock"))?;
     let mut state = category_agent::load_path(&root)?;
@@ -430,7 +430,7 @@ pub fn worker(project: &str, category: &str, id: &str) -> Result<()> {
     let result = (|| -> Result<()> {
         valid(&config, &r)?;
         let workspace = root.join("workspace");
-        starkit::terminal_graphics::session::private_root(&workspace)?;
+        starcore::terminal_graphics::session::private_root(&workspace)?;
         let mut child = Command::new("python3")
             .args(["-u", "-c", include_str!("../scripts/category-provider.py")])
             .stdin(Stdio::piped())
@@ -1003,7 +1003,7 @@ pub fn clear_capabilities(root: &Path) -> Result<()> {
 
 pub fn reset_conversation(config: &Config, category: &str) -> Result<Value> {
     let root = category_agent::root_path(config, category)?;
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     let _guard = crate::project_sync::Transaction::acquire(root.join("coordinator.lock"))?;
     revoke(&root)?;
     let mut state = category_agent::load_path(&root)?;

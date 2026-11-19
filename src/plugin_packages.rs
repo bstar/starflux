@@ -30,7 +30,7 @@ pub fn root() -> PathBuf {
 }
 fn store() -> Result<Store> {
     let path = root();
-    starkit::terminal_graphics::session::private_root(&path)?;
+    starcore::terminal_graphics::session::private_root(&path)?;
     Store::open(path)
 }
 fn repository(value: &str) -> Result<String> {

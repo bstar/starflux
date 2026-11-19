@@ -8,7 +8,7 @@ import argparse, getpass, json, os, pathlib, secrets, shlex, shutil, socket, sub
 from kitty_font_bridge import augment
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--ssh',action='store_true');p.add_argument('--reload',action='store_true',help='Upgrade watcher callbacks in the existing Kitty window');args=p.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
-kit=next((pathlib.Path.home()/'.cargo/git/checkouts').glob('starkit-*/f60a8fb/integrations/kitty/star_kit.py'))
+core=next((pathlib.Path.home()/'.cargo/git/checkouts').glob('starcore-*/f60a8fb/integrations/kitty/star_core.py'))
 
 def wait(fn,label,timeout=30):
     end=time.monotonic()+timeout
@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-font-proof-') as td:
             wait(listening,'Private sshd did not start')
             ssh=['ssh','-F','/dev/null','-tt','-p',str(port),'-i',str(tmp/'client'),'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(tmp/'known_hosts'),'127.0.0.1']
             child_env=ssh+[shlex.join(child_env)]
-            watcher=tmp/'star_kit_initial.py';watcher.write_text(augment(kit.read_text()).replace("STARFLUX_CLIENT = Path.home() / '.local/bin/starflux-terminal-client'", 'STARFLUX_CLIENT = Path('+repr(str(repo/'target/release/starflux-terminal-client'))+')').replace("CLIENT = Path.home() / '.local/bin/star-kit-terminal'", "CLIENT = Path('/nonexistent-fixture-shared-client')"))
+            watcher=tmp/'star_core_initial.py';watcher.write_text(augment(core.read_text()).replace("STARFLUX_CLIENT = Path.home() / '.local/bin/starflux-terminal-client'", 'STARFLUX_CLIENT = Path('+repr(str(repo/'target/release/starflux-terminal-client'))+')').replace("CLIENT = Path.home() / '.local/bin/star-core-terminal'", "CLIENT = Path('/nonexistent-fixture-shared-client')"))
             watchers.append(watcher)
         options=[]
         for watcher in watchers:options+=['-o','watcher='+str(watcher)]
@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-font-proof-') as td:
         if args.reload:
             replacements=[]
             for index, original in enumerate(watchers):
-                replacement=tmp/('starflux_fonts_reload.py' if index==0 else 'star_kit_reload.py')
+                replacement=tmp/('starflux_fonts_reload.py' if index==0 else 'star_core_reload.py')
                 replacement.write_text(original.read_text()+'\n# Private hot-reload proof\n')
                 replacements.append(replacement)
             updated=tmp/'reload.conf'

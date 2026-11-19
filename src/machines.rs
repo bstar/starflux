@@ -70,7 +70,7 @@ fn path() -> Result<PathBuf> {
         root.is_absolute(),
         "Configuration directory must be absolute"
     );
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     Ok(root.join("machines.json"))
 }
 fn identifier(id: &str) -> Result<()> {

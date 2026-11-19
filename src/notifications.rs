@@ -107,7 +107,7 @@ fn config_path() -> Result<PathBuf> {
         root.is_absolute(),
         "Notification configuration path must be absolute"
     );
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     Ok(root.join("notifications.json"))
 }
 fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path, max: u64) -> Result<T> {
@@ -394,7 +394,7 @@ fn delivery_root() -> Result<PathBuf> {
         .parent()
         .context("No notification directory")?
         .join("notifications");
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     Ok(root)
 }
 pub fn system_capability() -> Value {
@@ -709,7 +709,7 @@ fn system(title: &str, body: &str) -> Result<()> {
     }
 }
 pub fn load_query(frontend: &str) -> Result<Query> {
-    starkit::terminal_graphics::session::socket_path(&crate::runtime::root()?, frontend)?;
+    starcore::terminal_graphics::session::socket_path(&crate::runtime::root()?, frontend)?;
     let path = crate::project_state::data_root()?.join(format!("{frontend}.attention-query.json"));
     if !path.exists() {
         return Ok(Query::default());
@@ -719,7 +719,7 @@ pub fn load_query(frontend: &str) -> Result<Query> {
     Ok(query)
 }
 pub fn save_query(frontend: &str, query: &Query) -> Result<()> {
-    starkit::terminal_graphics::session::socket_path(&crate::runtime::root()?, frontend)?;
+    starcore::terminal_graphics::session::socket_path(&crate::runtime::root()?, frontend)?;
     query.validate()?;
     crate::automation::persist(
         &crate::project_state::data_root()?.join(format!("{frontend}.attention-query.json")),
@@ -789,8 +789,8 @@ impl FocusWriter {
                 }
                 let _ = (|| -> Result<()> {
                     let root = crate::runtime::root()?;
-                    starkit::terminal_graphics::session::socket_path(&root, &update.0)?;
-                    starkit::fs::write_private(
+                    starcore::terminal_graphics::session::socket_path(&root, &update.0)?;
+                    starcore::fs::write_private(
                         &root.join(format!("{}.notification-focus.json", update.0)),
                         &serde_json::to_vec(&update.1)?,
                     )?;

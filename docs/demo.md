@@ -2,7 +2,7 @@
 
 The current application uses [App Shelf](app-shelf.md): project containers, agent and terminal spaces, terminal tabs with explicit splitting, and persistent local/SSH application desktops. The two-pane descriptions below document the earlier embedding baseline. Follow the App Shelf guide for the current workflow.
 
-The demo contains a STAR/KIT graphical workspace, two actual Kitty terminal surfaces, a persistent terminal backend, local and SSH agent launch, and file delivery to the pane under a desktop drop. It runs inside an outer Kitty window and uses a private Smithay compositor for the inner Kitty windows.
+The demo contains a STAR/CORE graphical workspace, two actual Kitty terminal surfaces, a persistent terminal backend, local and SSH agent launch, and file delivery to the pane under a desktop drop. It runs inside an outer Kitty window and uses a private Smithay compositor for the inner Kitty windows.
 
 ## Build and install
 
@@ -110,7 +110,7 @@ The initial demo attached every unnamed launch to `demo`. Concurrent tabs repeat
 
 ## GPU candidate
 
-The installed local build includes the unreleased sibling STAR/KIT GPU candidate. CPU remains the default. To select hardware rendering:
+The installed local build includes the unreleased sibling STAR/CORE GPU candidate. CPU remains the default. To select hardware rendering:
 
 ```sh
 STAR_GRAPHICS_RENDERER=gpu starflux
@@ -123,11 +123,11 @@ Each ordinary launch creates a new workspace. Use `--workspace NAME` to reattach
 To reproduce the local candidate build without changing the portable Git dependency or Cargo.lock:
 
 ```sh
-STAR_KIT_CHECKOUT=/home/bstar/projects/star/starkit STAR_KIT_GPU=1 ./scripts/dev build --release
+STAR_CORE_CHECKOUT=/home/bstar/projects/star/starcore STAR_CORE_GPU=1 ./scripts/dev build --release
 ./scripts/prepare-runtime
 ```
 
-The ordinary build command continues to use the portable pinned framework. Candidate builds use a disposable manifest and lockfile. Hardware rendering accelerates scene composition; text coverage, GPU readback and Kitty transport still cost CPU time. See [the framework GPU documentation](../../starkit/docs/gpu-renderer.md) for API details and measurements.
+The ordinary build command continues to use the portable pinned framework. Candidate builds use a disposable manifest and lockfile. Hardware rendering accelerates scene composition; text coverage, GPU readback and Kitty transport still cost CPU time. See [the framework GPU documentation](../../starcore/docs/gpu-renderer.md) for API details and measurements.
 
 `STAR_GRAPHICS_RENDERER=gpu python3 scripts/test-tabs.py` passed with two actual Kitty tabs. The GPU build also passed a desktop PNG drop into real Codex 0.162.1 over authenticated loopback SSH, image recognition, frontend kill and reattachment with preserved backend PIDs. Reports are `target/tab-proof.json` and `target/gpu-codex-proof/result.json`. This does not yet establish behavior on a separate remote machine.
 
@@ -174,7 +174,7 @@ STAR_GRAPHICS_RENDERER=gpu starflux --agent codex
 starflux --theme system
 ```
 
-Theme commands save the application preference and update all running views without opening a frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored in the core application configuration, `~/.config/starflux/config.json`, independently of projects and sessions. System is the default. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/KIT built-ins plus `system`; system uses KIT's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
+Theme commands save the application preference and update all running views without opening a frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored in the core application configuration, `~/.config/starflux/config.json`, independently of projects and sessions. System is the default. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/CORE built-ins plus `system`; system uses CORE's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
 
 Controllers started before the Blueprint build need to be closed once and reopened to load the new presentation; their tmux-backed agents survive:
 

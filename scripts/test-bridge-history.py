@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-bridge-history-') as directory
         replied_at = None
         submitted = False
         close_at = None
-        pattern = re.compile(rb'\x1b\]1337;SetUserVar=star_kit=([A-Za-z0-9+/=]+)\x1b\\')
+        pattern = re.compile(rb'\x1b\]1337;SetUserVar=star_core=([A-Za-z0-9+/=]+)\x1b\\')
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             if select.select([master], [], [], .02)[0]:
@@ -85,24 +85,24 @@ with tempfile.TemporaryDirectory(prefix='starflux-bridge-history-') as directory
                 del pending[:match.end()]
                 nonce = message['nonce']
                 if message['op'] == 'probe':
-                    os.write(master, f'STAR_KIT_BRIDGE {nonce} ready\n'.encode())
+                    os.write(master, f'STAR_CORE_BRIDGE {nonce} ready\n'.encode())
                 elif message['op'] == 'start':
                     hello = dict(type='hello', version=1, viewport=dict(columns=80, rows=24, width=800, height=480, generation=1), client='history-proof', capabilities=dict(image_transport='kitty', pixel_geometry='measured', pointer_precision='cells', native_terminal_cells=True, keyboard=True, paste=True, presentation_ack=True, native_surfaces=True, physical_text=True, pixel_layout=True))
-                    os.write(master, f'STAR_KIT_BRIDGE {nonce} {json.dumps(hello)}\n'.encode())
+                    os.write(master, f'STAR_CORE_BRIDGE {nonce} {json.dumps(hello)}\n'.encode())
                     close_at = time.monotonic() + .3
                 elif message['op'] == 'stop':
                     # Reproduce a real SSH/Kitty teardown reply arriving after
                     # the SDK relay has returned and restored termios.
                     stopped = True
                     queued = json.dumps(dict(type='input', id=1, revision=1, generation=1, input=dict(kind='key', code='up', modifiers=0)))
-                    os.write(master, f'STAR_KIT_BRIDGE {nonce} {queued}\n'.encode())
+                    os.write(master, f'STAR_CORE_BRIDGE {nonce} {queued}\n'.encode())
                     reply_at = time.monotonic() + .25
             if close_at and not closing and time.monotonic() >= close_at:
                 for path in state.glob('v-*.state.json'):
                     path.with_name(path.name.removesuffix('.state.json') + '.close').touch()
                 closing = True
             if reply_at and time.monotonic() >= reply_at:
-                os.write(master, f'STAR_KIT_BRIDGE {nonce} gone\n'.encode())
+                os.write(master, f'STAR_CORE_BRIDGE {nonce} gone\n'.encode())
                 replied_at = time.monotonic()
                 reply_at = None
             if replied_at and not submitted and time.monotonic() - replied_at > .5:
@@ -112,8 +112,8 @@ with tempfile.TemporaryDirectory(prefix='starflux-bridge-history-') as directory
         ssh.wait(timeout=3)
         assert stopped and submitted, 'Private bridge did not complete teardown'
         recorded = history.read_text()
-        assert 'STAR_KIT_BRIDGE' not in recorded, 'Internal reply leaked into SSH shell history'
-        assert b'STAR_KIT_BRIDGE' not in output, 'Internal reply leaked into terminal scrollback'
+        assert 'STAR_CORE_BRIDGE' not in recorded, 'Internal reply leaked into SSH shell history'
+        assert b'STAR_CORE_BRIDGE' not in output, 'Internal reply leaked into terminal scrollback'
         assert 'history -w' in recorded, 'Shell did not restore normal input after disconnect'
         assert b'HISTORY_READY> history -w' in output, 'Shell echo was not restored'
         print(json.dumps(dict(result='PASS', ssh=True, startup_error=args.startup_error, delayed_close_reply=True, shell_history_clean=True, terminal_scrollback_clean=True, shell_input_restored=True)))

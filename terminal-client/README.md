@@ -1,7 +1,7 @@
 # Local Kitty frontend
 
 This small client runs on the listening machine. It does not launch project
-commands or need a local STAR/FLUX workspace. STAR/KIT owns rendering, bounded PCM
+commands or need a local STAR/FLUX workspace. STAR/CORE owns rendering, bounded PCM
 transport and playback; the Kitty watcher starts only a fixed local executable.
 
 Build through this directory's Nix shell:
@@ -10,21 +10,21 @@ Build through this directory's Nix shell:
 nix develop -c cargo build --release
 python3 ../scripts/install-kitty-audio.py \
   --client target/release/starflux-terminal-client \
-  --watcher /path/to/starkit/integrations/kitty/star_kit.py
+  --watcher /path/to/starcore/integrations/kitty/star_core.py
 ```
 
-The installer backs up changed files, installs `~/.local/bin/star-kit-terminal`,
+The installer backs up changed files, installs `~/.local/bin/star-core-terminal`,
 and adds a versioned watcher to Kitty's config. Reload Kitty's config, then
 use **Refresh UI** or reconnect STAR/FLUX. Versioned paths avoid Kitty's module
 cache retaining an older bridge. Live connections are preserved during reload.
 To upgrade only the bridge, omit `--client`; the installed helper is retained.
 
-Use `~/.local/bin/star-kit-terminal --check-audio` for a silent three-second
+Use `~/.local/bin/star-core-terminal --check-audio` for a silent three-second
 check of the local output device. A positive result means PCM drained through
 the local device worker; it does not change system volume.
 
 After installation, use your normal SSH shell and launch STAR/FLUX on its host.
-Matching client/server STAR/KIT capabilities negotiate playback automatically.
+Matching client/server STAR/CORE capabilities negotiate playback automatically.
 A server-side restart alone cannot install or activate a missing local player.
 
 The installer also installs STAR/FLUX's font watcher from this repository.
@@ -48,7 +48,7 @@ process, fake shell, private state directories and (for SSH) a private sshd.
 They check actual terminal-grid changes, acknowledged sizes, reset to the original
 fractional size, font-family selection and preservation of terminal process IDs.
 
-To retain a shared STAR/KIT helper used by other STAR apps, install this client
+To retain a shared STAR/CORE helper used by other STAR apps, install this client
 with `--starflux-client /path/to/starflux-terminal-client` instead of `--client`.
 The versioned bridge consumes STAR/FLUX's one-shot application hint and selects
 that fixed local helper only for STAR/FLUX. Other applications keep their current

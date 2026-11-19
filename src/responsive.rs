@@ -20,14 +20,14 @@ pub fn edit_window(text: &str, cursor: usize, columns: usize) -> String {
     };
     let budget = columns.saturating_sub(1);
     let after =
-        starkit::ratatui::text::Line::from(text[cursor..].chars().take(5).collect::<String>())
+        starcore::ratatui::text::Line::from(text[cursor..].chars().take(5).collect::<String>())
             .width()
             .min(budget);
     let before_budget = budget.saturating_sub(after);
     let mut used = 0;
     let mut start = cursor;
     for (i, c) in text[..cursor].char_indices().rev() {
-        let width = starkit::ratatui::text::Line::from(c.to_string()).width();
+        let width = starcore::ratatui::text::Line::from(c.to_string()).width();
         if used + width > before_budget {
             break;
         }
@@ -36,7 +36,7 @@ pub fn edit_window(text: &str, cursor: usize, columns: usize) -> String {
     }
     let mut result = format!("{}│", &text[start..cursor]);
     for c in text[cursor..].chars() {
-        let width = starkit::ratatui::text::Line::from(c.to_string()).width();
+        let width = starcore::ratatui::text::Line::from(c.to_string()).width();
         if used + width > budget {
             break;
         }
@@ -92,7 +92,7 @@ pub fn git_lines(status: Option<&crate::git::Status>, columns: usize) -> Vec<Str
         let mut text = String::new();
         let mut used = 0;
         for c in line.chars().filter(|c| !c.is_control()) {
-            let width = starkit::ratatui::text::Line::from(c.to_string()).width();
+            let width = starcore::ratatui::text::Line::from(c.to_string()).width();
             if used + width > columns && !text.is_empty() {
                 wrapped.push(std::mem::take(&mut text));
                 used = 0;
@@ -126,7 +126,7 @@ mod tests {
         {
             let window = edit_window(text, cursor, 10);
             assert!(window.contains('│'));
-            assert!(starkit::ratatui::text::Line::from(window).width() <= 10);
+            assert!(starcore::ratatui::text::Line::from(window).width() <= 10);
         }
     }
 }

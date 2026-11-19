@@ -64,10 +64,10 @@ impl Options {
     }
     pub fn bounds(
         &self,
-        area: starkit::terminal_graphics::protocol::Rect,
+        area: starcore::terminal_graphics::protocol::Rect,
     ) -> Result<(
-        starkit::terminal_graphics::protocol::Rect,
-        starkit::terminal_graphics::protocol::Rect,
+        starcore::terminal_graphics::protocol::Rect,
+        starcore::terminal_graphics::protocol::Rect,
     )> {
         self.validate()?;
         ensure!(
@@ -84,13 +84,13 @@ impl Options {
             .as_ref()
             .map_or(area.height / 2, |d| d.resolve(area.height))
             .clamp(8.min(area.height), area.height.min(194));
-        let outer = starkit::terminal_graphics::protocol::Rect {
+        let outer = starcore::terminal_graphics::protocol::Rect {
             x: area.x + (area.width - w) / 2,
             y: area.y + (area.height - h) / 2,
             width: w,
             height: h,
         };
-        let inner = starkit::terminal_graphics::protocol::Rect {
+        let inner = starcore::terminal_graphics::protocol::Rect {
             x: outer.x + 1,
             y: outer.y + 1,
             width: w - 2,
@@ -450,7 +450,7 @@ pub fn worker(path: &str, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use starkit::terminal_graphics::protocol::Rect;
+    use starcore::terminal_graphics::protocol::Rect;
     #[test]
     fn dimensions_are_bounded_and_centered_on_narrow_viewports() {
         for (w, h) in [

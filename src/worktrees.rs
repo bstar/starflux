@@ -83,7 +83,7 @@ fn links() -> Result<Vec<Link>> {
         .collect())
 }
 fn save(link: &Link) -> Result<()> {
-    starkit::fs::write_private(&path(&link.project)?, &serde_json::to_vec_pretty(link)?)?;
+    starcore::fs::write_private(&path(&link.project)?, &serde_json::to_vec_pretty(link)?)?;
     project_state::catalog_changed()
 }
 fn same_host(link: &Link, config: &Config) -> bool {
@@ -98,7 +98,7 @@ fn group(config: &Config, repository: &Value) -> Result<project_sync::Transactio
         .parent()
         .context("No data directory")?
         .join("worktrees");
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     let key = format!(
         "{:x}",
         Sha256::digest(serde_json::to_vec(&json!([

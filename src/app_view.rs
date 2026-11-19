@@ -1,6 +1,6 @@
 //! App Space uses native pixels, bounded to a 1080p desktop.
 use crate::compositor::Frame;
-use starkit::{content_view::ContentView, native_surface::PixelRect};
+use starcore::{content_view::ContentView, native_surface::PixelRect};
 use std::sync::Arc;
 
 pub const MAX_WIDTH: u32 = 1920;

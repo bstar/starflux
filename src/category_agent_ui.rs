@@ -31,7 +31,7 @@ fn lines(width: usize, items: &mut Vec<crate::shelf::MenuItem>, text: &str) {
         }
     }
 }
-const FLEET: &str = "Keep the member projects aligned as STAR/FLEET. Map shared STAR/KIT primitives and reference implementations. Compare equivalent capabilities across members; separate intentional product differences from parity gaps. Evaluate reported progress against source evidence and acceptance checks. Track dependencies and cross-project regressions. Suggest shared toolkit changes before duplicated application work. Propose scoped tasks with evidence and explicit verification; never change code or dispatch work without user approval.";
+const FLEET: &str = "Keep the member projects aligned as STAR/FLEET. Map shared STAR/CORE primitives and reference implementations. Compare equivalent capabilities across members; separate intentional product differences from parity gaps. Evaluate reported progress against source evidence and acceptance checks. Track dependencies and cross-project regressions. Suggest shared toolkit changes before duplicated application work. Propose scoped tasks with evidence and explicit verification; never change code or dispatch work without user approval.";
 impl Workspace {
     pub(super) fn coordinator_request(
         &mut self,

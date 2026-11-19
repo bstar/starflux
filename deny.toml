@@ -12,7 +12,7 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = ["https://github.com/bstar/starkit"]
+allow-git = ["https://github.com/bstar/starcore"]
 [[licenses.exceptions]]
 name = "ffmpeg-next"
 allow = ["WTFPL"]

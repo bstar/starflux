@@ -1,6 +1,6 @@
 //! App Shelf: single pixel borders, drafting grid, project spaces and app cards.
 use crate::{appearance::Appearance, project_state::Space};
-use starkit::native_surface::{HitRegion, PixelRect as R, Primitive, Surface};
+use starcore::native_surface::{HitRegion, PixelRect as R, Primitive, Surface};
 
 const TAB_HEIGHT: u16 = 31;
 const TAB_LEAD: u16 = 16;
@@ -419,17 +419,18 @@ impl Pen {
             if let Some((_, id, png)) = tiles.iter().find(|(ink, _, _)| ink == color) {
                 return Some((id.clone(), png.clone()));
             }
-            let ink = starkit::theme::color::Rgb::parse_hex(color).ok()?;
-            let image = starkit::image::RgbaImage::from_fn(PERIOD.into(), PERIOD.into(), |x, y| {
-                if (x + y).is_multiple_of(u32::from(PERIOD))
-                    || (x + u32::from(PERIOD) - y).is_multiple_of(u32::from(PERIOD))
-                {
-                    starkit::image::Rgba([ink.r, ink.g, ink.b, 255])
-                } else {
-                    starkit::image::Rgba([0, 0, 0, 0])
-                }
-            });
-            let (id, png) = starkit::terminal_graphics::assets::encode_skin(&image).ok()?;
+            let ink = starcore::theme::color::Rgb::parse_hex(color).ok()?;
+            let image =
+                starcore::image::RgbaImage::from_fn(PERIOD.into(), PERIOD.into(), |x, y| {
+                    if (x + y).is_multiple_of(u32::from(PERIOD))
+                        || (x + u32::from(PERIOD) - y).is_multiple_of(u32::from(PERIOD))
+                    {
+                        starcore::image::Rgba([ink.r, ink.g, ink.b, 255])
+                    } else {
+                        starcore::image::Rgba([0, 0, 0, 0])
+                    }
+                });
+            let (id, png) = starcore::terminal_graphics::assets::encode_skin(&image).ok()?;
             if tiles.len() == 32 {
                 tiles.pop_front();
             }

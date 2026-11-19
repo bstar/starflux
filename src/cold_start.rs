@@ -61,9 +61,9 @@ fn path(project: &str, pane: usize, previous: bool) -> Result<PathBuf> {
         .parent()
         .context("No screen data directory")?
         .join("screens");
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     let root = root.join(project);
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     Ok(root.join(format!(
         "p{pane}.{}.json",
         if previous {

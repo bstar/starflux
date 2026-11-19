@@ -61,7 +61,7 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
     shell.chmod(0o700)
     env = {k: v for k, v in os.environ.items() if k not in (
         'KITTY_WINDOW_ID', 'KITTY_PID', 'KITTY_LISTEN_ON', 'WAYLAND_DISPLAY', 'DISPLAY',
-        'SSH_CONNECTION', 'SSH_TTY', 'TMUX', 'STY', 'STAR_KIT_TERMINAL_SOCKET',
+        'SSH_CONNECTION', 'SSH_TTY', 'TMUX', 'STY', 'STAR_CORE_TERMINAL_SOCKET',
     )}
     env.update(XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(tmp / 'data'), XDG_CONFIG_HOME=str(tmp / 'config'),
                SHELL=str(shell), TERM='xterm-256color' if args.ssh else 'xterm', STAR_TERMINAL_RENDERER='native' if args.ssh else 'kitty-pixels',

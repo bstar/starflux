@@ -16,16 +16,16 @@ stage="$work/starflux-client-$ver"
 mkdir -p "$stage" dist
 install -m755 "$bin" "$stage/"
 cp scripts/install-kitty-audio.py "$stage/"
-kit_rev=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["dependencies"]["starkit"]["rev"])')
-curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starkit/$kit_rev/integrations/kitty/star_kit.py" -o "$stage/star_kit.py"
+core_rev=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["dependencies"]["starcore"]["rev"])')
+curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starcore/$core_rev/integrations/kitty/star_core.py" -o "$stage/star_core.py"
 cp LICENSE "$stage/"
 cp -R LICENSES "$stage/"
-curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starkit/$kit_rev/LICENSE" -o "$stage/STAR-KIT-LICENSE"
+curl --retry 5 -fsSL "https://raw.githubusercontent.com/bstar/starcore/$core_rev/LICENSE" -o "$stage/STAR-CORE-LICENSE"
 cat > "$stage/INSTALL.txt" <<'INSTALL'
 Apple Silicon presentation client for a Linux STAR/FLUX workspace host.
 Requires Kitty and Homebrew runtime codecs: brew install ffmpeg
 Keep this directory in a permanent location, then run:
-python3 install-kitty-audio.py --client ./starflux-terminal-client --watcher ./star_kit.py
+python3 install-kitty-audio.py --client ./starflux-terminal-client --watcher ./star_core.py
 Reload Kitty's configuration. SSH to the Linux host and run starflux there.
 The watcher opens the matching client locally for video, audio and native text.
 This archive is the local presentation endpoint, not a macOS workspace host.

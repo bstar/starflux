@@ -1,7 +1,7 @@
 //! Blueprint's semantic palette, matching the HTML treatment's byte-space mixes.
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use starkit::theme::{Theme, ThemeFile, Variant, color::Rgb};
+use starcore::theme::{Theme, ThemeFile, Variant, color::Rgb};
 
 pub fn default_theme() -> String {
     "system".into()
@@ -72,16 +72,16 @@ impl Appearance {
     }
     pub fn load(id: &str) -> Result<Self> {
         let file = if id == "system" {
-            starkit::theme::system::theme()
+            starcore::theme::system::theme()
                 .map(|(file, _)| file)
                 .unwrap_or(ThemeFile::parse(
-                    starkit::theme::BUILTINS
+                    starcore::theme::BUILTINS
                         .iter()
                         .find(|b| b.id == "kanagawa")
                         .unwrap()
                         .toml,
                 )?)
-        } else if let Some(b) = starkit::theme::BUILTINS.iter().find(|b| b.id == id) {
+        } else if let Some(b) = starcore::theme::BUILTINS.iter().find(|b| b.id == id) {
             ThemeFile::parse(b.toml)?
         } else {
             bail!("Unknown theme '{id}'. Run starflux --themes for available palettes")
@@ -224,7 +224,7 @@ impl Appearance {
     }
     pub fn cycle(&self) -> Result<Self> {
         let list = std::iter::once("system")
-            .chain(starkit::theme::BUILTINS.iter().map(|theme| theme.id))
+            .chain(starcore::theme::BUILTINS.iter().map(|theme| theme.id))
             .collect::<Vec<_>>();
         let at = list.iter().position(|id| *id == self.id).unwrap_or(0);
         Self::load(list[(at + 1) % list.len()]).context("Load next theme")
@@ -235,7 +235,7 @@ mod tests {
     use super::*;
     #[test]
     fn every_palette_has_readable_semantic_text() {
-        for b in starkit::theme::BUILTINS {
+        for b in starcore::theme::BUILTINS {
             let t = Appearance::load(b.id).unwrap();
             for surface in [&t.bg, &t.panel, &t.raised] {
                 for text in [&t.fg, &t.muted, &t.accent, &t.success, &t.warning, &t.error] {

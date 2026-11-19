@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
         graphics_paint::CellView {
             stream: "private-render-proof".into(),
             generation: 1,
-            rect: starkit::terminal_graphics::protocol::Rect {
+            rect: starcore::terminal_graphics::protocol::Rect {
                 x: 0,
                 y: 0,
                 width: columns,

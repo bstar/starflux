@@ -1,12 +1,12 @@
-"""Add a fixed STAR/FLUX helper choice to a compatible STAR/KIT watcher.
+"""Add a fixed STAR/FLUX helper choice to a compatible STAR/CORE watcher.
 
 Other applications retain the existing shared helper. The host can select this
 fixed application ID, never a local executable path or command.
 """
 def augment(source):
-    anchor="CLIENT = Path.home() / '.local/bin/star-kit-terminal'"
+    anchor="CLIENT = Path.home() / '.local/bin/star-core-terminal'"
     if source.count(anchor)!=1 or source.count('[str(CLIENT), path]')!=1:
-        raise ValueError('Unsupported STAR/KIT watcher; update the bridge adapter')
+        raise ValueError('Unsupported STAR/CORE watcher; update the bridge adapter')
     source=source.replace(anchor,anchor+'''
 STARFLUX_CLIENT = Path.home() / '.local/bin/starflux-terminal-client'
 starflux_probes = {}
@@ -34,7 +34,7 @@ def client_for(window, nonce):
             hooks = getattr(existing_window.watchers, name)
             def owned(hook):
                 file = Path(getattr(hook, '__globals__', {}).get('__file__', ''))
-                return file.resolve().parent == managed and file.name.startswith('star_kit')
+                return file.resolve().parent == managed and file.name.startswith('star_core')
             hooks[:] = [hook for hook in hooks if not owned(hook)]
             hooks.append(callback)
 

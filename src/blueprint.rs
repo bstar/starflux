@@ -1,6 +1,6 @@
 //! Pixel-aligned implementation of design/treatments.html's Blueprint study.
 use crate::appearance::Appearance;
-use starkit::native_surface::{HitRegion, PixelRect, Primitive, Surface};
+use starcore::native_surface::{HitRegion, PixelRect, Primitive, Surface};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {

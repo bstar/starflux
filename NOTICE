@@ -9,5 +9,5 @@ vendor/crossterm is the existing extension-aware STAR/FOLD copy of Crossterm,
 Copyright (c) 2019 Timon, under the MIT License.
 See vendor/crossterm/LICENSE.
 
-STAR/KIT and other dependencies retain their own licenses.
+STAR/CORE and other dependencies retain their own licenses.
 No Herdr implementation source is included in this demo.

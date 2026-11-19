@@ -2,7 +2,7 @@
 set -euo pipefail
 app_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$app_root"
-if [[ -n "${STAR_KIT_CHECKOUT:-}" ]]; then
+if [[ -n "${STAR_CORE_CHECKOUT:-}" ]]; then
   exec python3 "$app_root/scripts/dev-candidate.py" "$@"
 fi
 mkdir -p "$app_root/target/nix-shell"

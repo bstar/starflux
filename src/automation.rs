@@ -231,11 +231,11 @@ fn operation_root() -> Result<PathBuf> {
     Ok(root)
 }
 fn private_root(path: &std::path::Path) -> Result<()> {
-    starkit::terminal_graphics::session::private_root(path)?;
+    starcore::terminal_graphics::session::private_root(path)?;
     Ok(())
 }
 pub(crate) fn persist(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    starkit::fs::write_private(path, bytes)?;
+    starcore::fs::write_private(path, bytes)?;
     // The SDK flushes file contents; also commit the rename before a write
     // may begin. Losing the pending filename after reboot could repeat input.
     // Include new ancestor links even when another process created the same

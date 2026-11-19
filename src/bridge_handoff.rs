@@ -1,6 +1,6 @@
 //! Keep terminal-owned transport replies out of the shell during teardown.
 //!
-//! KIT's relay restores its saved termios before its asynchronous Kitty stop
+//! CORE's relay restores its saved termios before its asynchronous Kitty stop
 //! reply arrives. Save an echo-free baseline for the relay, then consume that
 //! last reply before restoring the shell's actual settings.
 use anyhow::{Context, Result};
@@ -84,7 +84,7 @@ impl Handoff {
                     pending.extend_from_slice(&chunk[..count]);
                     while let Some(end) = pending.iter().position(|b| *b == b'\n') {
                         let line = pending.drain(..=end).collect::<Vec<_>>();
-                        if line.starts_with(b"STAR_KIT_BRIDGE ") && line.ends_with(b" gone\n") {
+                        if line.starts_with(b"STAR_CORE_BRIDGE ") && line.ends_with(b" gone\n") {
                             return;
                         }
                     }

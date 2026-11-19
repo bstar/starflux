@@ -107,7 +107,7 @@ impl Terminal {
             return Ok(false);
         };
         let path = self.recovery_path(config, pane)?;
-        starkit::terminal_graphics::session::private_root(
+        starcore::terminal_graphics::session::private_root(
             path.parent().context("No recovery directory")?,
         )?;
         crate::automation::persist(

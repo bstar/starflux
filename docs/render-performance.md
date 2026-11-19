@@ -79,7 +79,7 @@ quality, negotiated frame window, packets and returned presentation credits.
 
 ## Audio and periodic delivery stalls
 
-Capable frontends now receive app audio through KIT's PCM-v2 player, matching
+Capable frontends now receive app audio through CORE's PCM-v2 player, matching
 STAR/SCREEN's remote preview path. The older fixed-stereo protocol is retained
 only when `audio_pcm_v2` is absent. The host's private 48 kHz stereo i16 capture
 is converted exactly to normalized F32 samples for transport. The PCM-v2 player

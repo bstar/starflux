@@ -27,7 +27,7 @@ Implement incrementally, with private local and SSH acceptance fixtures. Preserv
 
 Keyboard shortcuts must preserve ordinary terminal and game input, provide an escape for reserved keys, and keep destructive actions behind their existing confirmation. Remote configuration belongs to the machine running the workspace controller.
 
-Build an agent workspace using STAR/KIT for presentation and actual Kitty instances for terminals. Agent sessions must persist independently of the visible workspace. Dragging a desktop file onto a remote agent must transfer the file and deliver a reference or attachment that the agent can use.
+Build an agent workspace using STAR/CORE for presentation and actual Kitty instances for terminals. Agent sessions must persist independently of the visible workspace. Dragging a desktop file onto a remote agent must transfer the file and deliver a reference or attachment that the agent can use.
 
 The implementation begins with a narrow integration milestone. Broader workflow features follow only after embedding, input, SSH persistence, and remote attachments work together.
 
@@ -45,7 +45,7 @@ Preserve Blueprint’s canvas grid with single borders across layouts, with them
 
 Reconnect should attach to existing app processes, with input capture released on Ctrl+Esc, project switch or space switch. Clipboard and desktop drops need explicit host-aware transfer rather than local path insertion. Project identity must remain stable across pane changes, host reconnects and app launches. The HTML reference remains simulated. The live Rust application uses actual Kitty, tmux and persistent local/SSH app workers. See `app-shelf.md` and `../target/app-shelf-proof/result.json` for implementation and acceptance evidence; T28/T29 retain the remaining advanced split and GUI clipboard/drop acceptance cases.
 
-The user requirements are a Herdr-like workspace, STAR/KIT integration, embedded Kitty, better agent management, advanced graphics, and reliable drag and drop into agent harnesses over SSH, particularly Codex.
+The user requirements are a Herdr-like workspace, STAR/CORE integration, embedded Kitty, better agent management, advanced graphics, and reliable drag and drop into agent harnesses over SSH, particularly Codex.
 
 Initial scope is Linux with Wayland, a local workspace client, and Linux remote hosts reachable through the user's OpenSSH configuration. Support local and remote sessions in the same workspace. Remote hosts need no graphical display server: Kitty and the graphical workspace run on the client machine; remote agents run behind remote session workers.
 
@@ -58,17 +58,17 @@ Defer macOS embedding, Windows, a plugin marketplace, multi-user collaboration, 
 | Foundation | Verified source behavior | Consequence for STAR/FLUX |
 | --- | --- | --- |
 | Herdr | Background terminal ownership, session restore, agent state, CLI and socket automation | Study runtime boundaries and event semantics; avoid reproducing its UI before the new embedding path works |
-| STAR/KIT | Scene and cell presentation, themes, responsive panes, tiny-skia and cosmic-text rendering, persistent controllers, live canvas frames | Reuse the public presentation APIs and keep domain state in STAR/FLUX |
+| STAR/CORE | Scene and cell presentation, themes, responsive panes, tiny-skia and cosmic-text rendering, persistent controllers, live canvas frames | Reuse the public presentation APIs and keep domain state in STAR/FLUX |
 | STAR/SCREEN | Smithay Linux compositor, GLES rendering, borderless Kitty launch, live canvas presentation and embedded input | Prototype with this implementation, then extract a small reusable compositor boundary if appropriate |
-| STAR/KIT SSH file bridge | Bounded transfer over existing SSH TTY, local file capabilities, desktop drop integration | Reuse the transfer concepts and public APIs where applicable; implement agent-specific file staging and delivery |
+| STAR/CORE SSH file bridge | Bounded transfer over existing SSH TTY, local file capabilities, desktop drop integration | Reuse the transfer concepts and public APIs where applicable; implement agent-specific file staging and delivery |
 | Kitty | Real terminal rendering and socket remote control | Keep Kitty as a process and surface; investigate a narrow control channel rather than assuming a terminal widget API |
 
 Local source baselines inspected on 2026-10-23:
 
-- STAR/KIT commit `7c4e223fb8e3db1df7e2f25348d2f83cf1d1c8a1`.
+- STAR/CORE commit `7c4e223fb8e3db1df7e2f25348d2f83cf1d1c8a1`.
 - STAR/SCREEN commit `919be6768871c74ee8b0a3c13f2dfbe75aed5909`.
 
-STAR/KIT's current live-frame implementation limits a transport to eight stream identities and 256 MiB, with up to 128 MiB per frame. Start with one compositor atlas for visible panes, rather than assuming one stream per agent scales without limit. Hidden agents remain live without continuous frame delivery.
+STAR/CORE's current live-frame implementation limits a transport to eight stream identities and 256 MiB, with up to 128 MiB per frame. Start with one compositor atlas for visible panes, rather than assuming one stream per agent scales without limit. Hidden agents remain live without continuous frame delivery.
 
 These are source capabilities, not proof that STAR/FLUX's combined path already works. In particular, STAR/SCREEN's window move and resize gestures do not establish that external desktop file drops reach embedded Kitty or a remote harness.
 
@@ -78,8 +78,8 @@ Compare two frontends using the same application model and Kitty surface backend
 
 | Approach | Integration | Questions the spike must answer |
 | --- | --- | --- |
-| Workspace inside an outer Kitty | STAR/KIT pixel scenes and compositor frames use Kitty graphics | Can outer desktop drops be captured and routed across nested surfaces? Are key phases, selection, clipboard, image sharpness and latency acceptable? |
-| Standalone Wayland window | A native window presents the workspace and private compositor surfaces | What STAR/KIT presenter work is required? Can GPU surfaces remain on the GPU? Does native input and drop handling justify the extra presenter work? |
+| Workspace inside an outer Kitty | STAR/CORE pixel scenes and compositor frames use Kitty graphics | Can outer desktop drops be captured and routed across nested surfaces? Are key phases, selection, clipboard, image sharpness and latency acceptable? |
+| Standalone Wayland window | A native window presents the workspace and private compositor surfaces | What STAR/CORE presenter work is required? Can GPU surfaces remain on the GPU? Does native input and drop handling justify the extra presenter work? |
 
 Begin the inside-Kitty spike using existing STAR/SCREEN machinery because it has the shortest demonstrated source path. Build only enough of the standalone path to measure the important differences. Neither option is selected by this plan. Do not replace actual Kitty with another terminal engine to make the spike easier without revisiting the requirement.
 
@@ -91,7 +91,7 @@ Record an architecture decision after the comparison. If both options fail manda
 
 ```mermaid
 flowchart TD
-    UI[STAR KIT workspace frontend] <--> D[Local starflux daemon]
+    UI[STAR CORE workspace frontend] <--> D[Local starflux daemon]
     UI <--> C[Private compositor and Kitty surface worker]
     C --> K[Local Kitty instances]
     K <--> A[Terminal attach clients]
@@ -190,7 +190,7 @@ If the first Codex attachment approach fails, investigate a native protocol adap
 
 ## Graphics and input
 
-Keep the three rendering responsibilities explicit: Kitty renders terminal content; the compositor arranges Kitty surfaces; STAR/KIT draws workspace chrome, task views, diffs, diagrams and artifact previews. STAR/KIT's current native scene renderer is CPU-based tiny-skia and cosmic-text. GLES composition does not make the entire path GPU-resident or eliminate readback and image-upload costs.
+Keep the three rendering responsibilities explicit: Kitty renders terminal content; the compositor arranges Kitty surfaces; STAR/CORE draws workspace chrome, task views, diffs, diagrams and artifact previews. STAR/CORE's current native scene renderer is CPU-based tiny-skia and cosmic-text. GLES composition does not make the entire path GPU-resident or eliminate readback and image-upload costs.
 
 Use damage tracking, bounded queues, cached UI regions and latest-frame coalescing. Retain the current view when no damage occurs. Never drop ordered terminal bytes or encoded video packets to coalesce frames. Keep image previews optional and avoid linking media codecs merely for a graphical task view.
 
@@ -200,7 +200,7 @@ Provisional local targets are p95 input-to-visible-update below 50 ms for two pa
 
 Do not promise 60 Hz until final displayed frames are measured. If CPU rasterization or readback dominates, prototype a GPU presenter behind the same scene model and measure it before choosing wgpu or another backend. Preserve a cell presentation for metadata and diagnostics without implying that it provides embedded graphical terminals.
 
-Input checks cover press/repeat/release, Ctrl+C, multiline paste, terminal query replies, wheel scrolling, text selection, clipboard, IME composition, focus loss and resize. Retain STAR/KIT's Ctrl+Esc escape from embedded input where available and provide a visible standalone equivalent. File drops and prompt text must target the correct pane even while overlays are open. Modal focus cannot leave keys held inside a Kitty surface.
+Input checks cover press/repeat/release, Ctrl+C, multiline paste, terminal query replies, wheel scrolling, text selection, clipboard, IME composition, focus loss and resize. Retain STAR/CORE's Ctrl+Esc escape from embedded input where available and provide a visible standalone equivalent. File drops and prompt text must target the correct pane even while overlays are open. Modal focus cannot leave keys held inside a Kitty surface.
 
 ## Interfaces and packaging
 
@@ -212,7 +212,7 @@ Use versioned request and response schemas, bounded payloads, request IDs, struc
 
 Expose narrow private Kitty control sockets only to the components that need them. Agent control is session-scoped; terminal output is untrusted data and cannot grant a new capability. External action requests remain subject to the user's harness controls.
 
-Pin STAR/KIT by immutable revision after checking its source manifest and APIs; the inspected README's release discussion differs from its manifest version. The initial build may use a documented local override, but a distributable build must not require a sibling checkout. Extract shared compositor code through a deliberate change to the owning repository rather than making STAR/FLUX depend on STAR/SCREEN's private UI and recording code. Review actual source licenses and required notices before copying or distributing code; older Herdr forks may differ from current upstream.
+Pin STAR/CORE by immutable revision after checking its source manifest and APIs; the inspected README's release discussion differs from its manifest version. The initial build may use a documented local override, but a distributable build must not require a sibling checkout. Extract shared compositor code through a deliberate change to the owning repository rather than making STAR/FLUX depend on STAR/SCREEN's private UI and recording code. Review actual source licenses and required notices before copying or distributing code; older Herdr forks may differ from current upstream.
 
 Use official distribution packages or Nix for build dependencies. No AUR dependency is assumed. Keep codec, audio, GPU, and desktop requirements explicit, with actionable startup diagnostics. Runtime logs must redact secrets and avoid full prompt or attachment content by default.
 
@@ -249,5 +249,5 @@ Start with T01 and T02 in the task backlog. Then implement the minimum session r
 - [Herdr upstream](https://github.com/herdrdev/herdr), [session persistence](https://herdr.dev/docs/session-state/), [socket API](https://herdr.dev/docs/socket-api/), and [agent integrations](https://herdr.dev/docs/integrations/).
 - [Kitty remote control](https://sw.kovidgoyal.net/kitty/remote-control/).
 - [Official Codex image input documentation](https://learn.chatgpt.com/docs/image-inputs?surface=cli).
-- [STAR/KIT rendering](../../starkit/docs/terminal-graphics.md), [live canvas implementation](../../starkit/src/terminal_graphics/live_canvas.rs), [drop bridge](../../starkit/src/terminal_graphics/drop_bridge.rs), and [existing SSH shell integration](../../starkit/integrations/kitty/README.md).
+- [STAR/CORE rendering](../../starcore/docs/terminal-graphics.md), [live canvas implementation](../../starcore/src/terminal_graphics/live_canvas.rs), [drop bridge](../../starcore/src/terminal_graphics/drop_bridge.rs), and [existing SSH shell integration](../../starcore/integrations/kitty/README.md).
 - [STAR/SCREEN compositor](../../starscreen/src/compositor/mod.rs), [Linux renderer](../../starscreen/src/compositor/linux.rs), [embedded input handlers](../../starscreen/src/compositor/handlers.rs), and [Kitty launch implementation](../../starscreen/src/ui.rs).

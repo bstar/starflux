@@ -1,6 +1,6 @@
 use super::*;
 use crate::plugin_popup::{Options, Reservation};
-use starkit::native_surface::{Primitive, Surface};
+use starcore::native_surface::{Primitive, Surface};
 pub(super) struct Popup {
     reservation: Reservation,
     terminal: crate::terminal::Terminal,
@@ -327,14 +327,14 @@ impl Workspace {
             )
         }
     }
-    pub(super) fn popup_cells(&self, b: &mut starkit::ratatui::buffer::Buffer) {
+    pub(super) fn popup_cells(&self, b: &mut starcore::ratatui::buffer::Buffer) {
         let Some(p) = &self.popup else {
             return;
         };
         let Ok((outer, _)) = p.reservation.record.options.bounds(self.popup_area()) else {
             return;
         };
-        use starkit::ratatui::style::{Color, Style};
+        use starcore::ratatui::style::{Color, Style};
         let style = Style::default()
             .bg(self.appearance.bg.parse::<Color>().unwrap_or(Color::Reset))
             .fg(self.appearance.fg.parse::<Color>().unwrap_or(Color::Reset));

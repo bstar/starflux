@@ -133,8 +133,8 @@ pub fn query(
         command.arg(member.host.as_deref().context("Missing project host")?);
         command.arg(format!(
             "{} --portfolio-repository-query {}",
-            starkit::terminal_graphics::client::shell_quote(&member.executable),
-            starkit::terminal_graphics::client::shell_quote(&request.to_string())
+            starcore::terminal_graphics::client::shell_quote(&member.executable),
+            starcore::terminal_graphics::client::shell_quote(&request.to_string())
         ));
         return Ok(serde_json::from_slice(&crate::read_query::output(
             command,

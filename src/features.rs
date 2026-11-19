@@ -1,7 +1,7 @@
 //! Product capabilities shared by every presentation and action entrypoint.
 /// A remote controller needs streamed pixels; a local one may share frames.
 /// SSH itself is not a restriction. Cells frontends never display app canvases.
-pub fn app_view(caps: &starkit::terminal_graphics::capabilities::Capabilities) -> bool {
+pub fn app_view(caps: &starcore::terminal_graphics::capabilities::Capabilities) -> bool {
     caps.cell_presentation != Some(true) && (caps.local_frames || caps.streamed_frames)
 }
 

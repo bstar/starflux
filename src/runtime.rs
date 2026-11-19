@@ -545,7 +545,7 @@ impl Config {
         if state.terminal_commands.remove(&pane).is_some() {
             state.save(&config)?;
         }
-        starkit::fs::write_private(
+        starcore::fs::write_private(
             &config_path(&config.workspace)?,
             &serde_json::to_vec_pretty(&config)?,
         )?;
@@ -808,7 +808,7 @@ pub fn initialize_environment() -> Result<()> {
         } else {
             PathBuf::from(format!("/tmp/starflux-{uid}"))
         };
-        starkit::terminal_graphics::session::private_root(&runtime)?;
+        starcore::terminal_graphics::session::private_root(&runtime)?;
         // CLI entry calls this before starting any threads or frontend probes.
         unsafe {
             std::env::set_var("XDG_RUNTIME_DIR", runtime);
@@ -838,7 +838,7 @@ pub fn private_directory(path: PathBuf) -> Result<PathBuf> {
         }
         _ => path,
     };
-    starkit::terminal_graphics::session::private_root(&path)?;
+    starcore::terminal_graphics::session::private_root(&path)?;
     ensure!(
         fs::metadata(&path)?.uid() == uid,
         "Runtime directory belongs to another user"

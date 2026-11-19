@@ -4,7 +4,7 @@
 [![Release builds](https://github.com/bstar/starflux/actions/workflows/release.yml/badge.svg)](https://github.com/bstar/starflux/actions/workflows/release.yml)
 [![Arch package](https://github.com/bstar/starflux/actions/workflows/arch.yml/badge.svg)](https://github.com/bstar/starflux/actions/workflows/arch.yml)
 
-An agent workspace built with STAR/KIT, with persistent local and SSH terminals,
+An agent workspace built with STAR/CORE, with persistent local and SSH terminals,
 a graphical interface, and a full text-cell interface for ordinary terminals.
 
 ```sh
@@ -87,9 +87,9 @@ Each window has independent navigation, splits, menus and presentation, while
 terminal processes and tabs are shared. Cells mode inherits its parent terminal font. Refresh UI affects only its
 own window. See [multiple-window behavior and upgrade notes](docs/app-shelf.md#multiple-windows-on-one-workspace).
 
-The default terminal path uses native text cells. The virtual desktop belongs exclusively to app space. `STAR_TERMINAL_RENDERER=kitty-pixels` explicitly selects the older screenshot-based terminal path for diagnosis. Refresh both the host executable and local STAR/KIT frontend when updating the native cell protocol; the Mac helper build is separate from the host build.
+The default terminal path uses native text cells. The virtual desktop belongs exclusively to app space. `STAR_TERMINAL_RENDERER=kitty-pixels` explicitly selects the older screenshot-based terminal path for diagnosis. Refresh both the host executable and local STAR/CORE frontend when updating the native cell protocol; the Mac helper build is separate from the host build.
 
-Build and verification commands are documented in [CONTRIBUTING.md](CONTRIBUTING.md). The app and presentation-only client share one immutable STAR/KIT revision; standard builds enable native terminal transport and the optional GPU backend. GPU rendering remains selected with `STAR_GRAPHICS_RENDERER=gpu`.
+Build and verification commands are documented in [CONTRIBUTING.md](CONTRIBUTING.md). The app and presentation-only client share one immutable STAR/CORE revision; standard builds enable native terminal transport and the optional GPU backend. GPU rendering remains selected with `STAR_GRAPHICS_RENDERER=gpu`.
 
 Saved SSH connection profiles and machine management: [Machines](docs/machines.md).
 

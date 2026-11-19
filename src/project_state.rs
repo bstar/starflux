@@ -142,7 +142,7 @@ pub fn data_path() -> PathBuf {
 }
 pub fn data_root() -> Result<PathBuf> {
     let path = data_path();
-    starkit::terminal_graphics::session::private_root(&path)?;
+    starcore::terminal_graphics::session::private_root(&path)?;
     Ok(path)
 }
 impl ProjectState {
@@ -410,7 +410,7 @@ impl ProjectState {
         let mut durable: Self = serde_json::from_value(merged)?;
         durable.repair_view();
         durable.validate()?;
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&durable)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&durable)?)?;
         let local_config = serde_json::to_value(config)?;
         let config_path = root.join(format!("{}.json", config.workspace));
         let mut merged_config: serde_json::Value = fs::read(&config_path)
@@ -426,11 +426,14 @@ impl ProjectState {
         }
         let config_changed = !config_path.exists() || previous_config != merged_config;
         if config_changed {
-            starkit::fs::write_private(&config_path, &serde_json::to_vec_pretty(&merged_config)?)?;
+            starcore::fs::write_private(&config_path, &serde_json::to_vec_pretty(&merged_config)?)?;
         }
         let runtime_path = crate::runtime::root()?.join(format!("{}.json", config.workspace));
         if config_changed && runtime_path.exists() {
-            starkit::fs::write_private(&runtime_path, &serde_json::to_vec_pretty(&merged_config)?)?;
+            starcore::fs::write_private(
+                &runtime_path,
+                &serde_json::to_vec_pretty(&merged_config)?,
+            )?;
         }
         if config_changed {
             catalog_changed()?;
@@ -451,7 +454,7 @@ impl ProjectState {
     pub fn save_view(&self, config: &Config, frontend: &str) -> Result<()> {
         let directory = data_root()?.join("views").join(frontend);
         fs::create_dir_all(&directory)?;
-        starkit::fs::write_private(
+        starcore::fs::write_private(
             &directory.join(format!("{}.json", config.workspace)),
             &serde_json::to_vec(self)?,
         )
@@ -829,7 +832,7 @@ impl ProjectState {
     }
 }
 pub fn catalog_changed() -> Result<()> {
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &data_root()?.join("catalog-version"),
         uuid::Uuid::new_v4().as_bytes(),
     )

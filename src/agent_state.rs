@@ -142,7 +142,7 @@ pub fn preserve_conversation(
     );
     let mut store = load(config)?;
     if store.preserve_conversation(pane, previous, next) {
-        starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+        starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
     }
     Ok(())
 }
@@ -384,7 +384,7 @@ pub fn publish(config: &Config, pane: usize, report: Report) -> Result<Record> {
         .is_none_or(|old| old.report.state != report.state);
     let record = accept(&mut store, &state, pane, &health, report, now_ms())?;
     let pruned = prune_store(&mut store);
-    starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+    starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
     if event_changed || pruned > 0 {
         crate::automation::journal::agents_saved(
             config,
@@ -409,7 +409,7 @@ pub fn dismiss(config: &Config, id: &str) -> Result<()> {
         .find(|a| a.id == id)
         .context("Attention item no longer exists")?
         .dismissed = true;
-    starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+    starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
     crate::automation::journal::agents_saved(config, store.runs.values(), store.attention.iter())?;
     Ok(())
 }
@@ -426,7 +426,7 @@ pub fn prune_attention(
     let mut store = load(config)?;
     let removed = crate::notifications::retain(&mut store.attention, settings, now_ms());
     if removed > 0 {
-        starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+        starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
         crate::automation::journal::agents_saved(
             config,
             store.runs.values(),
@@ -451,7 +451,7 @@ pub fn dismiss_many(config: &Config, ids: &std::collections::BTreeSet<String>) -
         }
     }
     if updated > 0 {
-        starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+        starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
         crate::automation::journal::agents_saved(
             config,
             store.runs.values(),
@@ -577,7 +577,7 @@ pub fn observe_attention(
         });
     }
     let pruned = prune_store(&mut store);
-    starkit::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
+    starcore::fs::write_private(&path(config)?, &serde_json::to_vec_pretty(&store)?)?;
     if attention_changed || pruned > 0 {
         crate::automation::journal::agents_saved(
             config,

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Install a fixed, local STAR/KIT audio frontend and Kitty watcher, with backups."""
+"""Install a fixed, local STAR/CORE audio frontend and Kitty watcher, with backups."""
 import argparse,datetime,hashlib,os,shlex,shutil,tempfile
 from pathlib import Path
 from kitty_font_bridge import augment
 p=argparse.ArgumentParser(description=__doc__)
-p.add_argument('--starflux-client',type=Path,help='Install a dedicated STAR/FLUX helper, preserving the shared STAR/KIT helper')
+p.add_argument('--starflux-client',type=Path,help='Install a dedicated STAR/FLUX helper, preserving the shared STAR/CORE helper')
 p.add_argument('--client',type=Path,help='Built local client; omit to preserve the installed helper')
-p.add_argument('--watcher',type=Path,required=True,help='STAR/KIT integrations/kitty/star_kit.py')
+p.add_argument('--watcher',type=Path,required=True,help='STAR/CORE integrations/kitty/star_core.py')
 p.add_argument('--font-watcher',type=Path,default=Path(__file__).resolve().parents[1]/'terminal-client/kitty/starflux_fonts.py',help='STAR/FLUX local font controls watcher')
 a=p.parse_args();client=a.client.expanduser().resolve() if a.client else None;watcher=a.watcher.expanduser().resolve()
 starflux_client=a.starflux_client.expanduser().resolve() if a.starflux_client else None
 if starflux_client is not None and (not starflux_client.is_file() or not os.access(starflux_client,os.X_OK)):p.error('Build the local STAR/FLUX client first')
 if client is not None and (not client.is_file() or not os.access(client,os.X_OK)):p.error('Build the local audio-enabled client first')
-if not watcher.is_file():p.error('The STAR/KIT watcher file is missing')
+if not watcher.is_file():p.error('The STAR/CORE watcher file is missing')
 compile(watcher.read_text(),str(watcher),'exec')
 font_watcher=a.font_watcher.expanduser().resolve()
 if not font_watcher.is_file():p.error('The STAR/FLUX font watcher is missing')
@@ -20,11 +20,11 @@ compile(font_watcher.read_text(),str(font_watcher),'exec')
 font_data=font_watcher.read_bytes()
 root=Path.home();config=Path(os.environ.get('KITTY_CONFIG_DIRECTORY',root/'.config/kitty'))/'kitty.conf'
 watcher_data=augment(watcher.read_text()).encode()
-watcher_dir=root/'.local/lib/star-kit/kitty'
+watcher_dir=root/'.local/lib/star-core/kitty'
 # Kitty caches modules by pathname for the lifetime of the process.
-local_watcher=watcher_dir/('star_kit-'+hashlib.sha256(watcher_data).hexdigest()[:16]+'.py')
+local_watcher=watcher_dir/('star_core-'+hashlib.sha256(watcher_data).hexdigest()[:16]+'.py')
 local_fonts=watcher_dir/('starflux_fonts-'+hashlib.sha256(font_data).hexdigest()[:16]+'.py')
-helper=root/'.local/bin/star-kit-terminal'
+helper=root/'.local/bin/star-core-terminal'
 flux_helper=root/'.local/bin/starflux-terminal-client'
 stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
 def put(path,data,mode):
@@ -48,7 +48,7 @@ for existing in text.splitlines():
  parts=existing.strip().split(maxsplit=1)
  if len(parts)==2 and parts[0]=='watcher':
   registered=Path(parts[1]).expanduser()
-  if registered.parent==watcher_dir and registered.name.startswith(('star_kit','starflux_fonts-')):
+  if registered.parent==watcher_dir and registered.name.startswith(('star_core','starflux_fonts-')):
    continue
  lines.append(existing)
 updated='\n'.join(lines).rstrip()+'\n'+line+'\nwatcher '+str(local_fonts)+'\n'

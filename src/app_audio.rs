@@ -1,4 +1,4 @@
-//! Isolated app-desktop capture. KIT owns frontend PCM transport and playback.
+//! Isolated app-desktop capture. CORE owns frontend PCM transport and playback.
 //! A private host capture pipe feeds the frontend's negotiated PCM protocol.
 use crate::{
     app_desktop::{command_extra, directory, lock, paths, read, write},
@@ -37,18 +37,18 @@ impl Playback {
             Self::Pcm => "pcm-v2",
         }
     }
-    pub fn open(self, session: u64, epoch: u64) -> starkit::terminal_graphics::media::ToClient {
-        use starkit::terminal_graphics::media::ToClient;
+    pub fn open(self, session: u64, epoch: u64) -> starcore::terminal_graphics::media::ToClient {
+        use starcore::terminal_graphics::media::ToClient;
         match self {
             Self::Legacy => ToClient::AudioOpen { session, epoch },
             Self::Pcm => ToClient::PcmOpen {
                 session,
                 epoch,
-                spec: starkit::pcm::Spec {
+                spec: starcore::pcm::Spec {
                     sample_rate: 48000,
                     channels: 2,
                     channel_mask: 3,
-                    format: starkit::pcm::SampleFormat::F32,
+                    format: starcore::pcm::SampleFormat::F32,
                     valid_bits: None,
                 },
                 compatibility: true,
@@ -60,8 +60,8 @@ impl Playback {
         session: u64,
         epoch: u64,
         samples: Vec<i16>,
-    ) -> starkit::terminal_graphics::media::ToClient {
-        use starkit::terminal_graphics::media::ToClient;
+    ) -> starcore::terminal_graphics::media::ToClient {
+        use starcore::terminal_graphics::media::ToClient;
         match self {
             Self::Legacy => ToClient::AudioChunk {
                 session,
@@ -77,15 +77,15 @@ impl Playback {
                 ToClient::PcmChunk {
                     session,
                     epoch,
-                    format: starkit::pcm::SampleFormat::F32,
+                    format: starcore::pcm::SampleFormat::F32,
                     processed: true,
                     data: base64::engine::general_purpose::STANDARD.encode(bytes),
                 }
             }
         }
     }
-    pub fn close(self, session: u64, epoch: u64) -> starkit::terminal_graphics::media::ToClient {
-        use starkit::terminal_graphics::media::ToClient;
+    pub fn close(self, session: u64, epoch: u64) -> starcore::terminal_graphics::media::ToClient {
+        use starcore::terminal_graphics::media::ToClient;
         match self {
             Self::Legacy => ToClient::AudioClose { session },
             Self::Pcm => ToClient::PcmClose { session, epoch },
@@ -615,7 +615,7 @@ mod viewer_tests {
     #[test]
     fn modern_pcm_preserves_stereo_samples_and_legacy_is_unchanged() {
         use base64::Engine as _;
-        use starkit::terminal_graphics::media::ToClient;
+        use starcore::terminal_graphics::media::ToClient;
         assert!(
             matches!(Playback::Pcm.open(7,9),ToClient::PcmOpen{spec,..} if spec.sample_rate==48000 && spec.channels==2)
         );

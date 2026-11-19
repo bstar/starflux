@@ -5,7 +5,7 @@
 > **App Space** in the terminal header or **Open App Space** in a project's
 > right-click menu. Terminal space keeps the full terminal area.
 
-STAR/FLUX now uses the App Shelf direction from the design studies. A project owns its agent, terminal tabs, launch command and virtual app desktops. Agents and shells now use Kitty’s own renderer, presented at native pixel resolution. Graphical apps retain their private compositor. The chrome uses single pixel borders, a drafting grid and the selected STAR/KIT palette.
+STAR/FLUX now uses the App Shelf direction from the design studies. A project owns its agent, terminal tabs, launch command and virtual app desktops. Agents and shells now use Kitty’s own renderer, presented at native pixel resolution. Graphical apps retain their private compositor. The chrome uses single pixel borders, a drafting grid and the selected STAR/CORE palette.
 
 ## Start a project
 
@@ -90,7 +90,7 @@ Click an agent tab to switch; status dots show its health. Right-click to rename
 
 Keyboard forwarding preserves uppercase letters and shifted punctuation in Kitty panes, including events where the terminal has already translated the character without a Shift modifier. Synthetic Shift is released after key-up. The experimental direct renderer uses the same Control/Alt modifier contract as the frontend.
 
-Returning to the workspace from another desktop window automatically restores keyboard capture and native focus to the selected agent or terminal. Split panes retain the selected half. Resizes during window switching defer focus until the new scene is available. Rename and launch dialogs keep their text-field focus; a context menu dismisses on window blur before terminal focus is restored. Ctrl+Esc still releases input until you click the pane or activate the workspace again. The installed KIT candidate supports the explicit local `focus-canvas:terminals` activation notice; the portable baseline remains compatible with click-to-focus frontends.
+Returning to the workspace from another desktop window automatically restores keyboard capture and native focus to the selected agent or terminal. Split panes retain the selected half. Resizes during window switching defer focus until the new scene is available. Rename and launch dialogs keep their text-field focus; a context menu dismisses on window blur before terminal focus is restored. Ctrl+Esc still releases input until you click the pane or activate the workspace again. The installed CORE candidate supports the explicit local `focus-canvas:terminals` activation notice; the portable baseline remains compatible with click-to-focus frontends.
 
 `python3 scripts/test-multiple-agents.py` checks real GPU panes with two disposable agents per project, uppercase/Shift/punctuation and Control/Alt bytes, separate input, matching working directories, rename controls and persistent process IDs after controller restart. It covers local and authenticated loopback SSH projects without touching original Herdr sessions. Evidence is in `target/multi-agent-proof`.
 
@@ -108,9 +108,9 @@ Repository inspection runs in the background on the project's configured host, l
 
 ## Kitty-rendered local and SSH terminals
 
-The SSH bridge keeps protocol replies out of terminal echo and consumes queued replies before returning control to the shell, including when startup fails. Internal `STAR_KIT_BRIDGE` records should not appear in scrollback or shell command history. `scripts/test-bridge-history.py` checks both paths over a private SSH connection with delayed terminal replies.
+The SSH bridge keeps protocol replies out of terminal echo and consumes queued replies before returning control to the shell, including when startup fails. Internal `STAR_CORE_BRIDGE` records should not appear in scrollback or shell command history. `scripts/test-bridge-history.py` checks both paths over a private SSH connection with delayed terminal replies.
 
-Kitty on the presenting machine draws native terminal characters, including over SSH. Its configured font, glyph shaping and text-composition settings apply directly. STAR/KIT draws the surrounding chrome and leaves cell-aligned transparent terminal regions. The `− / size / +` header controls the current Kitty OS window's font size when the updated bridge is loaded; otherwise Kitty's own font shortcuts remain available. Session processes survive frontend restarts.
+Kitty on the presenting machine draws native terminal characters, including over SSH. Its configured font, glyph shaping and text-composition settings apply directly. STAR/CORE draws the surrounding chrome and leaves cell-aligned transparent terminal regions. The `− / size / +` header controls the current Kitty OS window's font size when the updated bridge is loaded; otherwise Kitty's own font shortcuts remain available. Session processes survive frontend restarts.
 
 ## Selecting and copying Codex text
 
@@ -128,9 +128,9 @@ For SSH graphical apps, install a compatible STAR/FLUX executable on that host, 
 
 Closing or killing a frontend does not terminate the app compositor. **Reconnect** and reopening the workspace attach to the same app processes. A host reboot or explicit `--stop` ends them. Failed remote startup is reported in the workspace; the agent and shell spaces stay available.
 
-The app compositor targets 60 frames per second, up to 1920×1080. App Space displays native pixels at 1:1 size, centered within larger workspaces; smaller simultaneous viewers crop the shared desktop rather than scaling it. Local worker IPC uses private, immutable raw frame files with one outstanding acknowledgement, avoiding PNG encoding and decoding. Compatible SSH frontends use STAR/SCREEN’s low latency H.264 model: local decoding, bounded frame credits, and coalescing before encoding. Encoding and GPU readback still use CPU memory; sustained rates depend on resolution, host, client and network. Older workers and app hosts on a separate SSH connection retain the PNG compatibility path, capped at 1920×1080. An already-running app desktop needs a one-time relaunch to adopt the new worker; reconnecting a frontend preserves existing apps and does not upgrade that worker. App audio uses a separate bounded SSH pipe and STAR/KIT’s negotiated 48 kHz stereo PCM relay.
+The app compositor targets 60 frames per second, up to 1920×1080. App Space displays native pixels at 1:1 size, centered within larger workspaces; smaller simultaneous viewers crop the shared desktop rather than scaling it. Local worker IPC uses private, immutable raw frame files with one outstanding acknowledgement, avoiding PNG encoding and decoding. Compatible SSH frontends use STAR/SCREEN’s low latency H.264 model: local decoding, bounded frame credits, and coalescing before encoding. Encoding and GPU readback still use CPU memory; sustained rates depend on resolution, host, client and network. Older workers and app hosts on a separate SSH connection retain the PNG compatibility path, capped at 1920×1080. An already-running app desktop needs a one-time relaunch to adopt the new worker; reconnecting a frontend preserves existing apps and does not upgrade that worker. App audio uses a separate bounded SSH pipe and STAR/CORE’s negotiated 48 kHz stereo PCM relay.
 
-Embedded Kitty terminal frames use a separate native-resolution, lossless PNG patch transport in compatible KIT candidate builds. Encoding runs on a worker, unchanged pixels are omitted, and acknowledgement-scoped bases prevent stale patches. Text bypasses the JPEG thumbnail compatibility path. Older frontends retain the image compatibility transport. Runtime snapshots identify the negotiated terminal transport and app video delivery counters.
+Embedded Kitty terminal frames use a separate native-resolution, lossless PNG patch transport in compatible CORE candidate builds. Encoding runs on a worker, unchanged pixels are omitted, and acknowledgement-scoped bases prevent stale patches. Text bypasses the JPEG thumbnail compatibility path. Older frontends retain the image compatibility transport. Runtime snapshots identify the negotiated terminal transport and app video delivery counters.
 
 ## App audio and mute
 
@@ -146,13 +146,13 @@ starflux --ssh HOST --workspace herdr-default-wV
 starflux --ssh HOST --remote-executable /path/to/starflux --workspace NAME
 ```
 
-`--host` still selects an app/project host for a locally owned workspace; `--ssh` attaches a local frontend to an existing remote workspace. Matching audio-enabled builds are required on both ends. An existing SSH shell can use the STAR/KIT Kitty bridge; its local `star-kit-terminal` must also include audio output. An unbridged SSH TTY cannot reach the client's speakers and shows **Local audio missing**. Clicking that control explains the required local setup instead of toggling mute. The lightweight [local terminal client](../terminal-client/README.md) supports listening machines without a full STAR/FLUX installation. The installer uses a content-versioned watcher path to bypass Kitty’s module cache. After installing, reload Kitty configuration, then Refresh UI or reconnect STAR/FLUX; active bridge connections are preserved during the configuration reload.
+`--host` still selects an app/project host for a locally owned workspace; `--ssh` attaches a local frontend to an existing remote workspace. Matching audio-enabled builds are required on both ends. An existing SSH shell can use the STAR/CORE Kitty bridge; its local `star-core-terminal` must also include audio output. An unbridged SSH TTY cannot reach the client's speakers and shows **Local audio missing**. Clicking that control explains the required local setup instead of toggling mute. The lightweight [local terminal client](../terminal-client/README.md) supports listening machines without a full STAR/FLUX installation. The installer uses a content-versioned watcher path to bypass Kitty’s module cache. After installing, reload Kitty configuration, then Refresh UI or reconnect STAR/FLUX; active bridge connections are preserved during the configuration reload.
 
 The app host needs a running PulseAudio-compatible server (including PipeWire-Pulse), `pactl`, `parec`, and `pw-dump` for adopting existing native PipeWire streams. It does not need a physical audio device. New apps inherit their desktop's private sink. Already-running apps can be moved into it without restarting: only verified descendants of that private compositor are eligible, using the PulseAudio process ID or PipeWire client credentials. No microphone or system-wide output is captured.
 
-Audio capture, metadata scanning and video use separate workers. Eight block credits bound delivery through the existing STAR/KIT frontend; a slow listener cannot grow memory or block app input/video. The live capture queue retains only recent samples instead of accumulating old audio. A missing host capture service or local output device is reported in the workspace.
+Audio capture, metadata scanning and video use separate workers. Eight block credits bound delivery through the existing STAR/CORE frontend; a slow listener cannot grow memory or block app input/video. The live capture queue retains only recent samples instead of accumulating old audio. A missing host capture service or local output device is reported in the workspace.
 
-`python3 scripts/test-app-audio.py` exercises authenticated loopback SSH, an actual native PipeWire app stream, bounded credits, reconnect without app restart, local STAR/KIT playback into a disposable output sink, mute silence and saved mute across restart. The test does not change user applications or send audio to physical speakers. Handy's sound must be enabled; do not launch with `--no-sound` when testing audio.
+`python3 scripts/test-app-audio.py` exercises authenticated loopback SSH, an actual native PipeWire app stream, bounded credits, reconnect without app restart, local STAR/CORE playback into a disposable output sink, mute silence and saved mute across restart. The test does not change user applications or send audio to physical speakers. Handy's sound must be enabled; do not launch with `--no-sound` when testing audio.
 
 ## Agent launches on the app host
 
@@ -167,7 +167,7 @@ The identity must match the viewer's project workspace. This uses a separate loc
 
 The Zendocon checkout includes `python3 tools/run_in_starflux.py` (default desktop `herdr-default-w8`) and `docs/starflux-app-space.md`. It launches the existing cartridge, without rebuilding or replacing the game.
 
-STAR/KIT's GPU frontend is opt-in with `STAR_GRAPHICS_RENDERER=gpu starflux ...`. The installed candidate includes GPU support. Kitty and the private app compositor have independent renderers; enabling the frontend does not enable hardware video encoding or make emulator logic run on the GPU.
+STAR/CORE's GPU frontend is opt-in with `STAR_GRAPHICS_RENDERER=gpu starflux ...`. The installed candidate includes GPU support. Kitty and the private app compositor have independent renderers; enabling the frontend does not enable hardware video encoding or make emulator logic run on the GPU.
 
 ## File delivery
 
@@ -210,7 +210,7 @@ The project sidebar follows the saved activity direction and keeps the collectio
 
 `python3 scripts/test-project-sidebar.py` uses 20 disposable projects with imported labels to verify that all project rows remain visible, the final row can be selected directly, and switching preserves order. Screenshots and results are in `target/sidebar-proof`. It does not attach to or type into original Herdr sessions.
 
-Image drops accept local file lists and PNG/JPEG/WebP/GIF image data. When Kitty reports files from a different machine, STAR/KIT requests their bytes and stages private copies on the workspace host before delivery to the selected terminal or app. Original files are retained; the application sends no Enter. Browser image drags can fall back from their web URL to offered image bytes. Remote folders and symlinks are rejected explicitly. URI metadata is limited to 1 MiB, direct image data to 32 MiB, and remote staging to 64 files / 256 MiB total; destination uploads retain their existing 64 MiB per-file limit.
+Image drops accept local file lists and PNG/JPEG/WebP/GIF image data. When Kitty reports files from a different machine, STAR/CORE requests their bytes and stages private copies on the workspace host before delivery to the selected terminal or app. Original files are retained; the application sends no Enter. Browser image drags can fall back from their web URL to offered image bytes. Remote folders and symlinks are rejected explicitly. URI metadata is limited to 1 MiB, direct image data to 32 MiB, and remote staging to 64 files / 256 MiB total; destination uploads retain their existing 64 MiB per-file limit.
 
 During drops, the frontend pauses terminal reads and its file-data producer before the outbound queue fills. Presentation and protocol replies retain queue capacity while the connection drains; file chunks remain ordered and are never coalesced. This prevents a slow SSH connection from terminating the frontend with a full control queue. The isolated regression check transfers 4 MiB through a deliberately slow local socket and verifies the image bytes and control replies without opening windows or contacting SSH hosts.
 

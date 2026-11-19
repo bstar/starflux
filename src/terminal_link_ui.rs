@@ -9,7 +9,7 @@ impl Workspace {
     pub(super) fn can_open_browser(&self, url: &str) -> bool {
         self.browser.available()
             && crate::plugin_links::parse(url).is_ok()
-            && starkit::terminal_graphics::frontend_actions::web_url(url).is_some()
+            && starcore::terminal_graphics::frontend_actions::web_url(url).is_some()
     }
     pub(super) fn open_browser(&mut self, url: &str) -> Result<()> {
         crate::plugin_links::parse(url)?;

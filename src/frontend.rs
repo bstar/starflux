@@ -63,7 +63,7 @@ impl View {
         if path.exists() {
             fs::remove_file(&path)?;
         }
-        starkit::fs::write_private(
+        starcore::fs::write_private(
             &root.join(format!("{}.frontend.json", self.id)),
             &serde_json::to_vec(self)?,
         )?;
@@ -138,7 +138,7 @@ pub fn action(view: &View, action: &str) -> Result<()> {
     // Publish only complete commands, including when updating an older reader
     // which scans every file inside its actions directory.
     let staging = root()?.join("action-staging").join(&name);
-    starkit::fs::write_private(&staging, &bytes)?;
+    starcore::fs::write_private(&staging, &bytes)?;
     fs::rename(&staging, directory.join(name)).context("Publish workspace action")
 }
 pub fn snapshot(view: &View) -> Result<serde_json::Value> {

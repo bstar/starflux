@@ -55,7 +55,7 @@ pub enum DesktopCommand {
     MaximizeId(u64),
     CloseId(u64),
     Resize(Settings),
-    Background(starkit::native_surface::style::workspace::Wallpaper),
+    Background(starcore::native_surface::style::workspace::Wallpaper),
     RelayAudio(bool),
     InputBurst(bool),
     Focus(usize),

@@ -16,7 +16,7 @@ fn display_lines(text: &str, width: usize) -> Vec<String> {
             let cells = if c.is_ascii() {
                 1
             } else {
-                starkit::ratatui::text::Line::from(c.encode_utf8(&mut bytes) as &str).width()
+                starcore::ratatui::text::Line::from(c.encode_utf8(&mut bytes) as &str).width()
             };
             if columns + cells > width.max(1) && !line.is_empty() {
                 result.push(std::mem::take(&mut line));
@@ -792,7 +792,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .all(|s| starkit::ratatui::text::Line::from(s.as_str()).width() <= 15)
+                .all(|s| starcore::ratatui::text::Line::from(s.as_str()).width() <= 15)
         );
         assert_eq!(lines.concat(), text.replace('\x1b', "␛").replace('\0', "␀"));
     }

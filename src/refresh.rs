@@ -35,7 +35,7 @@ struct SwitchRequest {
 
 fn switch_path(view: &str, suffix: &str) -> Result<PathBuf> {
     let root = crate::runtime::root()?;
-    starkit::terminal_graphics::session::socket_path(&root, view)?;
+    starcore::terminal_graphics::session::socket_path(&root, view)?;
     Ok(root.join(format!("{view}.{suffix}.json")))
 }
 
@@ -60,7 +60,7 @@ pub fn request_switch(view: &str, destination: MachineSwitch) -> Result<()> {
         "Machine changed"
     );
     let presenter = local_presenter(view)?;
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &switch_path(view, "machine-switch")?,
         &serde_json::to_vec(&SwitchRequest {
             presenter: presenter.pid,
@@ -141,7 +141,7 @@ fn now() -> u128 {
 }
 fn marker(workspace: &str) -> Result<PathBuf> {
     let root = crate::runtime::root()?;
-    let _ = starkit::terminal_graphics::session::socket_path(&root, workspace)?;
+    let _ = starcore::terminal_graphics::session::socket_path(&root, workspace)?;
     Ok(root.join(format!("{workspace}.refresh")))
 }
 pub fn register_local(
@@ -161,8 +161,10 @@ pub fn register_local(
     if let Some(start) = crate::agent_state::process_start(pid)
         && let Ok(path) = switch_path(frontend, "local-presenter")
     {
-        let _ =
-            starkit::fs::write_private(&path, &serde_json::to_vec(&LocalPresenter { pid, start })?);
+        let _ = starcore::fs::write_private(
+            &path,
+            &serde_json::to_vec(&LocalPresenter { pid, start })?,
+        );
     }
     Ok(())
 }
@@ -262,11 +264,11 @@ pub fn request(workspace: &str, view: &View) -> Result<()> {
         installed.is_file(),
         "The updated STAR/FLUX executable is missing; rebuild before refreshing"
     );
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &crate::project_state::data_root()?.join(format!("{workspace}.refresh-view.json")),
         &serde_json::to_vec(view)?,
     )?;
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &marker(workspace)?,
         &serde_json::to_vec(&Request {
             controller: std::process::id(),

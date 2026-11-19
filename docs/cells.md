@@ -15,7 +15,7 @@ starflux --graphical --workspace my-project
 ```
 
 Without either flag, the displaying frontend prefers graphical presentation when
-STAR/KIT supports it and falls back to cells. A launch without an interactive
+STAR/CORE supports it and falls back to cells. A launch without an interactive
 terminal retains the desktop Kitty launcher. `--cells` requires an interactive
 terminal; `--graphical` reports an error when graphical presentation is unavailable.
 The flags conflict. Presentation selection survives Refresh UI and is independent

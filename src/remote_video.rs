@@ -1,9 +1,9 @@
 // Adapted from STAR/SCREEN, MIT, Copyright (c) 2026 bstar.
-//! GStreamer owns live capture encoding; KIT owns remote decoding/presentation.
+//! GStreamer owns live capture encoding; CORE owns remote decoding/presentation.
 use anyhow::{Context, Result, ensure};
 use crossbeam_channel::{Receiver, bounded};
 use gst::prelude::*;
-use starkit::terminal_graphics::{
+use starcore::terminal_graphics::{
     live_canvas::{Frame, PixelFormat, Update},
     media::{ToClient, ToHost},
     protocol::ServerMessage,

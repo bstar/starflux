@@ -1,5 +1,5 @@
 //! Bound chrome rasterization to the areas outside native terminal cells.
-use starkit::{
+use starcore::{
     native_surface::{PixelRect, Primitive, Surface},
     terminal_graphics::protocol::{Component, Rect, Viewport},
 };
@@ -43,7 +43,7 @@ fn crop(surface: &Surface, area: PixelRect) -> Option<Surface> {
     Some(tile)
 }
 
-/// Keep the shared KIT cache useful at large window sizes. Terminal holes are
+/// Keep the shared CORE cache useful at large window sizes. Terminal holes are
 /// already painted by the parent; retaining full-window chrome underneath them
 /// wastes raster time and pushes the useful chrome out of the bounded cache.
 pub fn chrome(
@@ -231,12 +231,12 @@ pub fn foreground(surface: Surface, viewport: Viewport) -> Component {
 #[derive(Default)]
 pub struct Cache {
     key: Vec<u8>,
-    scene: Option<starkit::terminal_graphics::protocol::Scene>,
+    scene: Option<starcore::terminal_graphics::protocol::Scene>,
     hits: std::cell::Cell<u64>,
     builds: u64,
 }
 impl Cache {
-    pub fn get(&self, key: &[u8]) -> Option<starkit::terminal_graphics::protocol::Scene> {
+    pub fn get(&self, key: &[u8]) -> Option<starcore::terminal_graphics::protocol::Scene> {
         if self.key != key {
             return None;
         }
@@ -244,7 +244,7 @@ impl Cache {
         self.hits.set(self.hits.get() + 1);
         Some(scene.clone())
     }
-    pub fn store(&mut self, key: Vec<u8>, scene: &starkit::terminal_graphics::protocol::Scene) {
+    pub fn store(&mut self, key: Vec<u8>, scene: &starcore::terminal_graphics::protocol::Scene) {
         self.key = key;
         self.scene = Some(scene.clone());
         self.builds += 1;
@@ -270,7 +270,7 @@ impl Cache {
 mod tests {
     use super::*;
     use crate::{appearance::Appearance, project_state::Space, shelf};
-    use starkit::terminal_graphics::{
+    use starcore::terminal_graphics::{
         protocol::Scene,
         renderer::{Backend, SceneRenderer},
     };
@@ -368,7 +368,7 @@ mod tests {
             "Idle chrome must not allocate an empty full-window overlay"
         );
         let mut scene = Scene::from_buffer(
-            &starkit::ratatui::buffer::Buffer::empty(starkit::ratatui::layout::Rect::new(
+            &starcore::ratatui::buffer::Buffer::empty(starcore::ratatui::layout::Rect::new(
                 0,
                 0,
                 viewport.columns,

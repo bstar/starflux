@@ -1,4 +1,4 @@
-"""STAR/FLUX display-side font controls; loaded alongside the STAR/KIT watcher.
+"""STAR/FLUX display-side font controls; loaded alongside the STAR/CORE watcher.
 
 Only installed monospace families and bounded numeric sizes are accepted.
 Sizes are OS-window-local. Kitty font family changes are process-wide, in memory.

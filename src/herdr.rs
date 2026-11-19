@@ -337,9 +337,9 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         if !root.join(format!("{workspace}.layout.json")).exists() {
             state.save(&config)?;
         } else {
-            starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
+            starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
         }
-        starkit::fs::write_private(
+        starcore::fs::write_private(
             &crate::runtime::config_path(&workspace)?,
             &serde_json::to_vec_pretty(&config)?,
         )?;
@@ -352,11 +352,11 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
     }
     let config = selected.context("Herdr has no workspaces to import")?;
     let report = json!({"source":"Herdr","session":session,"workspaces":count,"tabs":tabs.len(),"panes":pane_count,"agents":snap["agents"].as_array().map_or(0,Vec::len),"selected":config.workspace,"read_only":false,"live_terminal_attachments":true,"source_processes_restarted":false,"collection":collection,"projects":imported});
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &root.join(format!("{collection}.import.json")),
         &serde_json::to_vec_pretty(&report)?,
     )?;
-    starkit::fs::write_private(
+    starcore::fs::write_private(
         &root.join(format!("{collection}.snapshot.json")),
         &serde_json::to_vec_pretty(&snapshot)?,
     )?;
@@ -376,11 +376,11 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
         "Invalid Herdr pane identity"
     );
     let executable = std::env::var("STARFLUX_HERDR").unwrap_or("herdr".into());
-    starkit::crossterm::terminal::enable_raw_mode()?;
+    starcore::crossterm::terminal::enable_raw_mode()?;
     let _guard = Restore;
     let mut last = Vec::new();
     loop {
-        let rows = starkit::crossterm::terminal::size()
+        let rows = starcore::crossterm::terminal::size()
             .map(|(_, r)| r.saturating_sub(3).max(5))
             .unwrap_or(40)
             .to_string();
@@ -416,15 +416,15 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
             stdout.flush()?;
             last = bytes;
         }
-        if starkit::crossterm::event::poll(Duration::from_millis(650))? {
-            let _ = starkit::crossterm::event::read()?;
+        if starcore::crossterm::event::poll(Duration::from_millis(650))? {
+            let _ = starcore::crossterm::event::read()?;
         }
     }
 }
 struct Restore;
 impl Drop for Restore {
     fn drop(&mut self) {
-        let _ = starkit::crossterm::terminal::disable_raw_mode();
+        let _ = starcore::crossterm::terminal::disable_raw_mode();
         print!("\x1b[?7h\x1b[?25h\x1b[0m");
     }
 }

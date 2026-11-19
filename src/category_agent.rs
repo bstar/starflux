@@ -128,7 +128,7 @@ pub fn configure(
         );
     }
     let root = root_path(config, category)?;
-    starkit::terminal_graphics::session::private_root(&root)?;
+    starcore::terminal_graphics::session::private_root(&root)?;
     let _lock = crate::project_sync::Transaction::acquire(root.join("coordinator.lock"))?;
     let mut state = load_path(&root)?;
     ensure!(

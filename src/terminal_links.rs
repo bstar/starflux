@@ -1,5 +1,5 @@
 //! Visible URL text only; OSC 8 destinations require parser-level attributes.
-use starkit::terminal_graphics::protocol::Rect;
+use starcore::terminal_graphics::protocol::Rect;
 
 #[derive(Clone, Debug)]
 pub struct Link {

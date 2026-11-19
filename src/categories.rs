@@ -128,7 +128,7 @@ impl Catalog {
             .context("Portfolio revision exhausted")?;
         document["categories"] = serde_json::to_value(&state)?;
         document["recent"] = false.into();
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&document)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&document)?)?;
         crate::project_state::catalog_changed()?;
         Ok(state)
     }

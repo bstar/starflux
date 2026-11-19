@@ -52,7 +52,7 @@ impl Directory {
             path.is_absolute(),
             "Native source directory must be absolute"
         );
-        starkit::terminal_graphics::session::private_root(path)?;
+        starcore::terminal_graphics::session::private_root(path)?;
         Self::open_existing(path)
     }
     fn open_existing(path: &Path) -> Result<Self> {

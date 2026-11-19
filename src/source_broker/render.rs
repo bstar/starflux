@@ -54,7 +54,7 @@ pub(super) struct Packet {
     pub _memory: Lease,
 }
 pub(super) struct Picture {
-    pub frame: starkit::terminal_graphics::terminal_cells::Frame,
+    pub frame: starcore::terminal_graphics::terminal_cells::Frame,
     _memory: Lease,
 }
 pub(super) struct Rendered {
@@ -128,14 +128,14 @@ impl Write for Bounded {
 struct WireFrame<'a> {
     stream: &'a str,
     generation: u64,
-    rect: starkit::terminal_graphics::protocol::Rect,
+    rect: starcore::terminal_graphics::protocol::Rect,
     complete: bool,
-    rows: Vec<&'a starkit::terminal_graphics::terminal_cells::Row>,
+    rows: Vec<&'a starcore::terminal_graphics::terminal_cells::Row>,
     cursor: Option<[u16; 2]>,
 }
 impl<'a> WireFrame<'a> {
     fn new(
-        frame: &'a starkit::terminal_graphics::terminal_cells::Frame,
+        frame: &'a starcore::terminal_graphics::terminal_cells::Frame,
         base: Option<&Picture>,
     ) -> Self {
         let base = base.filter(|p| {
@@ -226,7 +226,7 @@ impl Job {
                 stream,
                 generation,
                 focused,
-                rect: starkit::terminal_graphics::protocol::Rect {
+                rect: starcore::terminal_graphics::protocol::Rect {
                     x: 0,
                     y: 0,
                     width: s.size.columns,
@@ -294,13 +294,13 @@ impl Job {
         let picture_bytes = std::mem::size_of::<Picture>()
             + frame.stream.capacity()
             + frame.rows.capacity()
-                * std::mem::size_of::<starkit::terminal_graphics::terminal_cells::Row>()
+                * std::mem::size_of::<starcore::terminal_graphics::terminal_cells::Row>()
             + frame
                 .rows
                 .iter()
                 .map(|r| {
                     r.runs.capacity()
-                        * std::mem::size_of::<starkit::terminal_graphics::terminal_cells::Run>()
+                        * std::mem::size_of::<starcore::terminal_graphics::terminal_cells::Run>()
                         + r.runs.iter().map(|run| run.text.capacity()).sum::<usize>()
                 })
                 .sum::<usize>();
@@ -379,7 +379,7 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use starkit::terminal_graphics::{
+    use starcore::terminal_graphics::{
         protocol::Rect,
         terminal_cells::{Frame, Row, Run},
     };

@@ -1,6 +1,6 @@
 //! Local presentation choice, shared with the presentation-only terminal client.
 use anyhow::Result;
-use starkit::{
+use starcore::{
     crossterm::event::{Event, KeyCode, KeyModifiers},
     terminal_graphics::{
         client::{self, Launch, PresentationOptions, PresentationPreference},
@@ -42,12 +42,12 @@ static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub fn event(event: &Event) -> Option<Input> {
     match event {
-        // KIT reserves Ctrl+L for repaint before dispatching custom input. Queue
+        // CORE reserves Ctrl+L for repaint before dispatching custom input. Queue
         // the key as a reliable notice as well, so a focused shell receives it.
         Event::Key(key)
             if key.code == KeyCode::Char('l')
                 && key.modifiers == KeyModifiers::CONTROL
-                && key.kind == starkit::crossterm::event::KeyEventKind::Press =>
+                && key.kind == starcore::crossterm::event::KeyEventKind::Press =>
         {
             let mut keys = KEYS.lock().unwrap();
             if keys.len() < 32 {
@@ -76,7 +76,7 @@ fn notice() -> Option<String> {
         return Some("local-return-available".into());
     }
 
-    // KIT handles pointer cancellation separately from application focus.
+    // CORE handles pointer cancellation separately from application focus.
     match FOCUS_NOTICE.swap(0, Ordering::Relaxed) {
         1 => return Some("window-focus:lost".into()),
         2 => return Some("window-focus:gained".into()),
@@ -95,7 +95,7 @@ fn notice() -> Option<String> {
     }
 }
 fn preference(mode: Mode) -> PresentationPreference {
-    // No switch is advertised by the controller, so KIT never writes this file.
+    // No switch is advertised by the controller, so CORE never writes this file.
     // Launch choices are window-local and explicitly retained by refresh argv.
     PresentationPreference {
         cells: mode == Mode::Cells,

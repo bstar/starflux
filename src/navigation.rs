@@ -132,7 +132,7 @@ impl Navigation {
             recent: self.recent,
             high_first: self.high_first,
         };
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(&order)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&order)?)?;
         crate::project_state::catalog_changed()
     }
     pub fn load(controller: &str) -> Result<Self> {
@@ -151,7 +151,7 @@ impl Navigation {
     }
     pub fn save(&mut self, controller: &str) -> Result<()> {
         let path = crate::project_state::data_root()?.join(format!("{controller}.navigation.json"));
-        starkit::fs::write_private(&path, &serde_json::to_vec_pretty(self)?)?;
+        starcore::fs::write_private(&path, &serde_json::to_vec_pretty(self)?)?;
         self.dirty = false;
         Ok(())
     }

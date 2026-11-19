@@ -20,18 +20,18 @@ pub fn select_terminal_client() -> Result<()> {
     out.flush()?;
     Ok(())
 }
-pub fn event(text: &str) -> Option<starkit::terminal_graphics::protocol::Input> {
+pub fn event(text: &str) -> Option<starcore::terminal_graphics::protocol::Input> {
     let encoded = text.strip_prefix("starflux-font-v1;")?;
     if encoded.len() > 128 * 1024 {
         return None;
     }
     let bytes = STANDARD.decode(encoded).ok()?;
     let value: Value = serde_json::from_slice(&bytes).ok()?;
-    Some(starkit::terminal_graphics::protocol::Input::Notice {
+    Some(starcore::terminal_graphics::protocol::Input::Notice {
         message: format!("{META}:{}", value),
     })
 }
-/// Created on the presenting computer before KIT starts its renderer threads.
+/// Created on the presenting computer before CORE starts its renderer threads.
 /// The relay runs in another process; it must never write escapes straight to
 /// /dev/tty, where they could split a renderer escape in the middle.
 pub struct LocalOutput {
@@ -44,7 +44,7 @@ impl LocalOutput {
             .tempdir()?;
         let path = root.path().join("control");
         let listener = UnixListener::bind(&path)?;
-        // This is frontend startup, before any KIT/input/audio threads exist.
+        // This is frontend startup, before any CORE/input/audio threads exist.
         unsafe {
             std::env::set_var("STARFLUX_FONT_OUTPUT", &path);
         }
@@ -67,7 +67,7 @@ impl LocalOutput {
                     "\x1b]1337;SetUserVar=starflux_font={}\x1b\\",
                     STANDARD.encode(request.to_string())
                 );
-                // Same stdout lock as KIT's presenter: commands and frames are atomic.
+                // Same stdout lock as CORE's presenter: commands and frames are atomic.
                 let mut output = std::io::stdout().lock();
                 let _ = output
                     .write_all(escape.as_bytes())
@@ -184,7 +184,7 @@ fn forward_inputs(
         if n == 0 || n > LIMIT || !line.ends_with(b"\n") {
             break;
         }
-        // A font report before the first presented scene is discarded by KIT's
+        // A font report before the first presented scene is discarded by CORE's
         // ordinary input readiness gate. Probe only after native rendering owns input.
         if line.starts_with(b"{\"type\":\"presented\"")
             && let Ok(message) = serde_json::from_slice::<Value>(&line)
@@ -218,7 +218,7 @@ impl Proxy {
         let root = tempfile::Builder::new()
             .prefix("starflux-font-")
             .tempdir()?;
-        // KIT authenticates using the filename; preserve the bridge nonce.
+        // CORE authenticates using the filename; preserve the bridge nonce.
         let path = root.path().join(
             target
                 .file_name()
