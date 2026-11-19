@@ -113,7 +113,18 @@ launch's `--model`, `--permission-mode`, `--agent` and `--fallback-model`
 choices. A launch that already passes `--settings` is left unchanged, and
 `STARFLUX_AGENT_HOOKS=0` disables the addition. The fixture's automatic run
 starts a sandboxed Claude without any settings and passed with Claude Code
-2.1.328. Remote panes and Codex keep the explicit hook: Codex requires persisted
+2.1.328.
+
+The same hook reports the session's lifecycle after registration:
+`UserPromptSubmit` reports working, `Notification` reports waiting for approval
+for permission prompts and needs input otherwise, `Stop` reports completed and
+`SessionEnd` reports stopped. Each advances the registered run's sequence; an
+event from another process or conversation, or one that repeats the current
+state, changes nothing. These reports drive agent status and the attention
+inbox. Claude launches get all five events automatically, and `--print-config`
+includes them for a reviewed Codex hook. `scripts/test-agent-session-hook.py`
+checks every state and the refusals; the automatic Claude fixture observed the
+real `UserPromptSubmit` report through STAR/FLUX. Remote panes and Codex keep the explicit hook: Codex requires persisted
 hook trust, and STAR/FLUX never bypasses it. The daemon-backed Codex path remains
 unverified.
 

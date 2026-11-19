@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register a provider SessionStart for a bound local STAR/FLUX pane."""
+"""Register a provider session for a bound local STAR/FLUX pane and report its lifecycle."""
 import argparse
 import json
 import os
@@ -50,29 +50,34 @@ def resume_template(argv):
     return argv
 
 
+# Provider hook events after SessionStart and the lifecycle state each reports.
+LIFECYCLE = ("UserPromptSubmit", "Notification", "Stop", "SessionEnd")
+
+
+def lifecycle_state(event):
+    name = event.get("hook_event_name")
+    if name == "UserPromptSubmit":
+        return "working"
+    if name == "Notification":
+        text = " ".join(str(event.get(key, "")) for key in ("notification_type", "message")).lower()
+        return "waiting_for_approval" if "permission" in text or "approv" in text else "needs_input"
+    if name == "Stop":
+        return "completed"
+    if name == "SessionEnd":
+        return "stopped"
+    return None
+
+
 def hook_config(args):
     command = shlex.join([
         args.starflux, "--agent-session-hook", "--provider", args.provider,
         "--", *resume_template(args.resume_argv),
     ])
     group = {"hooks": [{"type": "command", "command": command}]}
-    return {"hooks": {"SessionStart": [group]}}
+    return {"hooks": {name: [group] for name in ("SessionStart", *LIFECYCLE)}}
 
 
-def register(args, event):
-    if not isinstance(event, dict):
-        raise ValueError("Provider hook payload must be an object")
-    if event.get("hook_event_name") != "SessionStart":
-        return
-    source = event.get("source")
-    if source not in ("startup", "resume", "clear", "fork"):
-        return
-    session_id = event.get("session_id")
-    if not isinstance(session_id, str):
-        raise ValueError("Provider session ID must be a UUID string")
-    session = str(uuid.UUID(session_id))
-    template = resume_template(args.resume_argv)
-    argv = [session if arg == "{session_id}" else arg for arg in template]
+def bound_status(args):
     command = [args.starflux, "--workspace", args.workspace]
     status = json.loads(subprocess.check_output(
         [*command, "--agent-status", "--agent-status-pane", str(args.pane)], timeout=5,
@@ -84,6 +89,56 @@ def register(args, event):
     pid, ticks = health.get("agent_pid"), health.get("agent_start_ticks")
     if health.get("agent") != args.provider or not pid or not ticks or not belongs_to_hook_process(pid, ticks):
         raise ValueError(f"the hook is not a descendant of this pane's foreground {args.provider} process")
+    return command, health
+
+
+def report_lifecycle(args, event, state):
+    """Advance the registered run; events for another process or conversation are ignored."""
+    session = str(uuid.UUID(event.get("session_id", "")))
+    command, health = bound_status(args)
+    record = health.get("agent_record") or {}
+    if not (
+        record.get("conversation_id") == session
+        and record.get("epoch") == args.epoch
+        and record.get("agent_pid") == health["agent_pid"]
+        and record.get("agent_start_ticks") == health["agent_start_ticks"]
+        and record.get("boot_id") == health.get("boot_id")
+        and record.get("source") == f"{args.provider}:session-start"
+    ):
+        return
+    if record.get("state") == state:
+        return
+    report = {key: record[key] for key in (
+        "run_id", "epoch", "agent_pid", "agent_start_ticks", "boot_id", "harness",
+        "source", "conversation_id", "resume_argv",
+    ) if key in record}
+    report.update(sequence=int(record["sequence"]) + 1, state=state)
+    subprocess.run(
+        [*command, "--pane", str(args.pane), "--agent-report", json.dumps(report)],
+        stdout=subprocess.DEVNULL, check=True, timeout=5,
+    )
+
+
+def register(args, event):
+    if not isinstance(event, dict):
+        raise ValueError("Provider hook payload must be an object")
+    state = lifecycle_state(event)
+    if state is not None:
+        report_lifecycle(args, event, state)
+        return
+    if event.get("hook_event_name") != "SessionStart":
+        return
+    source = event.get("source")
+    if source not in ("startup", "resume", "clear", "fork"):
+        return
+    session_id = event.get("session_id")
+    if not isinstance(session_id, str):
+        raise ValueError("Provider session ID must be a UUID string")
+    session = str(uuid.UUID(session_id))
+    template = resume_template(args.resume_argv)
+    argv = [session if arg == "{session_id}" else arg for arg in template]
+    command, health = bound_status(args)
+    pid, ticks = health["agent_pid"], health["agent_start_ticks"]
     previous = health.get("agent_record") or {}
     same_process = (
         previous.get("epoch") == args.epoch

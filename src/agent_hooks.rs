@@ -1,13 +1,24 @@
 //! Automatic conversation registration for Claude Code agents STAR/FLUX launches.
 //!
 //! Claude accepts per-launch hooks through `--settings`, so a local agent launch
-//! gets a `SessionStart` hook without any change to the user's own settings.
+//! gets session and lifecycle hooks without any change to the user's own settings.
 //! The hook (`starflux --agent-session-hook`) records the exact session ID for
 //! the bound pane and verifies process ancestry, so a stray or delayed callback
 //! cannot register. Codex hooks need persisted trust, so Codex registration stays
 //! an explicit, reviewed opt-in (see `docs/agent-lifecycle.md`).
 //! `STARFLUX_AGENT_HOOKS=0` launches agents unchanged.
 use std::path::Path;
+
+/// Session start registers the conversation; the others report its lifecycle
+/// (working, needs input or approval, completed, stopped) to agent status and
+/// the attention inbox.
+const EVENTS: [&str; 5] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "SessionEnd",
+];
 
 /// Options whose value is a launch choice a resumed conversation should keep.
 const KEPT_OPTIONS: [&str; 4] = [
@@ -62,10 +73,12 @@ pub fn with_session_hook(argv: Vec<String>, starflux: &str) -> Vec<String> {
         .map(String::from)
         .chain(resume),
     );
-    let settings = serde_json::json!({
-        "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": hook}]}]}
-    })
-    .to_string();
+    let group = serde_json::json!([{"hooks": [{"type": "command", "command": hook}]}]);
+    let hooks: serde_json::Map<String, serde_json::Value> = EVENTS
+        .iter()
+        .map(|event| ((*event).to_string(), group.clone()))
+        .collect();
+    let settings = serde_json::json!({ "hooks": hooks }).to_string();
     let mut launched = argv;
     launched.splice(index + 1..index + 1, ["--settings".to_string(), settings]);
     launched
@@ -94,6 +107,9 @@ mod tests {
             &argv("--model opus --permission-mode=plan hello")[..]
         );
         let settings: serde_json::Value = serde_json::from_str(&launched[4]).unwrap();
+        for event in super::EVENTS {
+            assert_eq!(settings["hooks"][event], settings["hooks"]["SessionStart"]);
+        }
         let hook = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();

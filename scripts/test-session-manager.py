@@ -558,8 +558,16 @@ GLib.MainLoop().run()
                            and r['conversation_id']==conversation
                            for r in agent_status()['records'])
             wait(confirmed,'Claude did not register the exact thread in the new pane',timeout=25)
+            lifecycle=[]
+            if automatic:
+                # The automatic hooks also report the session's lifecycle.
+                def reported():
+                    lifecycle[:]=[r['state'] for r in agent_status()['records']
+                                  if r['pane']==1 and r['conversation_id']==conversation and r['sequence']>1]
+                    return bool(lifecycle)
+                wait(reported,'Claude lifecycle hooks did not report a state',timeout=25)
             assert alive(original_pid),'resume stopped the source process'
-            print(json.dumps(dict(result='PASS',claude_exact_resume=True,claude_automatic_hook=automatic,
+            print(json.dumps(dict(result='PASS',claude_exact_resume=True,claude_automatic_hook=automatic,claude_lifecycle=lifecycle,
                                   claude_direct_callback=True,original_process_preserved=True)))
             raise SystemExit(0)
         if args.native_launch_race:
