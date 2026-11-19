@@ -83,6 +83,7 @@ pub const SHARED: &[&str] = &[
     "reserved_slots",
     "terminals",
     "terminal_epochs",
+    "native_sources",
     "terminal_labels",
     "terminal_commands",
     "terminal_plugins",

@@ -29,6 +29,8 @@ pub struct ProjectState {
     #[serde(default)]
     pub terminal_epochs: std::collections::BTreeMap<usize, String>,
     #[serde(default)]
+    pub native_sources: std::collections::BTreeMap<usize, crate::native_backend::Pane>,
+    #[serde(default)]
     pub split: bool,
     #[serde(default)]
     pub split_panes: Option<[usize; 2]>,
@@ -108,6 +110,7 @@ impl Default for ProjectState {
             terminal: 0,
             terminals: vec![0],
             terminal_epochs: Default::default(),
+            native_sources: Default::default(),
             terminal_commands: Default::default(),
             terminal_plugins: Default::default(),
             terminal_launch_pending: vec![],
@@ -309,6 +312,20 @@ impl ProjectState {
         Ok(id)
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.native_sources.len() <= 32,
+            "Too many native source references"
+        );
+        for (pane, source) in &self.native_sources {
+            source.validate()?;
+            ensure!(
+                self.terminal_ids().contains(pane)
+                    && source.binding.pane == *pane
+                    && self.terminal_epochs.get(pane) == Some(&source.binding.terminal_epoch),
+                "Native source belongs to an obsolete pane epoch"
+            );
+        }
+
         ensure!(
             self.terminal_plugins.len() <= 32
                 && self.terminal_plugins.iter().all(|(pane, id)| self
@@ -575,6 +592,7 @@ impl ProjectState {
         let neighbor = self.visible().into_iter().find(|id| *id != pane);
         self.terminal_first = true;
         self.terminal_epochs.remove(&pane);
+        self.native_sources.remove(&pane);
         self.terminals.retain(|id| *id != pane);
         self.agents.retain(|id| *id != pane);
         self.terminal_labels.remove(&pane);

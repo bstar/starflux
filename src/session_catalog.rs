@@ -253,6 +253,7 @@ fn create_with_source(
         herdr: None,
         tmux,
         adopted: Default::default(),
+        native_terminals: false,
         theme: theme.into(),
         host: None,
         ssh_config: None,

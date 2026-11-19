@@ -529,6 +529,7 @@ pub fn create_project(
         herdr: None,
         tmux: None,
         adopted: Default::default(),
+        native_terminals: false,
         theme: theme.into(),
         host: Some(current.target),
         ssh_config: current.ssh_config,

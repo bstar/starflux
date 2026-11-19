@@ -60,9 +60,15 @@ struct Writer {
     tx: Sender<Vec<u8>>,
     bracketed: Arc<AtomicBool>,
     queued: Arc<AtomicUsize>,
+    #[cfg(target_os = "linux")]
+    native: Arc<std::sync::Mutex<Option<crate::native_view::InputSink>>>,
 }
 impl Writer {
     fn send(&self, bytes: Vec<u8>) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(native) = self.native.lock().unwrap().as_ref() {
+            return native.raw(bytes);
+        }
         ensure!(
             bytes.len() <= PASTE_LIMIT + 12,
             "Terminal input exceeds 1 MiB"
@@ -82,6 +88,10 @@ impl Writer {
         Ok(())
     }
     fn paste(&self, text: &str) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(native) = self.native.lock().unwrap().as_ref() {
+            return native.paste(text);
+        }
         ensure!(text.len() <= PASTE_LIMIT, "Paste exceeds 1 MiB");
         let text = text.replace('\x1b', "");
         self.send(if self.bracketed.load(Ordering::Acquire) {
@@ -180,6 +190,34 @@ impl vt100::Callbacks for Replies {
     }
 }
 
+fn listen(path: &Path, writer: &Writer, stopped: &Arc<AtomicBool>) -> Result<()> {
+    let _ = fs::remove_file(path);
+    let listener = UnixListener::bind(path)?;
+    listener.set_nonblocking(true)?;
+    let done = stopped.clone();
+    let input = writer.clone();
+    std::thread::spawn(move || {
+        while !done.load(Ordering::Acquire) {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                let accepted = (|| -> Result<()> {
+                    let mut size = [0; 4];
+                    stream.read_exact(&mut size)?;
+                    let size = u32::from_be_bytes(size) as usize;
+                    ensure!(size <= PASTE_LIMIT, "Paste too large");
+                    let mut bytes = vec![0; size];
+                    stream.read_exact(&mut bytes)?;
+                    input.paste(std::str::from_utf8(&bytes)?)
+                })();
+                let _ = stream.write_all(&[u8::from(accepted.is_ok())]);
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    });
+    Ok(())
+}
 struct AttachmentChild(Box<dyn Child + Send + Sync>);
 impl Drop for AttachmentChild {
     fn drop(&mut self) {
@@ -188,9 +226,22 @@ impl Drop for AttachmentChild {
     }
 }
 pub struct Terminal {
+    metadata: crate::graphics_owner::metadata::Metadata,
+    clipboard_seen: u64,
     parser: vt100::Parser<Replies>,
-    master: Box<dyn MasterPty + Send>,
-    child: AttachmentChild,
+    master: Option<Box<dyn MasterPty + Send>>,
+    child: Option<AttachmentChild>,
+    #[cfg(target_os = "linux")]
+    native: Option<crate::native_view::View>,
+    #[cfg(target_os = "linux")]
+    native_memory: Option<Arc<crate::graphics_resources::Lease>>,
+    #[cfg(target_os = "linux")]
+    native_planes: Option<Arc<crate::native_view::ImagePlanes>>,
+    plane_previous: Option<String>,
+    #[cfg(target_os = "linux")]
+    native_review_memory: Option<Arc<crate::graphics_resources::Lease>>,
+    #[cfg(target_os = "linux")]
+    native_retry: std::time::Instant,
     writer: Writer,
     output: Receiver<Vec<u8>>,
     path: PathBuf,
@@ -203,8 +254,10 @@ pub struct Terminal {
     selection: Option<((u16, u16), (u16, u16))>,
     review: Option<crate::terminal_history::History>,
     review_token: u64,
+    history_request: Option<u64>,
     mouse_button: Option<u8>,
     clipboard: Option<String>,
+    connection_notice: Option<String>,
     padding: [u16; 2],
     native_previous: Option<starcore::terminal_graphics::terminal_cells::Frame>,
     native_dirty: bool,
@@ -281,37 +334,26 @@ impl Terminal {
             tx: input_tx,
             bracketed: Arc::new(AtomicBool::new(false)),
             queued,
+            #[cfg(target_os = "linux")]
+            native: Arc::new(std::sync::Mutex::new(None)),
         };
         let stopped = Arc::new(AtomicBool::new(false));
-        let _ = fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)?;
-        listener.set_nonblocking(true)?;
-        let done = stopped.clone();
-        let input = writer.clone();
-        std::thread::spawn(move || {
-            while !done.load(Ordering::Acquire) {
-                if let Ok((mut stream, _)) = listener.accept() {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-                    let accepted = (|| -> Result<()> {
-                        let mut size = [0; 4];
-                        stream.read_exact(&mut size)?;
-                        let size = u32::from_be_bytes(size) as usize;
-                        ensure!(size <= PASTE_LIMIT, "Paste too large");
-                        let mut bytes = vec![0; size];
-                        stream.read_exact(&mut bytes)?;
-                        input.paste(std::str::from_utf8(&bytes)?)
-                    })();
-                    let _ = stream.write_all(&[u8::from(accepted.is_ok())]);
-                } else {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        });
+        listen(&path, &writer, &stopped)?;
         Ok(Self {
             parser: vt100::Parser::new_with_callbacks(24, 80, 1000, Replies::default()),
-            master: pair.master,
-            child,
+            master: Some(pair.master),
+            child: Some(child),
+            #[cfg(target_os = "linux")]
+            native: None,
+            #[cfg(target_os = "linux")]
+            native_memory: None,
+            #[cfg(target_os = "linux")]
+            native_planes: None,
+            plane_previous: None,
+            #[cfg(target_os = "linux")]
+            native_review_memory: None,
+            #[cfg(target_os = "linux")]
+            native_retry: std::time::Instant::now(),
             writer,
             output,
             path,
@@ -324,8 +366,12 @@ impl Terminal {
             selection: None,
             review: None,
             review_token: 0,
+            history_request: None,
             mouse_button: None,
             clipboard: None,
+            metadata: crate::graphics_owner::metadata::Metadata::default(),
+            clipboard_seen: 0,
+            connection_notice: None,
             padding: [PAD; 2],
             native_previous: None,
             native_dirty: true,
@@ -336,6 +382,76 @@ impl Terminal {
             snapshot_at: std::time::Instant::now() - Duration::from_secs(10),
             native_cell: None,
         })
+    }
+    #[cfg(target_os = "linux")]
+    pub fn spawn_native(
+        config: &crate::runtime::Config,
+        pane: usize,
+        path: PathBuf,
+    ) -> Result<Self> {
+        let target = crate::native_backend::reference(config, pane)?
+            .context("Native source reference unavailable")?;
+        let native = crate::native_view::View::spawn(config, pane, target)?;
+        let (input_tx, _) = bounded(1);
+        let (_, output) = bounded(1);
+        let writer = Writer {
+            tx: input_tx,
+            bracketed: Arc::new(AtomicBool::new(false)),
+            queued: Arc::new(AtomicUsize::new(0)),
+            native: Arc::new(std::sync::Mutex::new(Some(native.input()))),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        listen(&path, &writer, &stopped)?;
+        Ok(Self {
+            parser: vt100::Parser::new_with_callbacks(24, 80, 1000, Replies::default()),
+            master: None,
+            child: None,
+            #[cfg(target_os = "linux")]
+            native: Some(native),
+            native_memory: None,
+            #[cfg(target_os = "linux")]
+            native_planes: None,
+            plane_previous: None,
+            #[cfg(target_os = "linux")]
+            native_review_memory: None,
+            #[cfg(target_os = "linux")]
+            native_retry: std::time::Instant::now(),
+            writer,
+            output,
+            path,
+            stopped,
+            exited: false,
+            exited_successfully: false,
+            pid: None,
+            font_size: crate::project_state::default_terminal_font_size(),
+            metrics: None,
+            selection: None,
+            review: None,
+            review_token: 0,
+            history_request: None,
+            mouse_button: None,
+            clipboard: None,
+            metadata: crate::graphics_owner::metadata::Metadata::default(),
+            clipboard_seen: 0,
+            connection_notice: None,
+            padding: [PAD; 2],
+            native_previous: None,
+            native_dirty: true,
+            links: Vec::new(),
+            link_wraps: Vec::new(),
+            link_revision: 0,
+            snapshot_dirty: false,
+            snapshot_at: std::time::Instant::now() - Duration::from_secs(10),
+            native_cell: None,
+        })
+    }
+    pub fn visible(&mut self, visible: bool) {
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            native.visible(visible);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = visible;
     }
     pub fn set_metrics(&mut self, metrics: Option<FontMetrics>) {
         self.metrics = metrics.filter(FontMetrics::valid);
@@ -386,8 +502,53 @@ impl Terminal {
     pub fn set_palette(&mut self, theme: &crate::appearance::Appearance) {
         self.native_dirty = true;
         self.parser.callbacks_mut().palette = Some([theme.fg.clone(), theme.bg.clone()]);
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            native.set_palette(theme);
+        }
     }
     fn poll_output(&mut self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if self.native.as_ref().is_some_and(|view| view.disconnected())
+            && std::time::Instant::now() >= self.native_retry
+        {
+            self.native_retry = std::time::Instant::now() + Duration::from_secs(3);
+            let replacement = self.native.as_ref().unwrap().reconnect()?;
+            if self.native.as_ref().unwrap().input_uncertain() {
+                self.connection_notice = Some(
+                    "Terminal reconnected; queued input was not replayed. Check your draft.".into(),
+                );
+            }
+            *self.writer.native.lock().unwrap() = Some(replacement.input());
+            self.native = Some(replacement);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            if let Some(snapshot) = native.take() {
+                if let Some(text) = snapshot
+                    .metadata
+                    .clipboard_after(&mut self.clipboard_seen, snapshot.clipboard_floor)
+                {
+                    self.clipboard = Some(text.to_owned());
+                }
+                self.metadata = snapshot.metadata;
+                *self.parser.screen_mut() = snapshot.screen;
+                self.native_memory = Some(snapshot.memory);
+                if let Some(pixels) = snapshot.pixels {
+                    self.native_planes = Some(pixels);
+                }
+                self.exited = snapshot.exited;
+                self.native_dirty = true;
+                self.snapshot_dirty = true;
+            }
+            self.writer
+                .bracketed
+                .store(self.parser.screen().bracketed_paste(), Ordering::Release);
+            if let Some(error) = native.error() {
+                anyhow::bail!("{error}");
+            }
+            return Ok(());
+        }
         for bytes in self.output.try_iter().take(32) {
             self.parser.process(&bytes);
             self.native_dirty = true;
@@ -407,7 +568,9 @@ impl Terminal {
     }
     pub fn poll(&mut self) -> Result<()> {
         self.poll_output()?;
-        if let Some(status) = self.child.0.try_wait()? {
+        if let Some(child) = self.child.as_mut()
+            && let Some(status) = child.0.try_wait()?
+        {
             self.exited = true;
             self.exited_successfully = status.success();
         }
@@ -437,7 +600,9 @@ impl Terminal {
         );
         if unsafe { info.si_pid() } == pid as i32 {
             self.stop_transient_group(birth);
-            if let Some(status) = self.child.0.try_wait()? {
+            if let Some(child) = self.child.as_mut()
+                && let Some(status) = child.0.try_wait()?
+            {
                 self.exited = true;
                 self.exited_successfully = status.success();
             }
@@ -457,19 +622,87 @@ impl Terminal {
     pub fn resize(&mut self, width: u16, height: u16) -> Result<()> {
         let cols = (width.saturating_sub(PAD * 2) / self.cell_size()[0]).clamp(2, 512);
         let rows = (height.saturating_sub(PAD * 2) / self.cell_size()[1]).clamp(1, 192);
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            native.configure(rows, cols, self.cell_size(), None);
+        }
         if self.parser.screen().size() != (rows, cols) {
             self.review = None;
+            #[cfg(target_os = "linux")]
+            {
+                self.native_review_memory = None;
+            }
             self.native_dirty = true;
             self.selection = None;
             self.parser.screen_mut().set_size(rows, cols);
-            self.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: width,
-                pixel_height: height,
-            })?;
+            if let Some(master) = &self.master {
+                master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: width,
+                    pixel_height: height,
+                })?;
+            }
         }
         Ok(())
+    }
+    pub fn has_planes(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.native_planes.is_some() && self.review.is_none() && self.selection.is_none()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+    pub fn reset_planes(&mut self) {
+        self.plane_previous = None;
+    }
+    pub fn plane_command(
+        &mut self,
+        view: String,
+        generation: u64,
+        rect: starcore::terminal_graphics::protocol::Rect,
+        enabled: bool,
+    ) -> Option<serde_json::Value> {
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            native.pixels(enabled);
+        }
+        if !enabled || self.review.is_some() || self.selection.is_some() {
+            return self
+                .plane_previous
+                .take()
+                .map(|_| serde_json::json!({"op":"clear","view":view}));
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(planes) = &self.native_planes {
+            let cell = self.cell_size();
+            let wire = &planes.wire;
+            let cols = wire.width / u32::from(cell[0]);
+            let rows = wire.height / u32::from(cell[1]);
+            if cols == 0
+                || rows == 0
+                || cols > u32::from(rect.width)
+                || rows > u32::from(rect.height)
+            {
+                return self
+                    .plane_previous
+                    .take()
+                    .map(|_| serde_json::json!({"op":"clear","view":view}));
+            }
+            let key = format!("{}:{generation}:{rect:?}:{cell:?}", wire.id);
+            if self.plane_previous.as_ref() == Some(&key) {
+                return None;
+            }
+            self.plane_previous = Some(key);
+            return Some(
+                serde_json::json!({"op":"planes","view":view,"generation":generation,"rect":[u32::from(rect.x),u32::from(rect.y),cols,rows],"cell":cell,"planes":wire}),
+            );
+        }
+        let _ = (view, generation, rect);
+        None
     }
     pub fn reset_native(&mut self) {
         self.native_previous = None;
@@ -486,15 +719,25 @@ impl Terminal {
         self.font_size = 0; // The parent terminal owns the font and cell metrics.
         let rows = rect.height.clamp(1, 192);
         let cols = rect.width.clamp(2, 512);
+        #[cfg(target_os = "linux")]
+        if let Some(native) = &self.native {
+            native.configure(rows, cols, cell, None);
+        }
         if self.parser.screen().size() != (rows, cols) {
             self.review = None;
+            #[cfg(target_os = "linux")]
+            {
+                self.native_review_memory = None;
+            }
             self.parser.screen_mut().set_size(rows, cols);
-            self.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: cols * self.cell_size()[0],
-                pixel_height: rows * self.cell_size()[1],
-            })?;
+            if let Some(master) = &self.master {
+                master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: cols * self.cell_size()[0],
+                    pixel_height: rows * self.cell_size()[1],
+                })?;
+            }
             self.native_previous = None;
             self.native_dirty = true;
             self.selection = None;
@@ -644,6 +887,14 @@ impl Terminal {
             cursor,
         })
     }
+    pub fn title(&self) -> Option<&str> {
+        (!self.metadata.title.is_empty()).then_some(self.metadata.title.as_str())
+    }
+    pub fn metadata_diagnostics(&self) -> serde_json::Value {
+        serde_json::json!({"title":self.metadata.title,"icon_name":self.metadata.icon_name,
+            "audible":self.metadata.audible,"visual":self.metadata.visual,
+            "clipboard_sequence":self.metadata.clipboard_sequence,"rejected":self.metadata.rejected})
+    }
     pub fn text(&self) -> String {
         self.parser.screen().contents()
     }
@@ -730,8 +981,14 @@ impl Terminal {
             .map_or_else(|| self.parser.screen(), |h| &h.screen)
     }
     pub fn review(&mut self, search: bool) -> u64 {
+        #[cfg(target_os = "linux")]
+        let _old_history_memory = self.native_review_memory.clone();
         self.release();
         self.selection = None;
+        #[cfg(target_os = "linux")]
+        {
+            self.native_review_memory = self.native_memory.clone();
+        }
         self.review = Some(crate::terminal_history::History::new(
             self.parser.screen(),
             search,
@@ -755,6 +1012,20 @@ impl Terminal {
         match result {
             Ok((bytes, source)) => {
                 let (rows, cols) = history.screen.size();
+                #[cfg(target_os = "linux")]
+                let _old_history_memory = self.native_review_memory.clone();
+                #[cfg(target_os = "linux")]
+                if self.native.is_some() {
+                    match crate::native_view::history_memory(rows, cols, &bytes) {
+                        Ok(memory) => self.native_review_memory = Some(memory),
+                        Err(error) => {
+                            history.loading = false;
+                            history.source = format!("Attached screen only: {error:#}");
+                            self.native_dirty = true;
+                            return;
+                        }
+                    }
+                }
                 let mut parser = vt100::Parser::new(rows, cols, 4000);
                 let text = String::from_utf8_lossy(&bytes);
                 let text = text.strip_suffix('\n').unwrap_or(&text);
@@ -773,6 +1044,9 @@ impl Terminal {
         }
         self.native_dirty = true;
     }
+    pub fn take_history_request(&mut self) -> Option<u64> {
+        self.history_request.take()
+    }
     pub fn review_status(&self) -> Option<crate::terminal_history::Status<'_>> {
         self.review.as_ref().map(|h| h.status())
     }
@@ -787,11 +1061,19 @@ impl Terminal {
             crate::terminal_history::Outcome::Stay => {}
             crate::terminal_history::Outcome::Exit => {
                 self.review = None;
+                #[cfg(target_os = "linux")]
+                {
+                    self.native_review_memory = None;
+                }
                 self.mouse_button = None;
             }
             crate::terminal_history::Outcome::Copy(text) => {
                 self.clipboard = Some(text);
                 self.review = None;
+                #[cfg(target_os = "linux")]
+                {
+                    self.native_review_memory = None;
+                }
                 self.mouse_button = None;
             }
         }
@@ -823,12 +1105,19 @@ impl Terminal {
             ));
         }
     }
+    pub fn take_connection_notice(&mut self) -> Option<String> {
+        self.connection_notice.take()
+    }
     pub fn take_clipboard(&mut self) -> Option<String> {
         self.clipboard.take()
     }
     pub fn scroll_page(&mut self, direction: i8) {
         if direction == 0 {
             self.review = None;
+            #[cfg(target_os = "linux")]
+            {
+                self.native_review_memory = None;
+            }
         } else if self.review.is_some() {
             self.review_key(if direction < 0 { "pageup" } else { "pagedown" }, 0);
             return;
@@ -889,6 +1178,15 @@ impl Terminal {
     ) -> Result<()> {
         if action != "move" || self.selection.is_some() {
             self.native_dirty = true;
+        }
+        #[cfg(target_os = "linux")]
+        if self.native.is_some()
+            && self.review.is_none()
+            && action == "scroll_up"
+            && (self.parser.screen().mouse_protocol_mode() == vt100::MouseProtocolMode::None
+                || modifiers & 1 != 0)
+        {
+            self.history_request = Some(self.review(false));
         }
         let screen = self.parser.screen();
         let x = ((point[0] - f64::from(self.padding[0])).max(0.) / f64::from(self.cell_size()[0]))

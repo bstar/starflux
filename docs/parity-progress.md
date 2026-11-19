@@ -3326,19 +3326,3 @@ backend. An additional run with `--native-sources` stopped at the fixture's
 initial source-binding check because this candidate's workspace did not
 select the retained native broker. That run provides no evidence for native
 cold recovery. See `target/cold-receipt-integration-{graphical,ssh-cells,native}.log`.
-
-## Native broker integration checkpoint
-
-The verified native broker changes were merged into an isolated checkout at
-`target/native-promotion-iyk4jraj`. The merge inputs and three conflict
-resolutions are tracked in its `merge-audit.json` and source tree.
-`target/native-promotion-check.log` records one remaining compiler error.
-The native branch of the terminal startup worker in `src/ui.rs` reads
-`command` before the worker loads the pending command from durable state.
-
-Resume by reconciling that startup branch with the native broker's
-launch-intent transaction and the current pending-command lookup. Then
-build an isolated executable and run the private native cold-start suite
-locally in graphical mode and over loopback SSH in cells mode before
-promoting the merge. The installed executable and active sessions were
-left untouched.

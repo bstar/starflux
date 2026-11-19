@@ -106,6 +106,15 @@ impl Screen {
             mouse_protocol_encoding: self.mouse_protocol_encoding,
         }
     }
+    /// Read-only visible/retained primary snapshot; inactive buffers are omitted.
+    #[must_use]
+    pub fn retained_snapshot(&self, maximum: usize) -> Self {
+        let mut snapshot = self.visible_snapshot();
+        if !self.alternate_screen() {
+            snapshot.grid = self.grid.retained_snapshot(maximum);
+        }
+        snapshot
+    }
     pub(crate) fn new(size: crate::grid::Size, scrollback_len: usize) -> Self {
         let mut grid = crate::grid::Grid::new(size, scrollback_len);
         grid.allocate_rows();
@@ -742,6 +751,69 @@ impl Screen {
         self.hyperlink_budget
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+    /// Restore bounded hyperlink metadata on a projected drawing buffer without
+    /// repainting glyphs or injecting terminal escapes. Parameters precede URI.
+    /// Spans are [row, column, length, target index], sorted and non-overlapping.
+    /// Refuses history views and invalid/busy input without changing link maps.
+    pub fn replace_visible_hyperlinks(
+        &mut self,
+        targets: &[(&str, &str)],
+        spans: &[[u16; 4]],
+    ) -> bool {
+        if self.scrollback() != 0 || targets.len() > 1024 || spans.len() > 4096 {
+            return false;
+        }
+        let mut bytes = 0usize;
+        for (params, uri) in targets {
+            bytes = bytes.saturating_add(params.len()).saturating_add(uri.len());
+            if uri.is_empty()
+                || uri.len() > 8192
+                || params.len() > 1024
+                || params.contains(';')
+                || bytes > 256 * 1024
+                || params.chars().chain(uri.chars()).any(char::is_control)
+            {
+                return false;
+            }
+        }
+        let (rows, columns) = self.size();
+        let mut previous = None;
+        for &[row, column, count, target] in spans {
+            if row >= rows
+                || count == 0
+                || u32::from(column) + u32::from(count) > u32::from(columns)
+                || usize::from(target) >= targets.len()
+                || previous.is_some_and(|(r, end)| row < r || (row == r && column < end))
+            {
+                return false;
+            }
+            previous = Some((row, column + count));
+        }
+        let mut prepared = Vec::with_capacity(targets.len());
+        for (params, uri) in targets {
+            let mut body = Vec::with_capacity(params.len() + uri.len() + 1);
+            body.extend_from_slice(params.as_bytes());
+            body.push(b';');
+            body.extend_from_slice(uri.as_bytes());
+            let Some(link) = crate::hyperlink::Hyperlink::new(&body, &self.hyperlink_budget) else {
+                return false;
+            };
+            prepared.push(link);
+        }
+        for row in self.grid_mut().drawing_rows_mut() {
+            row.clear_hyperlinks();
+        }
+        for &[row, column, count, target] in spans {
+            let row = self.grid_mut().drawing_row_mut(row).unwrap();
+            for col in column..column + count {
+                row.set_hyperlink(col, Some(prepared[usize::from(target)].clone()));
+            }
+        }
+        self.hyperlinks_seen |= !spans.is_empty();
+        self.hyperlink_revision = self.hyperlink_revision.wrapping_add(1);
+        true
+    }
+
     pub(crate) fn osc8(&mut self, body: &[u8]) {
         self.hyperlink = None;
         self.hyperlink = crate::hyperlink::Hyperlink::new(body, &self.hyperlink_budget);

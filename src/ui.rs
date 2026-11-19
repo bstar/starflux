@@ -333,6 +333,7 @@ pub struct Workspace {
     native_terminal_cells: bool,
     pub(crate) native_skins: bool,
     native_layout_key: String,
+    native_plane_views: BTreeSet<String>,
     fonts: font_ui::Fonts,
     native_font_points: Option<u32>,
     initial_native_font_points: Option<u32>,
@@ -589,6 +590,7 @@ impl Workspace {
             native_terminal_cells: false,
             native_skins: false,
             native_layout_key: String::new(),
+            native_plane_views: BTreeSet::new(),
             fonts: Default::default(),
             native_font_points: None,
             initial_native_font_points: None,
@@ -799,6 +801,36 @@ impl Workspace {
             });
         }
         self.pane_drag = None;
+    }
+    fn native_owner_recovery_supported(&self, pane: usize) -> bool {
+        self.state.native_sources.contains_key(&pane)
+            && self
+                .health
+                .get(&(
+                    self.config.workspace.clone(),
+                    self.config.canonical_pane(pane),
+                ))
+                .is_some_and(|health| health["native_owner_recovery_available"] == true)
+    }
+    fn native_pending_recovery_supported(&self, pane: usize) -> bool {
+        self.state
+            .native_sources
+            .get(&pane)
+            .is_some_and(|target| target.binding.source.is_none())
+            && self
+                .health
+                .get(&(
+                    self.config.workspace.clone(),
+                    self.config.canonical_pane(pane),
+                ))
+                .is_some_and(|health| health["native_pending_recovery_available"] == true)
+    }
+    fn native_retirement_supported(&self, pane: usize) -> bool {
+        !self.state.native_sources.contains_key(&pane)
+            || self
+                .health
+                .get(&(self.config.workspace.clone(), pane))
+                .is_some_and(|health| health["native_retirement_available"] == true)
     }
     fn refresh_activity(&mut self) {
         if !self.activity_pending && self.activity_at.elapsed() >= Duration::from_secs(2) {
@@ -1148,6 +1180,22 @@ impl Workspace {
                     {
                         return Ok(false);
                     }
+                    let native = (config.native_terminals
+                        || state.native_sources.contains_key(&pane))
+                        && !config.externally_owned(pane)
+                        && config.adopted_terminal(pane).is_none()
+                        && crate::plugin_panes::owner(&config, pane)?.is_none();
+                    if native {
+                        // Native intent publication and one-shot command
+                        // consumption must be one shared transaction. Otherwise
+                        // another view can substitute a shell during discovery.
+                        // native_backend::ensure_source selects the pending
+                        // command and consumes its launch inside its own
+                        // project transaction, so none is passed here.
+                        drop(_transaction);
+                        config.ensure(pane, None)?;
+                        return Ok(true);
+                    }
                     let pending = state.terminal_launch_pending.contains(&pane);
                     // Read the command from the same durable model as its
                     // launch permission. A view may have queued this worker
@@ -1177,6 +1225,9 @@ impl Workspace {
                         state.terminal_launch_pending.retain(|id| *id != pane);
                         state.save(&config)?;
                     }
+                    if config.native_terminals || state.native_sources.contains_key(&pane) {
+                        drop(_transaction);
+                    }
                     config.ensure(pane, launch.then_some(command.as_deref()).flatten())?;
                     Ok(true)
                 })();
@@ -1186,13 +1237,24 @@ impl Workspace {
                     }
                     Ok(false) => return,
                     Err(e) => {
-                        let _ = tx.send(Event::EnsureFailed(
-                            config.workspace.clone(),
-                            pane,
-                            format!("{e:#}"),
-                            stopped,
-                        ));
-                        return;
+                        if matches!(crate::native_backend::reference(&config, pane), Ok(Some(_))) {
+                            // A saved native intent can be safely inspected even
+                            // when startup cannot reattach it. Keep diagnostics
+                            // and explicit recovery available without relaunching.
+                            let _ = tx.send(Event::Status(format!(
+                                "{} / terminal {}: {e:#}",
+                                config.workspace,
+                                pane + 1
+                            )));
+                        } else {
+                            let _ = tx.send(Event::EnsureFailed(
+                                config.workspace.clone(),
+                                pane,
+                                format!("{e:#}"),
+                                stopped,
+                            ));
+                            return;
+                        }
                     }
                 }
                 let mut captured_at = Instant::now() - Duration::from_secs(10);
@@ -1479,8 +1541,13 @@ impl Workspace {
             if self.terminals.contains_key(&key) {
                 return;
             }
-            let result = crate::terminal::socket(&config.workspace, pane)
-                .and_then(|socket| crate::terminal::Terminal::spawn(&attach, socket));
+            let result = crate::terminal::socket(&config.workspace, pane).and_then(|socket| {
+                #[cfg(target_os = "linux")]
+                if crate::native_backend::reference(&config, pane)?.is_some() {
+                    return crate::terminal::Terminal::spawn_native(&config, pane, socket);
+                }
+                crate::terminal::Terminal::spawn(&attach, socket)
+            });
             match result {
                 Ok(mut terminal) => {
                     terminal.set_palette(&self.appearance);
@@ -2641,8 +2708,14 @@ impl Workspace {
                 "Stops owned terminals/apps; preserves tmux/Herdr sources. Type DELETE",
                 String::new(),
             )],
-            Prompt::RecoverTerminal(_, _, _) => vec![field(
-                "Stops this pane's program. Type RECOVER to return to a shell",
+            Prompt::RecoverTerminal(_, pane, _) => vec![field(
+                if self.native_owner_recovery_supported(*pane) {
+                    "Owner ended; tree retirement verified. Type RECOVER to open a fresh shell"
+                } else if self.native_pending_recovery_supported(*pane) {
+                    "Cancels the unstarted launch. Type RECOVER to open a fresh shell"
+                } else {
+                    "Stops this pane's program. Type RECOVER to return to a shell"
+                },
                 String::new(),
             )],
             Prompt::TerminateTerminal(_, pane, _, _) => vec![field(
@@ -3207,6 +3280,7 @@ impl Workspace {
                         herdr: None,
                         tmux: None,
                         adopted: Default::default(),
+                        native_terminals: false,
                         theme: self.config.theme.clone(),
                         host: if values[1] == "local" || values[1].is_empty() {
                             None
@@ -3497,6 +3571,12 @@ impl Workspace {
                     .and_then(|h| h.panes.get(&id))
                     .map(|p| p.label.clone())
             })
+            .or_else(|| {
+                self.terminals
+                    .get(&(self.config.workspace.clone(), id))
+                    .and_then(crate::terminal::Terminal::title)
+                    .map(str::to_owned)
+            })
             .unwrap_or_else(|| {
                 let n = self
                     .state
@@ -3648,11 +3728,22 @@ impl Workspace {
                     ),
                     item(
                         "Recover to shell…",
-                        "Stop program",
+                        if self.native_pending_recovery_supported(id)
+                            || self.native_owner_recovery_supported(id)
+                        {
+                            "Start fresh shell"
+                        } else {
+                            "Stop program"
+                        },
                         format!("recover-terminal:{id}"),
                     ),
                 ]
                 .into_iter()
+                .filter(|item| {
+                    !item.action.starts_with("recover-terminal:")
+                        || self.native_retirement_supported(id)
+                        || self.native_pending_recovery_supported(id)
+                })
                 .filter(|i| {
                     self.desktop.is_none()
                         || !(i.action.ends_with(":search-history")
@@ -3688,13 +3779,16 @@ impl Workspace {
                         && self.state.plugin_overlay.is_none())
                     .then(|| item("Move pane to edge…", "", format!("pane-edge:{id}:menu"))),
                 )
-                .chain((!self.config.externally_owned(id)).then(|| {
-                    item(
-                        "Terminate terminal…",
-                        "Stop terminal",
-                        format!("terminate-terminal:{id}"),
-                    )
-                }))
+                .chain(
+                    (!self.config.externally_owned(id) && self.native_retirement_supported(id))
+                        .then(|| {
+                            item(
+                                "Terminate terminal…",
+                                "Stop terminal",
+                                format!("terminate-terminal:{id}"),
+                            )
+                        }),
+                )
                 .chain(
                     (self
                         .state
@@ -5328,6 +5422,15 @@ impl Controller for Workspace {
         self.refresh_kitty_fonts();
     }
     fn tick(&mut self) {
+        let visible = self
+            .visible_panes()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        for ((project, pane), terminal) in &mut self.terminals {
+            terminal.visible(project == &self.config.workspace && visible.contains(pane));
+        }
+
         self.popup_tick();
         self.coordinator_tick();
         if self.sessions_retry_at.elapsed() >= Duration::from_secs(3) {
@@ -5915,11 +6018,49 @@ impl Controller for Workspace {
             }
         }
         for (key, terminal) in &mut self.terminals {
+            if let Some(config) = self
+                .projects
+                .iter()
+                .find(|config| config.workspace == key.0)
+                .cloned()
+                && let Some(token) = terminal.take_history_request()
+            {
+                let pane = key.1;
+                let epoch = self.session_epochs.get(key).cloned().flatten();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let result = (|| -> Result<_> {
+                        ensure!(
+                            ProjectState::load(&config)?.terminal_epochs.get(&pane)
+                                == epoch.as_ref(),
+                            "Terminal changed before history capture"
+                        );
+                        let history = config.terminal_history(pane)?;
+                        ensure!(
+                            ProjectState::load(&config)?.terminal_epochs.get(&pane)
+                                == epoch.as_ref(),
+                            "Terminal changed during history capture"
+                        );
+                        Ok(history)
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = tx.send(Event::TerminalHistory(
+                        config.workspace,
+                        pane,
+                        epoch,
+                        token,
+                        result,
+                    ));
+                });
+            }
             if let Some(text) = terminal.take_clipboard() {
                 self.effects.push(ServerMessage::Clipboard { text });
             }
             if let Err(error) = terminal.poll() {
                 self.status = format!("Terminal: {error:#}");
+            }
+            if let Some(notice) = terminal.take_connection_notice() {
+                self.status = notice;
             }
             if terminal.snapshot_due()
                 && (if key.0 == self.config.workspace {
@@ -5962,6 +6103,11 @@ impl Controller for Workspace {
                 self.note(format!("Close exited terminal: {error:#}"));
             }
         }
+        let mut plane_commands = Vec::new();
+        let mut plane_views = BTreeSet::new();
+        let planes_pending = self.effects.iter().any(|effect| {
+            matches!(effect, ServerMessage::Osc72 { meta, .. } if meta == crate::graphics_frontend::META)
+        });
         if self.popup.is_none()
             && self.desktop.is_none()
             && self.native_terminal_cells
@@ -6018,21 +6164,34 @@ impl Controller for Workspace {
                         ],
                     ) {
                         Ok(()) => {
-                            if frame_pending {
-                                continue;
+                            let id = app_id(&self.config.workspace, pane);
+                            if !self.cells && self.fonts.image_planes && terminal.has_planes() {
+                                plane_views.insert(id.clone());
                             }
-                            if let Some(frame) = terminal.native_frame(
-                                stream,
-                                self.viewport.generation,
-                                rect,
-                                &self.appearance,
-                                pane == self.config.canonical_pane(self.state.selected())
-                                    && self.modal.is_none()
-                                    && self.context_menu.is_none()
-                                    && !self.git_open
-                                    && (!self.cells || self.cell_ui.terminal_focus)
-                                    && self.panel_focus.is_none(),
-                            ) {
+                            if !planes_pending
+                                && let Some(command) = terminal.plane_command(
+                                    id,
+                                    self.viewport.generation,
+                                    rect,
+                                    !self.cells && self.fonts.image_planes,
+                                )
+                            {
+                                plane_commands.push(command);
+                            }
+                            if !frame_pending
+                                && let Some(frame) = terminal.native_frame(
+                                    stream,
+                                    self.viewport.generation,
+                                    rect,
+                                    &self.appearance,
+                                    pane == self.config.canonical_pane(self.state.selected())
+                                        && self.modal.is_none()
+                                        && self.context_menu.is_none()
+                                        && !self.git_open
+                                        && (!self.cells || self.cell_ui.terminal_focus)
+                                        && self.panel_focus.is_none(),
+                                )
+                            {
                                 self.effects.push(ServerMessage::TerminalCells { frame });
                             }
                         }
@@ -6040,6 +6199,18 @@ impl Controller for Workspace {
                     }
                 }
             }
+        }
+        for view in self.native_plane_views.difference(&plane_views) {
+            plane_commands.push(json!({"op":"clear","view":view}));
+        }
+        if plane_views != self.native_plane_views {
+            for terminal in self.terminals.values_mut() {
+                terminal.reset_planes();
+            }
+        }
+        self.native_plane_views = plane_views;
+        for command in plane_commands {
+            self.osc(crate::graphics_frontend::META, Some(command.to_string()));
         }
         let desktop_events = self
             .desktop
@@ -6213,7 +6384,7 @@ impl Controller for Workspace {
                     .collect::<Vec<_>>();
                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected,"focus_known":h.focus_known})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
-                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text(),"terminal_metadata":t.metadata_diagnostics()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
                 snapshot["appearance"] = json!(self.appearance);
                 snapshot["terminal_font"] = json!({"family":self.fonts.family,"millipoints":self.native_font_points,"controls_available":self.fonts.available});
                 snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
@@ -6225,6 +6396,7 @@ impl Controller for Workspace {
                         .filter(|effect| matches!(effect, ServerMessage::TerminalCells { .. }))
                         .count()
                 );
+                snapshot["terminal_presentation"]["queued_image_planes"] = json!(self.effects.iter().filter(|effect| matches!(effect, ServerMessage::Osc72 { meta, .. } if meta == crate::graphics_frontend::META)).count());
                 snapshot["app_video_render"] = self.video.statistics();
                 snapshot["audio"]["playback_protocol"] = json!(if self.audio_pcm_v2 {
                     "pcm-v2"

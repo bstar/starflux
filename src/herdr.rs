@@ -307,6 +307,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
             herdr: Some(source),
             tmux: None,
             adopted: Default::default(),
+            native_terminals: false,
             theme: crate::appearance::default_theme(),
             host: None,
             ssh_config: None,

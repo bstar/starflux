@@ -25,8 +25,11 @@ mod frontend_commands;
 mod git;
 mod graphical;
 mod graphics_decode;
+mod graphics_delivery;
+mod graphics_frontend;
 mod graphics_owner;
 mod graphics_paint;
+mod graphics_planes;
 mod graphics_reply;
 mod graphics_requests;
 mod graphics_resources;
@@ -40,6 +43,11 @@ mod inline_graphics_tests;
 mod keyboard;
 mod kitty_selection;
 mod machines;
+mod native_backend;
+mod native_links;
+mod native_protocol;
+#[cfg(target_os = "linux")]
+mod native_view;
 mod navigation;
 mod notifications;
 #[cfg(test)]
@@ -155,6 +163,9 @@ struct Args {
     /// Project working directory on its host
     #[arg(long)]
     directory: Option<String>,
+    /// Use the retained native owner for new terminal sources (integration preview)
+    #[arg(long)]
+    native_terminals: bool,
     /// Optional command to start in an initial terminal (compatibility shortcut)
     #[arg(long)]
     agent: Option<String>,
@@ -381,6 +392,13 @@ fn run() -> Result<()> {
         );
     }
     #[cfg(target_os = "linux")]
+    if raw
+        .get(1)
+        .is_some_and(|s| s == "--native-source-supervisor")
+    {
+        std::process::exit(source_broker::supervision::run(&raw[2..])?);
+    }
+    #[cfg(target_os = "linux")]
     if raw.get(1).is_some_and(|s| s == "--native-source-service") {
         anyhow::ensure!(raw.len() == 3, "Expected native source data namespace");
         return source_broker::service::run(std::path::Path::new(&raw[2]));
@@ -417,6 +435,12 @@ fn run() -> Result<()> {
         )?;
         println!("{}", serde_json::to_string(&handle.owner)?);
         return Ok(());
+    }
+    if raw.get(1).is_some_and(|s| s == "--native-pane-rpc") {
+        return native_backend::run_rpc();
+    }
+    if raw.get(1).is_some_and(|s| s == "--native-pane-query") {
+        return native_backend::run_query(raw.get(2).context("Missing native query")?);
     }
     if raw.get(1).is_some_and(|s| s == "--read-query-worker") {
         return read_query::run();
@@ -788,6 +812,7 @@ fn run() -> Result<()> {
         herdr: None,
         tmux: None,
         adopted: Default::default(),
+        native_terminals: a.native_terminals,
         theme: a.theme.clone().unwrap_or_else(appearance::default_theme),
         host: a.host,
         ssh_config: a.ssh_config,
@@ -1006,6 +1031,9 @@ fn run() -> Result<()> {
         }
         starcore::fs::write_private(&path, &serde_json::to_vec_pretty(&config)?)?;
     }
+    if a.native_terminals {
+        config.native_terminals = true;
+    }
     if let Some(helper) = &a.desktop_helper {
         config.desktop_helper = helper.clone();
     }
@@ -1114,6 +1142,7 @@ mod workspace_tests {
             herdr: None,
             tmux: None,
             adopted: Default::default(),
+            native_terminals: false,
             theme: appearance::default_theme(),
             host: None,
             ssh_config: None,

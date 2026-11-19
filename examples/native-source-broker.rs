@@ -6,6 +6,8 @@ mod graphics_decode;
 mod graphics_owner;
 #[path = "../src/graphics_paint.rs"]
 mod graphics_paint;
+#[path = "../src/graphics_planes.rs"]
+mod graphics_planes;
 #[path = "../src/graphics_reply.rs"]
 mod graphics_reply;
 #[path = "../src/graphics_requests.rs"]
@@ -18,6 +20,10 @@ mod graphics_store;
 mod graphics_stream;
 #[path = "../src/graphics_transfer.rs"]
 mod graphics_transfer;
+#[path = "../src/native_links.rs"]
+mod native_links;
+#[path = "../src/native_protocol.rs"]
+mod native_protocol;
 #[path = "../src/source_broker.rs"]
 #[cfg(target_os = "linux")]
 mod source_broker;
@@ -37,6 +43,9 @@ use std::{
 fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     match args.get(1).map(String::as_str) {
+        Some("--native-source-supervisor") => {
+            std::process::exit(source_broker::supervision::run(&args[2..])?);
+        }
         Some("--native-source-service") if args.len() == 3 => {
             source_broker::service::run(Path::new(&args[2]))
         }

@@ -1,6 +1,6 @@
 //! Display-side font extension. Scenes/media remain byte-for-byte passthrough.
 //! Font commands go only to the fixed Kitty watcher, never a host command.
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
@@ -26,7 +26,11 @@ pub fn event(text: &str) -> Option<starcore::terminal_graphics::protocol::Input>
         return None;
     }
     let bytes = STANDARD.decode(encoded).ok()?;
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let mut value: Value = serde_json::from_slice(&bytes).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    value["image_planes_v1"] = json!(true);
     Some(starcore::terminal_graphics::protocol::Input::Notice {
         message: format!("{META}:{}", value),
     })
@@ -36,6 +40,8 @@ pub fn event(text: &str) -> Option<starcore::terminal_graphics::protocol::Input>
 /// /dev/tty, where they could split a renderer escape in the middle.
 pub struct LocalOutput {
     _root: tempfile::TempDir,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 impl LocalOutput {
     pub fn start() -> Result<Self> {
@@ -48,21 +54,37 @@ impl LocalOutput {
         unsafe {
             std::env::set_var("STARFLUX_FONT_OUTPUT", &path);
         }
-        std::thread::spawn(move || {
-            for peer in listener.incoming().flatten() {
+        listener.set_nonblocking(true)?;
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut presenter = crate::graphics_frontend::Presenter::default();
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                let Ok((mut peer, _)) = listener.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                };
                 let _ = peer.set_read_timeout(Some(std::time::Duration::from_secs(1)));
                 let mut bytes = Vec::new();
-                if BufReader::new(peer)
-                    .take(8193)
+                if BufReader::new(&mut peer)
+                    .take((8 * 1024 * 1024 + 1) as u64)
                     .read_until(b'\n', &mut bytes)
                     .is_err()
-                    || bytes.len() > 8192
+                    || bytes.len() > 8 * 1024 * 1024
                 {
                     continue;
                 }
                 let Ok(request) = serde_json::from_slice::<Value>(&bytes) else {
                     continue;
                 };
+                if request["op"] == "planes" || request["op"] == "clear" {
+                    let result = presenter.apply(&request, &mut std::io::stdout().lock());
+                    let _ = peer.write_all(&[u8::from(result.is_ok())]);
+                    continue;
+                }
+                if bytes.len() > 8192 {
+                    continue;
+                }
                 let escape = format!(
                     "\x1b]1337;SetUserVar=starflux_font={}\x1b\\",
                     STANDARD.encode(request.to_string())
@@ -73,8 +95,21 @@ impl LocalOutput {
                     .write_all(escape.as_bytes())
                     .and_then(|_| output.flush());
             }
+            let _ = presenter.clear(&mut std::io::stdout().lock());
         });
-        Ok(Self { _root: root })
+        Ok(Self {
+            _root: root,
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+impl Drop for LocalOutput {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 struct Control {
@@ -133,6 +168,29 @@ impl Control {
         Ok(None)
     }
 }
+// Image delivery may wait for the presenting process. Keep that wait outside
+// the font/probe mutex so presented acknowledgements and keyboard input can
+// continue upstream while an image is being applied.
+fn image_filter(line: &[u8], delivery: &crate::graphics_delivery::Delivery) -> Result<Option<u64>> {
+    if !line.starts_with(b"{\"type\":\"osc72\"") {
+        return Ok(None);
+    }
+    let message: Value = serde_json::from_slice(line)?;
+    if message["meta"] != crate::graphics_frontend::META {
+        return Ok(None);
+    }
+
+    let payload = message["payload"]
+        .as_str()
+        .context("Missing native image payload")?;
+    ensure!(
+        payload.len() <= 4 * 1024 * 1024,
+        "Native image command exceeds limit"
+    );
+    let request: Value = serde_json::from_str(payload)?;
+    delivery.submit(request)?;
+    Ok(Some(message["id"].as_u64().unwrap_or(0)))
+}
 fn pump(
     input: impl Read,
     mut output: impl Write,
@@ -141,6 +199,7 @@ fn pump(
 ) -> Result<()> {
     let mut reader = BufReader::new(input);
     let mut line = Vec::new();
+    let delivery = crate::graphics_delivery::Delivery::new(upstream)?;
     loop {
         line.clear();
         let count = reader
@@ -148,13 +207,20 @@ fn pump(
             .take((LIMIT + 1) as u64)
             .read_until(b'\n', &mut line)?;
         if count == 0 {
+            if let Some(error) = delivery.error() {
+                anyhow::bail!("Native image delivery: {error}");
+            }
             break;
         }
         ensure!(
             line.len() <= LIMIT && line.ends_with(b"\n"),
             "Invalid frontend frame"
         );
-        if let Some(id) = control.lock().unwrap().filter(&line)? {
+        let filtered = match image_filter(&line, &delivery)? {
+            Some(id) => Some(id),
+            None => control.lock().unwrap().filter(&line)?,
+        };
+        if let Some(id) = filtered {
             let mut target = upstream.lock().unwrap();
             serde_json::to_writer(&mut *target, &json!({"type":"effect_ack", "id":id}))?;
             target.write_all(b"\n")?;

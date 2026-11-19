@@ -5,6 +5,7 @@ pub(super) struct Fonts {
     pub family: Option<String>,
     pub families: Vec<String>,
     pub available: bool,
+    pub image_planes: bool,
     pub pending_menu: bool,
 }
 impl Workspace {
@@ -37,6 +38,7 @@ impl Workspace {
         };
         self.fonts.family = Some(family.into());
         self.fonts.available = true;
+        self.fonts.image_planes = value["image_planes_v1"] == true;
         if value["append"] != true {
             self.fonts.families.clear();
         }

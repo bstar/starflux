@@ -29,6 +29,19 @@ impl Grid {
         snapshot.saved_origin_mode = self.saved_origin_mode;
         snapshot
     }
+    pub fn retained_snapshot(&self, maximum: usize) -> Self {
+        let mut snapshot = self.visible_snapshot();
+        let count = self.scrollback.len().min(maximum);
+        snapshot.scrollback = self
+            .scrollback
+            .iter()
+            .skip(self.scrollback.len() - count)
+            .cloned()
+            .collect();
+        snapshot.scrollback_len = count;
+        snapshot.scrollback_offset = 0;
+        snapshot
+    }
     pub fn new(size: Size, scrollback_len: usize) -> Self {
         Self {
             size,

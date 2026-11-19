@@ -172,3 +172,23 @@ fn visible_snapshot_keeps_styles_links_and_cursor_without_history_or_mutation() 
     parser.process(b"\x1b[?1049l");
     assert_eq!(parser.screen().contents_formatted(), original);
 }
+
+#[test]
+fn retained_snapshot_keeps_only_bounded_active_history_without_changing_owner() {
+    let mut parser = vt100::Parser::new(3, 12, 20);
+    for i in 0..15 {
+        parser.process(format!("ROW{i}\r\n").as_bytes());
+    }
+    let original = parser.screen().contents();
+    let mut snapshot = parser.screen().retained_snapshot(4);
+    snapshot.set_scrollback(usize::MAX);
+    assert_eq!(snapshot.scrollback(), 4);
+    assert_eq!(parser.screen().scrollback(), 0);
+    assert_eq!(parser.screen().contents(), original);
+    parser.process(b"\x1b[?1049hALT");
+    let mut alternate = parser.screen().retained_snapshot(20);
+    alternate.set_scrollback(usize::MAX);
+    assert_eq!(alternate.scrollback(), 0);
+    assert!(alternate.alternate_screen());
+    assert!(alternate.contents().contains("ALT"));
+}

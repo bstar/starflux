@@ -1,6 +1,8 @@
 //! Single-source parser/graphics/reply authority. The backend owns the PTY and
 //! decoder pool; frontends only inspect this state. No PTY, process or presenter
 //! is created here, and this engine alone does not advertise graphics support.
+#[path = "graphics_owner/metadata.rs"]
+pub mod metadata;
 use crate::{
     graphics_decode::Completion,
     graphics_reply,
@@ -32,6 +34,7 @@ impl From<graphics_requests::Failure> for Fault {
     }
 }
 struct Callbacks {
+    metadata: metadata::Capture,
     requests: Requests,
     job: Option<Job>,
     fault: Option<Fault>,
@@ -60,6 +63,21 @@ impl Callbacks {
 }
 impl vt100::Callbacks for Callbacks {
     const TRACK_SCROLL: bool = true;
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.metadata.title(title, false);
+    }
+    fn set_window_icon_name(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.metadata.title(title, true);
+    }
+    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _: &[u8], data: &[u8]) {
+        self.metadata.copy(data);
+    }
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.metadata.value.audible = self.metadata.value.audible.saturating_add(1);
+    }
+    fn visual_bell(&mut self, _: &mut vt100::Screen) {
+        self.metadata.value.visual = self.metadata.value.visual.saturating_add(1);
+    }
     fn scrolled(&mut self, screen: &mut vt100::Screen, top: u16, bottom: u16, rows: i32) {
         let alternate = screen.alternate_screen();
         if let Some(Mutation::Scroll {
@@ -187,6 +205,7 @@ impl Owner {
     ) -> Result<Self, Fault> {
         Self::validate_geometry(geometry)?;
         let callbacks = Callbacks {
+            metadata: metadata::Capture::new(resources.retained.clone()),
             requests: Requests::with_resources(generation.clone(), resources.clone()),
             job: None,
             fault: None,
@@ -430,6 +449,9 @@ impl Owner {
             .requests
             .drain(limit.min(MAX_CHUNK))
     }
+    pub fn metadata(&self) -> &metadata::Metadata {
+        &self.parser.callbacks().metadata.value
+    }
     pub fn screen(&self) -> &vt100::Screen {
         self.parser.screen()
     }
@@ -512,6 +534,29 @@ mod tests {
         );
     }
     const IMAGE: &[u8] = b"\x1b_Ga=T,f=24,s=1,v=1,i=71,c=2,r=2;ESIz\x1b\\";
+    #[test]
+    fn retained_metadata_captures_titles_writes_and_bells_but_never_reads_clipboards() {
+        let (mut owner, _, resources) = setup();
+        parse(
+            &mut owner,
+            "\x1b]0;shell 界\x1b\\\x1b]52;c;aGVsbG8K\x1b\\\x07\x1bg".as_bytes(),
+        );
+        assert_eq!(owner.metadata().title, "shell 界");
+        assert_eq!(owner.metadata().icon_name, "shell 界");
+        assert_eq!(owner.metadata().clipboard.as_deref(), Some("hello\n"));
+        assert_eq!(owner.metadata().clipboard_sequence, 1);
+        assert_eq!(owner.metadata().audible, 1);
+        assert_eq!(owner.metadata().visual, 1);
+        parse(&mut owner, b"\x1b]52;c;?\x1b\\");
+        assert!(owner.drain_replies(8192).is_empty());
+        assert_eq!(owner.metadata().clipboard_sequence, 1);
+        parse(&mut owner, b"\x1b]2;bad\xff\x1b\\");
+        assert_eq!(owner.metadata().title, "shell 界");
+        assert_eq!(owner.metadata().rejected, 1);
+        assert!(resources.retained.used() > 0);
+        drop(owner);
+        assert_eq!(resources.retained.used(), 0);
+    }
     #[test]
     fn source_palette_and_size_queries_share_graphics_reply_order() {
         let (mut owner, pool, _) = setup();

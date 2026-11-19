@@ -36,6 +36,8 @@ pub struct Config {
     pub tmux: Option<crate::tmux_source::Source>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub adopted: std::collections::BTreeMap<usize, crate::adoption::Terminal>,
+    #[serde(default)]
+    pub native_terminals: bool,
     // Read old project files, but never persist a project-level theme again.
     #[serde(default = "crate::appearance::default_theme", skip_serializing)]
     pub theme: String,
@@ -132,6 +134,7 @@ impl Config {
         request["expected_pid"] = json!(identity.0);
         request["expected_start_ticks"] = json!(identity.1);
         request["expected_boot_id"] = json!(identity.2.to_string());
+        request["expected_epoch"] = json!(epoch);
         config.call(pane, &request)?;
         if lock.is_none() {
             lock = Some(crate::project_sync::transaction(self)?);
@@ -215,6 +218,18 @@ impl Config {
         self.host.is_some() && (pane != 0 || self.project_host)
     }
     pub fn terminal_history(&self, pane: usize) -> Result<(Vec<u8>, &'static str)> {
+        if crate::native_backend::reference(self, pane)?.is_some() {
+            let value = self.call(pane, &self.request(pane, "history"))?;
+            return Ok((
+                STANDARD.decode(
+                    value["history_base64"]
+                        .as_str()
+                        .context("Native history unavailable")?,
+                )?,
+                "native",
+            ));
+        }
+
         use std::{
             io::Seek,
             time::{Duration, Instant},
@@ -297,6 +312,10 @@ impl Config {
         Ok((bytes, source))
     }
     pub fn command(&self, pane: usize, request: &Value, tty: bool) -> Command {
+        if let Some(command) = crate::native_backend::metadata_command(self, pane, request) {
+            return command;
+        }
+
         if pane == 0
             && request["action"] == "capture"
             && let Some(source) = &self.tmux
@@ -350,6 +369,10 @@ impl Config {
         Ok(result)
     }
     pub fn call(&self, pane: usize, request: &Value) -> Result<Value> {
+        if let Some(result) = crate::native_backend::call(self, pane, request)? {
+            return Ok(result);
+        }
+
         if pane == 0
             && let Some(source) = &self.tmux
         {
@@ -441,6 +464,9 @@ impl Config {
             source.inspect(pane)?;
             return Ok(());
         }
+        if crate::native_backend::ensure_source(self, pane, agent_command)? {
+            return Ok(());
+        }
         let recovered_boot = self
             .adopted_entry(pane)
             .map(|terminal| terminal.retire_after_reboot(self, pane))
@@ -473,6 +499,10 @@ impl Config {
     /// Explicit user recovery, scoped to one terminal. Transferred live shells
     /// keep their owner; an exited owner is replaced by an ordinary shell.
     pub fn recover(&self, pane: usize, epoch: Option<&str>) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        if crate::native_backend::reference(self, pane)?.is_some() {
+            return crate::native_backend::recover(self, pane, epoch);
+        }
         let _transaction = crate::project_sync::transaction(self)?;
         let saved = crate::project_state::data_root()?.join(format!("{}.json", self.workspace));
         let mut config: Self = serde_json::from_slice(&fs::read(saved)?)?;
@@ -1019,6 +1049,7 @@ mod tests {
             herdr: None,
             tmux: None,
             adopted: Default::default(),
+            native_terminals: false,
             theme: crate::appearance::default_theme(),
             host: None,
             ssh_config: None,

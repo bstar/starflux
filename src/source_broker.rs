@@ -28,10 +28,18 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+#[path = "source_broker/launch_fence.rs"]
+mod launch_fence;
+#[path = "source_broker/process.rs"]
+pub mod process;
 #[path = "source_broker/render.rs"]
 mod render;
+#[path = "source_broker/retirement.rs"]
+pub mod retirement;
 #[path = "source_broker/service.rs"]
 pub mod service;
+#[path = "source_broker/supervision.rs"]
+pub mod supervision;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -42,23 +50,15 @@ const OUTPUT: usize = 4 * 1024 * 1024;
 const PTY_QUEUE: usize = 2 * 1024 * 1024;
 const SOURCES: usize = 1024;
 const CLIENTS: usize = 16;
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Reference {
-    pub id: String,
-    pub epoch: String,
-    pub boot: String,
-    pub pid: u32,
-    pub start_ticks: u64,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub use crate::native_protocol::Reference;
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Size {
     pub rows: u16,
     pub columns: u16,
     pub cell: [u16; 2],
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Palette {
     pub foreground: [u8; 3],
@@ -150,7 +150,7 @@ impl Launch {
         ensure!(self.directory.is_dir(), "Source directory is unavailable");
         Ok(())
     }
-    fn digest(&self) -> Result<String> {
+    pub(crate) fn digest(&self) -> Result<String> {
         Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
     }
 }
@@ -161,6 +161,13 @@ pub enum Action {
     Open {
         launch: Launch,
     },
+    ResolveLaunch {
+        id: String,
+        epoch: String,
+        digest: String,
+        #[serde(default)]
+        seal: bool,
+    },
     Inspect {
         source: Reference,
     },
@@ -168,6 +175,15 @@ pub enum Action {
     Input {
         source: Reference,
         data: String,
+    },
+    Paste {
+        source: Reference,
+        text: String,
+    },
+    GuardedInput {
+        source: Reference,
+        data: String,
+        agent: Option<process::Agent>,
     },
     Resize {
         source: Reference,
@@ -179,6 +195,8 @@ pub enum Action {
         palette: Palette,
     },
     Watch {
+        #[serde(default)]
+        pixels: bool,
         source: Reference,
         view: String,
         epoch: u64,
@@ -195,6 +213,10 @@ pub enum Action {
     Unwatch {
         view: String,
         epoch: u64,
+    },
+    Screen {
+        source: Reference,
+        history: u16,
     },
     Close {
         source: Reference,
@@ -289,8 +311,8 @@ struct Source {
     input_failed: bool,
     pidfd: OwnedFd,
     stopping_at: Option<Instant>,
-    kill_sent: bool,
     exit: bool,
+    tree_retired: bool,
     error: Option<String>,
     size: Size,
     revision: u64,
@@ -299,8 +321,22 @@ struct StartingChild(Option<Box<dyn Child + Send + Sync>>);
 impl Drop for StartingChild {
     fn drop(&mut self) {
         if let Some(mut child) = self.0.take() {
-            if matches!(child.try_wait(), Ok(None)) {
-                let _ = child.kill();
+            if matches!(child.try_wait(), Ok(None))
+                && let Some(pid) = child.process_id()
+            {
+                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+                if fd >= 0 {
+                    let fd = unsafe { OwnedFd::from_raw_fd(fd as RawFd) };
+                    let _ = unsafe {
+                        libc::syscall(
+                            libc::SYS_pidfd_send_signal,
+                            fd.as_raw_fd(),
+                            libc::SIGHUP,
+                            std::ptr::null::<libc::siginfo_t>(),
+                            0,
+                        )
+                    };
+                }
             }
             let _ = child.wait();
         }
@@ -319,12 +355,13 @@ struct IoLimits {
 impl Source {
     fn launch(
         spec: &Launch,
-        boot: &str,
+        owner: &crate::native_protocol::Identity,
         receipts: &Path,
         resources: Resources,
         io_limits: IoLimits,
     ) -> Result<Self> {
         spec.validate()?;
+        let boot = owner.boot.as_str();
         let digest = spec.digest()?;
         // A consumed ID is never replayed after daemon loss, failed spawn or an
         // uncertain response. A new explicit launch needs a fresh source ID.
@@ -346,8 +383,15 @@ impl Source {
             .as_raw_fd()
             .context("Source platform has no native PTY descriptor")?;
         nonblocking(fd)?;
-        let mut command = CommandBuilder::new(&spec.argv[0]);
-        command.args(&spec.argv[1..]);
+        // A retained owner may outlive replacement/unlinking of its installed
+        // path. Launch this loaded image, never a deleted path or newer binary.
+        let mut command = CommandBuilder::new("/proc/self/exe");
+        command.arg("--native-source-supervisor");
+        command.arg("--retirement-v1");
+        command.arg(serde_json::to_string(&retirement::Intent::new(
+            spec, owner, receipts,
+        )?)?);
+        command.args(&spec.argv);
         command.cwd(&spec.directory);
         source_environment(&mut command);
         let mut child = StartingChild(Some(pair.slave.spawn_command(command)?));
@@ -368,6 +412,29 @@ impl Source {
             pid,
             start_ticks: start_ticks(pid)?,
         };
+        // Starting the guardian is not proof that the requested program exec'd.
+        // The single-threaded guardian records Command::spawn's result before
+        // the initializer publishes the source. Lost/missing acknowledgement
+        // consumes the launch ID and retires this guardian; it is never replayed.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut ended = false;
+        loop {
+            if retirement::started(receipts, owner, &reference, &digest)?.is_some() {
+                break;
+            }
+            ensure!(
+                !ended,
+                "Supervisor ended before acknowledging terminal startup"
+            );
+            ensure!(
+                Instant::now() < deadline,
+                "Supervisor startup acknowledgement timed out"
+            );
+            ended = child.0.as_mut().unwrap().try_wait()?.is_some();
+            if !ended {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         let mut owner = Owner::new(
             Generation {
                 host: "local".into(),
@@ -399,8 +466,8 @@ impl Source {
             input_failed: false,
             pidfd,
             stopping_at: None,
-            kill_sent: false,
             exit: false,
+            tree_retired: false,
             error: None,
             size: spec.size.clone(),
             revision: 0,
@@ -414,11 +481,11 @@ impl Source {
         Ok(())
     }
     fn info(&self) -> Value {
-        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
+        json!({"source":self.reference,"launch_digest":self.digest,"alive":!self.exit,"exited":self.exit,"closing":self.stopping_at.is_some(),"process_tree_supervised":true,"retirement_verified":self.tree_retired,"eof":self.eof,"input_available":!self.exit&&!self.eof&&!self.input_failed&&self.stopping_at.is_none(),"input_modes":self.modes(),"error":self.error,"size":self.size,"revision":self.revision,"terminal_metadata":{"title":self.owner.metadata().title,"icon_name":self.owner.metadata().icon_name,"audible":self.owner.metadata().audible,"visual":self.owner.metadata().visual,"clipboard_sequence":self.owner.metadata().clipboard_sequence,"clipboard_bytes":self.owner.metadata().clipboard.as_ref().map_or(0,String::len),"rejected":self.owner.metadata().rejected},"graphics_usage":self.owner.store().usage(),"buffered_output":self.owner.buffered(),"queued_input":self.queued})
     }
     fn modes(&self) -> Value {
         let screen = self.owner.screen();
-        json!({"bracketed_paste":screen.bracketed_paste(),"application_cursor":screen.application_cursor(),"application_keypad":screen.application_keypad(),"mouse":format!("{:?}",screen.mouse_protocol_mode()),"mouse_encoding":format!("{:?}",screen.mouse_protocol_encoding())})
+        json!({"alternate":screen.alternate_screen(),"bracketed_paste":screen.bracketed_paste(),"application_cursor":screen.application_cursor(),"application_keypad":screen.application_keypad(),"mouse":format!("{:?}",screen.mouse_protocol_mode()),"mouse_encoding":format!("{:?}",screen.mouse_protocol_encoding())})
     }
     fn pollfd(&self) -> libc::pollfd {
         libc::pollfd {
@@ -441,16 +508,10 @@ impl Source {
     }
     fn step(&mut self, events: i16) -> Result<()> {
         let previous_status = (self.exit, self.eof, self.input_failed);
-        self.exit = self.child.try_wait()?.is_some();
-        if !self.exit
-            && !self.kill_sent
-            && self
-                .stopping_at
-                .is_some_and(|at| at.elapsed() >= Duration::from_millis(200))
-        {
-            self.signal(libc::SIGKILL)?;
-            self.kill_sent = true;
-        }
+        self.observe_exit()?;
+        // The per-source supervisor owns graceful escalation and must remain
+        // alive until all descendants are gone. Killing only it would orphan
+        // detached children and make exit/EOF an invalid retirement proof.
         if self.waiting.is_none()
             && !self.eof
             && events & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
@@ -534,6 +595,21 @@ impl Source {
         }
         Ok(())
     }
+    fn observe_exit(&mut self) -> Result<()> {
+        if !self.exit
+            && let Some(status) = self.child.try_wait()?
+        {
+            self.exit = true;
+            self.tree_retired = status.signal().is_none();
+            if !self.tree_retired {
+                self.error = Some(
+                    "Terminal supervisor exited abnormally; descendant retirement is unverified"
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
     fn signal(&self, signal: i32) -> Result<()> {
         let result = unsafe {
             libc::syscall(
@@ -550,7 +626,7 @@ impl Source {
         Ok(())
     }
     fn stop(&mut self) -> Result<()> {
-        self.exit = self.child.try_wait()?.is_some();
+        self.observe_exit()?;
         if !self.exit && self.stopping_at.is_none() {
             self.signal(libc::SIGHUP)?;
         }
@@ -596,6 +672,8 @@ struct Rendering {
     target: render::Target,
 }
 struct Watch {
+    clipboard_floor: u64,
+    pixels: bool,
     source: Reference,
     epoch: u64,
     generation: u64,
@@ -663,12 +741,19 @@ impl Broker {
             input: Budget::new(16 * 1024 * 1024),
             replies: Budget::new(16 * 1024 * 1024),
         };
+        let instance = uuid::Uuid::new_v4().to_string();
+        let owner = crate::native_protocol::Identity {
+            instance: instance.clone(),
+            boot: boot.clone(),
+            pid: std::process::id(),
+            start_ticks: start_ticks(std::process::id())?,
+        };
         let (open_jobs, jobs) = crossbeam_channel::bounded::<Launch>(2);
         let (finished, opened) = crossbeam_channel::bounded(4);
         for _ in 0..2 {
             let jobs = jobs.clone();
             let finished = finished.clone();
-            let boot = boot.clone();
+            let owner = owner.clone();
             let receipts = receipts.to_owned();
             let resources = resources.clone();
             let io_limits = io_limits.clone();
@@ -676,7 +761,7 @@ impl Broker {
                 for launch in jobs {
                     let result = Source::launch(
                         &launch,
-                        &boot,
+                        &owner,
                         &receipts,
                         resources.clone(),
                         io_limits.clone(),
@@ -705,7 +790,7 @@ impl Broker {
             },
             receipts: receipts.into(),
             token,
-            instance: uuid::Uuid::new_v4().to_string(),
+            instance,
             boot,
             resources,
             pool,
@@ -758,7 +843,7 @@ impl Broker {
         }
         match action {
             Action::Hello => Ok(
-                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
+                json!({"version":1,"instance":self.instance,"boot":self.boot,"broker_pid":std::process::id(),"broker_start_ticks":start_ticks(std::process::id())?,"capabilities":["retained-pty-v1","cells-stream-v1","launch-digest-v1","screen-history-v1","guarded-input-v1","native-paste-v1","view-grid-v1","image-planes-v1","retirement-eof-v1","retirement-tree-v1","osc8-spans-v1","terminal-metadata-v1","launch-fence-v1","retirement-record-v1","supervised-startup-v1"],"sources":self.sources.len(),"opening":self.opening.len(),"renders":self.renders.len(),"watches":self.watches.len(),"presentation_usage":self.resources.presentation.used(),"transport_usage":self.transport.used(),"io_usage":[self.io_limits.input.used(),self.io_limits.replies.used()]}),
             ),
             Action::List => Ok(json!(
                 self.sources.values().map(Source::info).collect::<Vec<_>>()
@@ -766,6 +851,50 @@ impl Broker {
             Action::Open { .. } => Err(anyhow::anyhow!(
                 "Source opening must use the bounded initializer"
             )),
+            Action::ResolveLaunch {
+                id,
+                epoch,
+                digest,
+                seal,
+            } => {
+                canonical_uuid(&id)?;
+                canonical_uuid(&epoch)?;
+                ensure!(
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "Invalid launch digest"
+                );
+                if let Some(source) = self.sources.get(&id) {
+                    ensure!(
+                        source.digest == digest && source.reference.epoch == epoch,
+                        "Launch identity changed"
+                    );
+                    return Ok(json!({"status":"ready","info":source.info()}));
+                }
+                if let Some(opening) = self.opening.get(&id) {
+                    ensure!(opening.digest == digest, "Launch identity changed");
+                    return Ok(json!({"status":"opening"}));
+                }
+                ensure!(!self.stopping, "Broker is stopping");
+                let owner = crate::native_protocol::Identity {
+                    instance: self.instance.clone(),
+                    boot: self.boot.clone(),
+                    pid: std::process::id(),
+                    start_ticks: start_ticks(std::process::id())?,
+                };
+                let sealed =
+                    launch_fence::resolve(&self.receipts, &id, &epoch, &digest, seal, &owner)?;
+                let status = if sealed {
+                    "sealed"
+                } else if self.receipts.join(format!("{id}.json")).try_exists()? {
+                    "unknown"
+                } else {
+                    "not_started"
+                };
+                Ok(json!({"status":status}))
+            }
             Action::Inspect { source } => Ok(self.source(&source)?.info()),
             Action::Input { source, data } => {
                 ensure!(
@@ -801,6 +930,57 @@ impl Broker {
                 }
                 Ok(json!({"queued":true}))
             }
+            Action::Paste { source, text } => {
+                ensure!(text.len() <= INPUT, "Paste exceeds 1 MiB");
+                let retained = self.source(&source)?;
+                let text = text.replace('\x1b', "");
+                let bytes = if retained.owner.screen().bracketed_paste() && !text.is_empty() {
+                    format!("\x1b[200~{text}\x1b[201~").into_bytes()
+                } else {
+                    text.into_bytes()
+                };
+                ensure!(
+                    !retained.exit
+                        && !retained.eof
+                        && !retained.input_failed
+                        && retained.stopping_at.is_none(),
+                    "Source input unavailable"
+                );
+                ensure!(
+                    retained.queued + bytes.len() <= PTY_QUEUE - 16384 && retained.out.len() < 240,
+                    "Source input is busy"
+                );
+                if !bytes.is_empty() {
+                    let memory = retained
+                        .io_limits
+                        .input
+                        .reserve(bytes.capacity())
+                        .context("Broker input is busy")?;
+                    retained.queued += bytes.len();
+                    retained.out.push_back(PendingWrite {
+                        bytes,
+                        offset: 0,
+                        _memory: memory,
+                    });
+                }
+                Ok(json!({"queued":true,"submitted":false}))
+            }
+            Action::GuardedInput {
+                source,
+                data,
+                agent,
+            } => {
+                let retained = self.source(&source)?;
+                ensure!(
+                    !retained.exit && !retained.eof,
+                    "Native source input is unavailable"
+                );
+                ensure!(
+                    process::inspect(&source)?.agent == agent,
+                    "Native foreground agent changed; input rejected"
+                );
+                self.action(Action::Input { source, data })
+            }
             Action::Resize { source, size } => {
                 let geometry = size.geometry()?;
                 let source = self.source(&source)?;
@@ -824,7 +1004,8 @@ impl Broker {
                 source.revision = source.revision.saturating_add(1);
                 Ok(source.info())
             }
-            Action::Cells { .. }
+            Action::Screen { .. }
+            | Action::Cells { .. }
             | Action::Watch { .. }
             | Action::Ack { .. }
             | Action::Unwatch { .. } => Err(anyhow::anyhow!(
@@ -859,6 +1040,48 @@ impl Broker {
                     self.reply(peer, request.id, Err(error));
                 }
             }
+            Action::Screen { source, history } => {
+                let result = (|| -> Result<()> {
+                    ensure!(
+                        self.renders.len() < 8
+                            && self.renders.values().filter(|r| r.peer == peer).count() < 4,
+                        "Native screen queue is busy"
+                    );
+                    let resources = self.resources.clone();
+                    let retained = self.source(&source)?;
+                    let snapshot = render::Snapshot::capture_screen(retained, history, &resources)?;
+                    self.next_render = self
+                        .next_render
+                        .checked_add(1)
+                        .context("Native render sequence exhausted")?;
+                    let tag = self.next_render;
+                    let cancelled = Arc::new(AtomicBool::new(false));
+                    let target = render::Target::Request {
+                        peer,
+                        id: request.id,
+                    };
+                    self.renderer.submit(render::Job {
+                        tag,
+                        target: target.clone(),
+                        snapshot,
+                        cancelled: cancelled.clone(),
+                        base: None,
+                    })?;
+                    self.renders.insert(
+                        tag,
+                        Rendering {
+                            peer,
+                            source,
+                            cancelled,
+                            target,
+                        },
+                    );
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    self.reply(peer, request.id, Err(e));
+                }
+            }
             Action::Cells {
                 source,
                 size,
@@ -879,6 +1102,7 @@ impl Broker {
                 }
             }
             Action::Watch {
+                pixels,
                 source,
                 view,
                 epoch,
@@ -888,7 +1112,7 @@ impl Broker {
                 palette,
             } => {
                 let result = self.watch(
-                    peer, source, view, epoch, generation, focused, size, palette,
+                    peer, source, view, epoch, generation, focused, size, palette, pixels,
                 );
                 self.reply(peer, request.id, result);
             }
@@ -908,7 +1132,10 @@ impl Broker {
                 let accepted = self.watches.get_mut(&(peer, view)).is_some_and(|w| {
                     if sent && w.epoch == epoch && w.sequence == sequence && w.awaiting {
                         w.awaiting = false;
-                        w.base = w.sent.take().map(|p| (sequence, p));
+                        w.base = w.sent.take().map(|p| {
+                            w.clipboard_floor = w.clipboard_floor.max(p.clipboard_sequence);
+                            (sequence, p)
+                        });
                         true
                     } else {
                         false
@@ -947,7 +1174,14 @@ impl Broker {
         let resources = self.resources.clone();
         let source = self.source(&reference)?;
         ensure!(source.stopping_at.is_none(), "Source is closing");
-        let snapshot = render::Snapshot::capture(source, size, palette, &resources)?;
+        let clipboard_floor = match &target {
+            render::Target::Watch {
+                clipboard_floor, ..
+            } => *clipboard_floor,
+            render::Target::Request { .. } => source.owner.metadata().clipboard_sequence,
+        };
+        let snapshot =
+            render::Snapshot::capture(source, size, palette, clipboard_floor, &resources)?;
         self.next_render = self
             .next_render
             .checked_add(1)
@@ -983,6 +1217,7 @@ impl Broker {
         focused: bool,
         size: Size,
         palette: Palette,
+        pixels: bool,
     ) -> Result<Value> {
         ensure!(!self.stopping, "Broker is stopping");
         canonical_uuid(&view)?;
@@ -997,6 +1232,12 @@ impl Broker {
             geometry.rows <= retained.size.rows && geometry.columns <= retained.size.columns,
             "View exceeds the retained grid"
         );
+        let retained_clipboard_sequence = retained.owner.metadata().clipboard_sequence;
+        let clipboard_floor = self
+            .watches
+            .get(&(peer, view.clone()))
+            .filter(|watch| watch.source == source)
+            .map_or(retained_clipboard_sequence, |watch| watch.clipboard_floor);
         let p = self.peers.get(&peer).context("View disconnected")?;
         ensure!(
             p.view_epochs.get(&view).is_none_or(|old| epoch > *old),
@@ -1022,6 +1263,8 @@ impl Broker {
         self.watches.insert(
             key,
             Watch {
+                clipboard_floor,
+                pixels,
                 source,
                 epoch,
                 generation,
@@ -1146,7 +1389,7 @@ impl Broker {
                         Ok(rendered) => {
                             w.awaiting = true;
                             w.error = None;
-                            w.sent = Some(rendered.picture);
+                            w.sent = rendered.picture;
                             self.enqueue_packet(peer, rendered.packet);
                         }
                         Err(error) => self.watch_failed(&key, error),
@@ -1199,12 +1442,14 @@ impl Broker {
                 continue;
             };
             let target = render::Target::Watch {
+                clipboard_floor: w.clipboard_floor,
                 peer: key.0,
                 view: key.1.clone(),
                 epoch: w.epoch,
                 sequence,
                 generation: w.generation,
                 focused: w.focused,
+                pixels: w.pixels,
             };
             let result = self.begin_render(
                 target,
@@ -1525,7 +1770,10 @@ impl Broker {
                 && p.last.elapsed() < Duration::from_secs(300)
         });
         self.sources
-            .retain(|_, s| s.stopping_at.is_none() || !s.exit);
+            // A reaped shell can still have children holding its PTY. Keep the
+            // source observable until EOF, so recovery cannot mistake the
+            // missing parent for a fully retired terminal and launch a duplicate.
+            .retain(|_, s| s.stopping_at.is_none() || !s.exit || !s.eof || !s.tree_retired);
         let stale = self
             .watches
             .keys()
@@ -1652,6 +1900,17 @@ mod tests {
         broker.begin_open(2, 1, launch.clone()).unwrap();
         assert_eq!(receiver.len(), 1);
         assert_eq!(broker.opening[&launch.id].waiters.len(), 2);
+        assert_eq!(
+            broker
+                .action(Action::ResolveLaunch {
+                    id: launch.id.clone(),
+                    epoch: launch.epoch.clone(),
+                    digest: launch.digest().unwrap(),
+                    seal: true
+                })
+                .unwrap()["status"],
+            "opening"
+        );
         let mut changed = launch.clone();
         changed.argv.push("different".into());
         assert!(broker.begin_open(3, 1, changed).is_err());
@@ -1662,6 +1921,105 @@ mod tests {
                 .join("receipts")
                 .join(format!("{}.json", launch.id))
                 .exists()
+        );
+    }
+    #[test]
+    fn fencing_an_unstarted_launch_is_durable_identity_bound_and_never_spawns_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let receipts = root.path().join("receipts");
+        let mut broker =
+            Broker::bind(&root.path().join("source.sock"), &receipts, "a".repeat(64)).unwrap();
+        let launch = Launch {
+            id: uuid::Uuid::new_v4().to_string(),
+            epoch: uuid::Uuid::new_v4().to_string(),
+            argv: vec![
+                "/usr/bin/touch".into(),
+                root.path()
+                    .join("MUST_NOT_RUN")
+                    .to_string_lossy()
+                    .into_owned(),
+            ],
+            directory: root.path().into(),
+            size: Size {
+                rows: 24,
+                columns: 80,
+                cell: [8, 16],
+            },
+            palette: Palette {
+                foreground: [255; 3],
+                background: [0; 3],
+                ansi: [[0; 3]; 16],
+            },
+        };
+        let action = |seal| Action::ResolveLaunch {
+            id: launch.id.clone(),
+            epoch: launch.epoch.clone(),
+            digest: launch.digest().unwrap(),
+            seal,
+        };
+        assert_eq!(
+            broker.action(action(false)).unwrap()["status"],
+            "not_started"
+        );
+        let receipt = receipts.join(format!("{}.json", launch.id));
+        assert!(!receipt.exists());
+        assert_eq!(broker.action(action(true)).unwrap()["status"], "sealed");
+        assert_eq!(broker.action(action(true)).unwrap()["status"], "sealed");
+        assert!(
+            broker
+                .action(Action::ResolveLaunch {
+                    id: launch.id.clone(),
+                    epoch: uuid::Uuid::new_v4().to_string(),
+                    digest: launch.digest().unwrap(),
+                    seal: true
+                })
+                .is_err()
+        );
+        assert!(
+            Source::launch(
+                &launch,
+                &crate::native_protocol::Identity {
+                    instance: broker.instance.clone(),
+                    boot: broker.boot.clone(),
+                    pid: std::process::id(),
+                    start_ticks: start_ticks(std::process::id()).unwrap()
+                },
+                &receipts,
+                broker.resources.clone(),
+                broker.io_limits.clone()
+            )
+            .is_err()
+        );
+        assert!(!root.path().join("MUST_NOT_RUN").exists());
+        fs::write(&receipt, b"partial receipt").unwrap();
+        assert_eq!(broker.action(action(true)).unwrap()["status"], "unknown");
+        assert_eq!(fs::read(&receipt).unwrap(), b"partial receipt");
+        // Invalid receipt types must not block the live owner's event loop.
+        fs::remove_file(&receipt).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(receipt.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let owner = crate::native_protocol::Identity {
+            instance: broker.instance.clone(),
+            boot: broker.boot.clone(),
+            pid: std::process::id(),
+            start_ticks: start_ticks(std::process::id()).unwrap(),
+        };
+        let id = launch.id.clone();
+        let epoch = launch.epoch.clone();
+        let digest = launch.digest().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(launch_fence::resolve(
+                &receipts, &id, &epoch, &digest, true, &owner,
+            ));
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_secs(1))
+                .expect("FIFO receipt blocked metadata control")
+                .is_err()
         );
     }
     #[test]

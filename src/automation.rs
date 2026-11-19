@@ -126,6 +126,8 @@ fn mutating(method: &str) -> bool {
             | "panes.rename"
             | "panes.send"
             | "panes.terminate"
+            | "panes.recover"
+            | "panes.reap"
             | "agents.report"
             | "attention.dismiss"
             | "attention.mark_read"
@@ -205,6 +207,8 @@ const METHODS: &[&str] = &[
     "panes.rename",
     "panes.send",
     "panes.terminate",
+    "panes.recover",
+    "panes.reap",
     "panes.wait",
     "agents.report",
     "agents.live",
@@ -466,6 +470,8 @@ fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) ->
         "error",
         "bridge_connected",
         "health",
+        "backend",
+        "native_retirement_available",
     ] {
         if let Some(value) = health.get(key) {
             public[key] = value.clone();
@@ -474,8 +480,14 @@ fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) ->
     let guardable =
         target.is_object() && (!health["agent"].is_string() || health["agent_pid"].is_number());
     let input_available = input_transport_available(health, config.adopted_terminal(id).is_some());
-    json!({"project":config.workspace,"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id),"target":target,"saved_conversation":saved_conversation(health),
-        "capabilities":{"input":guardable && (!config.externally_owned(id) || (id == 0 && config.tmux.is_some())) && input_available,"terminate":guardable && !config.externally_owned(id)},"status":public})
+    let retirement = health["backend"] != "native" || health["native_retirement_available"] == true;
+    let mut result = json!({"project":config.workspace,"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id),"target":target,"saved_conversation":saved_conversation(health),
+        "capabilities":{"input":guardable && (!config.externally_owned(id) || (id == 0 && config.tmux.is_some())) && input_available,"terminate":guardable && !config.externally_owned(id) && retirement},"status":public});
+    if health["backend"] == "native" {
+        result["capabilities"]["recover"] =
+            json!(retirement && state.terminal_epochs.contains_key(&id));
+    }
+    result
 }
 fn guarded(target: &Target) -> Result<(Config, ProjectState, usize, Value)> {
     let config = project(&target.project)?;
@@ -1056,9 +1068,15 @@ fn dispatch(request: &Request) -> Result<Value> {
                 directory: String,
                 #[serde(default = "crate::appearance::default_theme")]
                 theme: String,
+                #[serde(default)]
+                native_terminals: bool,
             }
             let p: P = params(p)?;
-            let config = session_catalog::create(&p.name, &p.directory, &p.theme)?;
+            let mut config = session_catalog::create(&p.name, &p.directory, &p.theme)?;
+            if p.native_terminals {
+                config.native_terminals = true;
+                ProjectState::default().save(&config)?;
+            }
             config.ensure(0, None)?;
             Ok(json!({"session":session_catalog::group(&config),"project":config.workspace}))
         }
@@ -1142,6 +1160,9 @@ fn dispatch(request: &Request) -> Result<Value> {
                 state.terminal_labels.insert(id, label);
             }
             state.save(&config)?;
+            if config.native_terminals {
+                drop(_lock);
+            }
             config.ensure(id, None)?;
             Ok(observed(&config, &state, id, &inspect(&config, id)?))
         }
@@ -1221,6 +1242,49 @@ fn dispatch(request: &Request) -> Result<Value> {
             } else {
                 config.call(id, &req)
             }
+        }
+        "panes.recover" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                project: String,
+                pane: u8,
+                epoch: String,
+                confirm: String,
+            }
+            let p: P = params(p)?;
+            ensure!((1..=32).contains(&p.pane), "Invalid pane");
+            ensure!(p.confirm == "RECOVER", "confirm must be RECOVER");
+            let config = project(&p.project)?;
+            config.recover(usize::from(p.pane - 1), Some(&p.epoch))?;
+            Ok(json!({"project":p.project,"pane":p.pane,"previous_epoch":p.epoch,"recovered":true}))
+        }
+        "panes.reap" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                project: String,
+                pane: u8,
+                epoch: String,
+            }
+            let p: P = params(p)?;
+            ensure!((1..=32).contains(&p.pane), "Invalid pane");
+            let pane = usize::from(p.pane - 1);
+            let config = project(&p.project)?;
+            let _lock = project_sync::transaction(&config)?;
+            let mut state = ProjectState::load(&config)?;
+            ensure!(
+                state.terminal_ids().contains(&pane)
+                    && state.terminal_epochs.get(&pane) == Some(&p.epoch),
+                "Terminal changed; reap canceled"
+            );
+            let result = config.call(pane, &config.request(pane, "reap"))?;
+            let reaped = result["reaped"] == true;
+            if reaped {
+                state.remove_terminal(pane);
+                state.save(&config)?;
+            }
+            Ok(json!({"project":p.project,"pane":p.pane,"reaped":reaped}))
         }
         "panes.terminate" => {
             #[derive(Deserialize)]

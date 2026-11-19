@@ -49,7 +49,7 @@ impl Row {
     }
 
     #[inline]
-    fn set_hyperlink(
+    pub(crate) fn set_hyperlink(
         &mut self,
         col: u16,
         link: Option<std::sync::Arc<crate::hyperlink::Hyperlink>>,
@@ -60,6 +60,10 @@ impl Row {
         if let Some(links) = &mut self.hyperlinks {
             links[usize::from(col)] = link;
         }
+    }
+
+    pub(crate) fn clear_hyperlinks(&mut self) {
+        self.hyperlinks = None;
     }
 
     /// Paint text and link metadata in one row lookup. Unlinked rows keep the

@@ -1,6 +1,10 @@
 //! Fixed local endpoint used by the STAR/CORE Kitty watcher; no host commands run here.
 #[path = "../../src/font_frontend.rs"]
 mod font_frontend;
+#[path = "../../src/graphics_delivery.rs"]
+mod graphics_delivery;
+#[path = "../../src/graphics_frontend.rs"]
+mod graphics_frontend;
 use anyhow::{Result, ensure};
 use starcore::terminal_graphics::{client, protocol::Input};
 fn event(event: &starcore::crossterm::event::Event) -> Option<Input> {

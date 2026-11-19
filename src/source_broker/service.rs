@@ -10,15 +10,9 @@ use std::{
 };
 const SERVICE_VERSION: u8 = 1;
 const META_LIMIT: u64 = 32768;
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-pub struct Identity {
-    pub instance: String,
-    pub boot: String,
-    pub pid: u32,
-    pub start_ticks: u64,
-}
+pub use crate::native_protocol::{Binding, Identity};
 impl Identity {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         canonical_uuid(&self.instance)?;
         canonical_uuid(&self.boot)?;
         ensure!(
@@ -41,13 +35,13 @@ struct Descriptor {
     version: u8,
     owner: Identity,
 }
-struct Directory {
+pub(super) struct Directory {
     path: PathBuf,
     file: File,
     stamp: (u64, u64),
 }
 impl Directory {
-    fn open(path: &Path) -> Result<Self> {
+    pub(super) fn open(path: &Path) -> Result<Self> {
         ensure!(
             path.is_absolute(),
             "Native source directory must be absolute"
@@ -75,7 +69,10 @@ impl Directory {
             stamp: (m.dev(), m.ino()),
         })
     }
-    fn current(&self) -> bool {
+    pub(super) fn stamp(&self) -> (u64, u64) {
+        self.stamp
+    }
+    pub(super) fn current(&self) -> bool {
         fs::symlink_metadata(&self.path)
             .is_ok_and(|m| m.is_dir() && (m.dev(), m.ino()) == self.stamp)
     }
@@ -124,6 +121,7 @@ impl Directory {
         let c = CString::new(name)?;
         let flags = libc::O_NOFOLLOW
             | libc::O_CLOEXEC
+            | libc::O_NONBLOCK
             | if create {
                 libc::O_CREAT | libc::O_RDWR
             } else {
@@ -144,7 +142,7 @@ impl Directory {
         );
         Ok(file)
     }
-    fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<Option<T>> {
+    pub(super) fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<Option<T>> {
         let file = match self.file(name, false) {
             Ok(f) => f,
             Err(e)
@@ -163,7 +161,7 @@ impl Directory {
         );
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
-    fn write<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
+    pub(super) fn write<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
         valid_name(name)?;
         ensure!(self.current(), "Native source namespace changed");
         let bytes = serde_json::to_vec(value)?;
@@ -243,7 +241,7 @@ fn valid_name(name: &str) -> Result<()> {
     );
     Ok(())
 }
-fn boot() -> Result<String> {
+pub(super) fn boot() -> Result<String> {
     Ok(fs::read_to_string("/proc/sys/kernel/random/boot_id")?
         .trim()
         .to_owned())
@@ -548,19 +546,6 @@ pub fn run(data: &Path) -> Result<()> {
     broker.run()
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-pub struct Binding {
-    pub version: u8,
-    pub project: String,
-    pub pane: usize,
-    pub terminal_epoch: String,
-    pub owner: Identity,
-    pub source_id: String,
-    pub source_epoch: String,
-    pub launch_digest: String,
-    /// None means the intent was persisted but its delivery/outcome is unknown.
-    pub source: Option<Reference>,
-}
 fn slot_shape(project: &str, pane: usize, epoch: &str) -> Result<()> {
     ensure!(
         !project.is_empty()
@@ -582,7 +567,7 @@ fn slot_shape(project: &str, pane: usize, epoch: &str) -> Result<()> {
     Ok(())
 }
 impl Binding {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         slot_shape(&self.project, self.pane, &self.terminal_epoch)?;
         self.owner.validate()?;
         ensure!(self.version == 1, "Unsupported native pane record");

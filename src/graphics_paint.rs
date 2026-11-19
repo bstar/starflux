@@ -274,7 +274,7 @@ pub fn compose(
         _memory: memory,
     })
 }
-fn over(destination: &mut [u8], source: [u8; 4]) {
+pub(crate) fn over(destination: &mut [u8], source: [u8; 4]) {
     let sa = u32::from(source[3]);
     if sa == 0 {
         return;
