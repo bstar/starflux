@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import pty
 import secrets
 import signal
@@ -1923,8 +1924,18 @@ GLib.MainLoop().run()
                 os.close(presenter_slave);processes.append(presenter)
                 remote_rendered=threading.Event()
                 local_rendered_after_return=threading.Event()
-                origin_marker=('SESSION_PROOF_PID='+str(original_pid)).encode()
-                marker=('SESSION_PROOF_PID='+str(ninth_pid)).encode()
+                def origin_text():
+                    found=re.findall(r'SESSION_PROOF_PID=[0-9]+',api('panes.capture',dict(project=name,pane=1))['text'])
+                    return found[-1] if found else None
+                origin_marker=wait(origin_text,'the local pane did not print its marker').encode()
+                # The pane's top process may be a shell wrapper whose child prints
+                # the marker (some /bin/sh implementations fork the last command),
+                # so read the marker pane 9 actually shows.
+                def ninth_marker():
+                    text=api('panes.capture',dict(project=second_project,pane=9),machine=second['id'])['text']
+                    found=re.findall(r'SESSION_PROOF_PID=[0-9]+',text)
+                    return found[-1] if found else None
+                marker=wait(ninth_marker,'pane 9 did not print its marker').encode()
                 switch_output=[0,b'']
                 def drain_switch():
                     tail=b''
