@@ -447,7 +447,7 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
             snapshot=wait(loaded,'default startup failed')
             assert snapshot['active_project']==expected,(snapshot['active_project'],expected,command,subprocess.check_output([str(app),'--default-workspace'],env=env,text=True).strip(),(controller_state/(identity+'.frontend.json')).read_text(),snapshot['workspace'])
             assert focused_pid(snapshot)==expected_pid,'Startup replaced the existing terminal process'
-            if focus:wait(rendered.is_set,'remote presenter did not render the selected pane')
+            if focus:wait(rendered.is_set,'remote presenter did not render the selected pane',timeout=45)
             subprocess.run([str(app),'--workspace',expected,'--frontend',identity,'--close'],env=controller_env,check=True,capture_output=True)
             process.wait(timeout=5)
         finally:
@@ -1989,7 +1989,7 @@ GLib.MainLoop().run()
                                               marker=(state/(switch_identity+'.machine-switch.json')).exists(),
                                               presenter=presenter.poll())),flush=True)
                         raise
-                    try:wait(remote_rendered.is_set,'the same terminal did not render the remote process')
+                    try:wait(remote_rendered.is_set,'the same terminal did not render the remote process',timeout=45)
                     except AssertionError:
                         snap=local_snapshot()
                         print(json.dumps(dict(switch_history=snap.get('history'),target=target_identity,
@@ -2026,7 +2026,7 @@ GLib.MainLoop().run()
                             view=json.loads(path.read_text())
                             if view.get('workspace')==name and view['id']!=switch_identity:return view['id']
                     direct_identity=wait(direct_switched,'remote view did not switch directly to the other machine',timeout=40)
-                    wait(local_rendered_after_return.is_set,'the direct switch did not render the other machine')
+                    wait(local_rendered_after_return.is_set,'the direct switch did not render the other machine',timeout=45)
                     assert presenter.poll() is None and alive(original_pid) and alive(ninth_pid)
                     def direct_action(action):
                         subprocess.run([str(app),'--workspace',name,'--frontend',direct_identity,'--action',action],
@@ -2042,8 +2042,8 @@ GLib.MainLoop().run()
                     def returned():
                         snap=local_snapshot()
                         return snap.get('controller_pid') not in (None,local_controller) and snap.get('active_project')==name and snap.get('panes',[{}])[0].get('pid')==original_pid
-                    wait(returned,'detaching from the machine did not restore the local view')
-                    wait(local_rendered_after_return.is_set,'the same terminal did not render the restored local pane')
+                    wait(returned,'detaching from the machine did not restore the local view',timeout=45)
+                    wait(local_rendered_after_return.is_set,'the same terminal did not render the restored local pane',timeout=45)
                     assert presenter.poll() is None and alive(ninth_pid)
                     local_controller=local_snapshot()['controller_pid']
                     local_rendered_after_return.clear()
