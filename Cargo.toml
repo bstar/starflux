@@ -13,7 +13,7 @@ exclude = ["vendor/vt100"]
 resolver = "2"
 
 [workspace.dependencies]
-starkit = { git = "https://github.com/bstar/starkit", rev = "874694d4a673d45ef02e8692692599537f213027", version = "0.13", default-features = false, features = ["terminal-graphics", "media"] }
+starkit = { git = "https://github.com/bstar/starkit", tag = "v0.24.0", version = "0.24", default-features = false, features = ["terminal-graphics", "media"] }
 
 [features]
 default = ["lossless-canvas", "gpu-renderer"]
