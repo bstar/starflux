@@ -1141,7 +1141,7 @@ GLib.MainLoop().run()
             if args.agent_mux:
                 hp=snapshot['panes'][0];hidden=('background-'+PROGRAM+'-')+secrets.token_hex(3)
                 source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which((PROGRAM)),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label=('Hidden '+DISPLAY),cwd=str(tmp),agent=None)})
-                config.update(workspace=hidden,label=('Background '+DISPLAY),tmux=None,agent_mux=source)
+                config.update({PROGRAM:source},workspace=hidden,label=('Background '+DISPLAY),tmux=None)
                 (projects/(hidden+'.json')).write_text(json.dumps(config));(projects/(hidden+'.model.json')).write_text(json.dumps(model))
                 (projects/'catalog-version').write_bytes(os.urandom(16))
                 wait(lambda:hidden in a.snapshot().get('project_navigation',{}).get('visible',[]),('hidden '+DISPLAY+' project did not enter catalog'))

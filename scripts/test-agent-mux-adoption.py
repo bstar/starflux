@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Headless live transfer + rollback with a private the agent multiplexer server and fake shells.
+"""Headless live transfer + rollback with a private agent multiplexer server and fake shells.
 
-No display, real workspace, agent prompt, or existing the agent multiplexer process is touched.
+No display, real workspace, agent prompt, or existing agent multiplexer process is touched.
 """
 from agent_mux import DISPLAY, ENV, PROGRAM
 import copy
@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
+root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
     tmp=Path(tmp);config=tmp/('config/'+PROGRAM);config.mkdir(parents=True)
     runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
@@ -91,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         assert len(plan['views'])==1 and plan['views'][0]['project']==second
         applied=subprocess.run(['python3',str(root/'scripts/migrate-agent-mux.py'),'apply',str(plan_path)],env=env,capture_output=True,text=True,timeout=45)
         if applied.returncode:
-            raise AssertionError(applied.stderr+'\n'+(Path(plan['run'])/'broker.log').read_text()[-2000:])
+            raise AssertionError(applied.stderr+'\n'+((Path(plan['run'])/'broker.log').read_text()[-2000:] if (Path(plan['run'])/'broker.log').exists() else 'no broker log'))
         status=json.loads(applied.stdout.strip().splitlines()[-1]);broker_pid=status['broker_pid']
         source.wait(timeout=8);legacy.wait(timeout=5)
         successor=plan['views'][0]['successor']

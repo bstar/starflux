@@ -190,7 +190,7 @@ impl Source {
             .as_str()
             .filter(|cwd| !cwd.is_empty())
             .or_else(|| p["cwd"].as_str());
-        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().unwrap_or("Multiplexer shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":crate::agent_mux::PROGRAM,"read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
+        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().map_or_else(|| format!("{} shell", display_name()), String::from),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":crate::agent_mux::PROGRAM,"read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
     }
 }
 pub fn import(session: &str) -> Result<Config> {
@@ -401,7 +401,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         imported.push(json!({"workspace":workspace,"source_workspace":wid,"label":label,"directory":directory,"panes":ws_panes.len(),"order":order}));
     }
     let config = selected.context("Multiplexer has no workspaces to import")?;
-    let report = json!({"source":"Multiplexer","session":session,"workspaces":count,"tabs":tabs.len(),"panes":pane_count,"agents":snap["agents"].as_array().map_or(0,Vec::len),"selected":config.workspace,"read_only":false,"live_terminal_attachments":true,"source_processes_restarted":false,"collection":collection,"projects":imported});
+    let report = json!({"source":display_name(),"session":session,"workspaces":count,"tabs":tabs.len(),"panes":pane_count,"agents":snap["agents"].as_array().map_or(0,Vec::len),"selected":config.workspace,"read_only":false,"live_terminal_attachments":true,"source_processes_restarted":false,"collection":collection,"projects":imported});
     starcore::fs::write_private(
         &root.join(format!("{collection}.import.json")),
         &serde_json::to_vec_pretty(&report)?,

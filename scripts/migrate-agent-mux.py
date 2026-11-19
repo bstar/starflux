@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare/back up and apply an explicitly requested, live default agent-multiplexer migration."""
-PROGRAM=__import__('os').environ['STARFLUX_AGENT_MUX_PROGRAM'];ENV=PROGRAM.upper();DISPLAY=PROGRAM[:1].upper()+PROGRAM[1:]
+# Embedded runs get the name from STAR/FLUX; a direct run reads it beside this file.
+PROGRAM=__import__('os').environ.get('STARFLUX_AGENT_MUX_PROGRAM') or __import__('agent_mux').PROGRAM;ENV=PROGRAM.upper();DISPLAY=PROGRAM[:1].upper()+PROGRAM[1:]
 import base64
 import copy
 import datetime
@@ -146,7 +147,7 @@ def prepare(executable,proxy):
             pair=[aliases.get(i,i) for i in state['split_panes']]
             if len(set(pair))!=2 or any(i not in ids for i in pair):state.update(split=False,split_panes=None)
             else:state['split_panes']=pair
-        config.update(agent_mux=None,agent=None)
+        config.update({PROGRAM:None},agent=None)
         for target,value in [(path,config),(root/(name+'.json'),config),(model_path,state)]:
             if target.exists():atomic(run/'backups'/target.parent.name/target.name,target.read_bytes())
             before=json.loads(target.read_text()) if target.exists() else None

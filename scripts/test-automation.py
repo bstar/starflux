@@ -18,7 +18,7 @@ import time
 import uuid
 
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
-if args.agent_mux and not args.session_imports:parser.error'--agent-mux requires --session-imports'
+if args.agent_mux and not args.session_imports:parser.error('--agent-mux requires --session-imports')
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
@@ -363,7 +363,7 @@ while True:
         assert c.call('panes.get',dict(project=project,pane=1))['target']['pid']==original['pid'],'unrelated agent was replaced'
         data=tmp/'data/starflux/projects';slow='slow-proof';slow_source=tmp/'slow-source'
         slow_source.write_text('#!/bin/sh\nsleep 10\n');slow_source.chmod(0o700)
-        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,agent_mux=dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)}))
+        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,**{PROGRAM:dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)})})
         (data/(slow+'.json')).write_text(json.dumps(config));(data/(slow+'.model.json')).write_text((data/(project+'.model.json')).read_text())
         interrupted=str(uuid.uuid4());slow_report={**report,'run_id':str(uuid.uuid4()),'sequence':1}
         started=time.monotonic();result=c.call('agents.report',dict(project=slow,pane=1,report=slow_report),interrupted,ok=False,deadline_ms=400)

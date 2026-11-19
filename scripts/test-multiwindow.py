@@ -39,7 +39,7 @@ assert not args.plugin_popup or (args.apps and args.video),'--plugin-popup requi
 assert not args.video or args.apps,'--video requires --apps'
 assert not args.pointer_latency or args.video,'--pointer-latency requires --video'
 root=Path(__file__).resolve().parents[1]
-app=root/'scripts/run-local.sh'
+app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
     tmp=Path(tmp); runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
     state=runtime/'starflux';state.mkdir(mode=0o700)

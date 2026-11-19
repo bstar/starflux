@@ -376,7 +376,7 @@ pub(crate) fn import_prepared(
         };
         save(&Session {
             id: group(&config),
-            name: format!("Multiplexer / {}", entry.name),
+            name: format!("{} / {}", crate::agent_mux::display_name(), entry.name),
             project: config.workspace.clone(),
         })?;
         return Ok(config);

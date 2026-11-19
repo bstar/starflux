@@ -5936,17 +5936,24 @@ impl Controller for Workspace {
                         if let Some(item) = menu.items.last_mut() {
                             item.label = match result {
                                 Ok(health) if health["pid"].is_number() => format!(
-                                    "Multiplexer pane {} · shell PID {}",
+                                    "{} pane {} · shell PID {}",
+                                    crate::agent_mux::display_name(),
                                     health["pane_id"].as_str().unwrap_or("unknown"),
                                     health["pid"]
                                 ),
                                 Ok(health) => health["identity_error"]
                                     .as_str()
-                                    .unwrap_or("Multiplexer process identity unavailable")
-                                    .into(),
-                                Err(error) => {
-                                    format!("Multiplexer process identity unavailable · {error}")
-                                }
+                                    .map(String::from)
+                                    .unwrap_or_else(|| {
+                                        format!(
+                                            "{} process identity unavailable",
+                                            crate::agent_mux::display_name()
+                                        )
+                                    }),
+                                Err(error) => format!(
+                                    "{} process identity unavailable · {error}",
+                                    crate::agent_mux::display_name()
+                                ),
                             };
                             item.hint = "Read only".into();
                         }
