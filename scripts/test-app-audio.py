@@ -123,7 +123,7 @@ threading.Thread(target=sound,daemon=True).start();App().run([])
   assert not state()['audio']['active']
   action('audio:unmute');wait(lambda:state()['audio']['active'],'Reopened audio did not reconnect')
   wait(lambda:amplitude()>500,'Restart lost audio')
-  result={'passed':True,'authenticated_ssh_audio':True,'host_output_isolated':True,'bounded_eight_block_credits':True,'reconnect_preserves_app':True,'local_kit_playback_peak':audible,'native_pipewire_app_adopted':True,'mute_survives_restart':True,'header_mute_button_works':True,'mute_is_silent':True,'unmute_restores_playback':True,'original_user_apps_touched':False}
+  result={'passed':True,'authenticated_ssh_audio':True,'host_output_isolated':True,'bounded_eight_block_credits':True,'reconnect_preserves_app':True,'local_core_playback_peak':audible,'native_pipewire_app_adopted':True,'mute_survives_restart':True,'header_mute_button_works':True,'mute_is_silent':True,'unmute_restores_playback':True,'original_user_apps_touched':False}
   (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
  except BaseException:
   for p in runtime.glob(name+'*'):
