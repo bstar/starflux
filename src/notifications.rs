@@ -783,9 +783,35 @@ impl FocusWriter {
         let (tx, rx) = crossbeam_channel::bounded::<(String, Focus)>(1);
         let worker = rx.clone();
         std::thread::spawn(move || {
+            let mut journaled: Option<(String, usize, Option<String>)> = None;
             while let Ok(mut update) = worker.recv() {
                 while let Ok(latest) = worker.try_recv() {
                     update = latest;
+                }
+                let focus = &update.1;
+                let current = (focus.project.clone(), focus.pane, focus.epoch.clone());
+                if journaled.as_ref() != Some(&current) {
+                    // Focus hooks follow the selected pane and project, once per
+                    // change, whether or not the window has desktop focus.
+                    if journaled
+                        .as_ref()
+                        .is_none_or(|(project, ..)| *project != focus.project)
+                    {
+                        let _ = crate::automation::journal::occurred(
+                            &format!("projects/{}", focus.project),
+                            "focused",
+                            serde_json::json!({"id": focus.project, "frontend": update.0}),
+                        );
+                    }
+                    let _ = crate::automation::journal::occurred(
+                        &format!("panes/{}/{}", focus.project, focus.pane + 1),
+                        "focused",
+                        serde_json::json!({
+                            "project": focus.project, "pane": focus.pane + 1,
+                            "epoch": focus.epoch, "frontend": update.0,
+                        }),
+                    );
+                    journaled = Some(current);
                 }
                 let _ = (|| -> Result<()> {
                     let root = crate::runtime::root()?;

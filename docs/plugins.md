@@ -349,6 +349,21 @@ A hook declares `id`, `on`, `action` and optional `states`. Supported events are
 Session hooks carry the saved-session resource and event data with a null project
 context. Removal carries a null data tombstone.
 
+Four discrete occurrences complement those resource changes:
+
+| Event | When | Data |
+| --- | --- | --- |
+| `pane.moved` | A live terminal moved to another project | `project`, `pane`, `epoch`, `from` (`project`, `pane`) |
+| `pane.focused` | A frontend selected another pane | `project`, `pane`, `epoch`, `frontend` |
+| `project.focused` | A frontend switched to another project | `id`, `frontend` |
+| `pane.exited` | An open project's terminal process ended | `project`, `pane`, `epoch` |
+
+Focus follows the selected pane and project whether or not the window has
+desktop focus, once per change per frontend. Exits are observed by a frontend
+showing that project, so a project nobody has open reports no exit event; its
+later `pane.removed` change still arrives. Occurrences are not part of the
+resource snapshot and are never reported as created or removed.
+
 State filters accept `unknown`, `idle`, `working`, `needs_input`,
 `waiting_for_approval`, `completed`, `failed`, `stopped`, `backend_unavailable`.
 
@@ -413,7 +428,7 @@ from visible native terminal URL text and OSC 8 metadata. Normal persistent plug
 terminals and frontend-targeted placement are implemented. Transient popup
 terminals have focused native UI, actual cells-client and App Space acceptance;
 broader lifecycle and actual graphical-host capture remain under audit.
-Broader hook semantics remain unfinished. The native ABI should not be presented
+The native ABI should not be presented
 as compatible with every agent multiplexer plugin. The queue/worker bounds and hook backpressure have focused concurrent-publisher
 coverage. Multi-plugin scheduling, source/lifecycle failure coverage and broader
 service-restart semantics remain under audit.

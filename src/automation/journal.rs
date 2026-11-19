@@ -266,6 +266,25 @@ pub(crate) fn sessions_saved() -> Result<()> {
     }
     Ok(())
 }
+/// Journal a discrete occurrence (`pane.moved`, `pane.focused`,
+/// `pane.exited`, `project.focused`) for hooks and subscribers. Unlike
+/// resource changes it is not part of the state snapshot, so it is never
+/// reported as created or removed.
+pub(crate) fn occurred(resource: &str, change: &str, data: Value) -> Result<()> {
+    let root = root()?;
+    let _lock = project_sync::Transaction::acquire(root.join("events.lock"))?;
+    let path = root.join("events.json");
+    let mut journal = load(&path)?;
+    journal.append(resource, data, change, "domain")?;
+    persist(&path, &serde_json::to_vec(&journal)?)
+}
+/// [`occurred`] off the caller's thread; a frontend must not wait on the
+/// journal lock, and a lost occurrence only means a hook does not run.
+pub(crate) fn occurred_later(resource: String, change: &'static str, data: Value) {
+    std::thread::spawn(move || {
+        let _ = occurred(&resource, change, data);
+    });
+}
 pub(crate) fn read(cursor: &str) -> Result<Vec<Change>> {
     let root = root()?;
     let _lock = project_sync::Transaction::acquire(root.join("events.lock"))?;
@@ -274,6 +293,49 @@ pub(crate) fn read(cursor: &str) -> Result<Vec<Change>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn occurrences_are_journaled_without_entering_resource_state() {
+        let mut j = Journal::default();
+        let cursor = j.cursor();
+        let pane = json!({"project":"p","pane":1});
+        j.update(
+            [("panes/p/1".into(), pane.clone())].into_iter().collect(),
+            |_| true,
+            "domain",
+        )
+        .unwrap();
+        for change in ["focused", "exited", "moved"] {
+            j.append("panes/p/1", pane.clone(), change, "domain")
+                .unwrap();
+        }
+        j.append("projects/p", json!({"id":"p"}), "focused", "domain")
+            .unwrap();
+        let kinds = j
+            .changes(&cursor)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                "pane.created",
+                "pane.focused",
+                "pane.exited",
+                "pane.moved",
+                "project.focused"
+            ]
+        );
+        // The pane's resource state is unchanged, so the next update is silent.
+        assert!(
+            !j.update(
+                [("panes/p/1".into(), pane)].into_iter().collect(),
+                |_| true,
+                "domain",
+            )
+            .unwrap()
+        );
+    }
     #[test]
     fn transitions_survive_rapid_updates_and_retention_is_explicit() {
         let mut j = Journal::default();

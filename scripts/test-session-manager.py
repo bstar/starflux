@@ -620,7 +620,28 @@ GLib.MainLoop().run()
                 assert not (slots/name/'p0.json').exists() and (slots/'extra-a'/('p'+slot+'.json')).exists(),'broker slot did not move'
                 # The stale target no longer identifies a terminal in the original project.
                 move_api('panes.move_project',dict(target=target,project='extra-b'),write=True,ok=False)
-                print(json.dumps(dict(result='PASS',moved_between_projects=True,through_tab_menu=args.move_project_ui,process_preserved=True,source_identity_preserved=True,stale_move_rejected=True,ssh=args.ssh,cells=args.cells)),flush=True)
+                # Moves, focus and exits are journaled as discrete hook events.
+                def occurrences(kind):
+                    journals=list((tmp/'data').rglob('automation/events.json'))
+                    return [e for j in journals for e in json.loads(j.read_text())['events'] if e['kind']==kind]
+                moves=wait(lambda:occurrences('pane.moved'),'move was not journaled')
+                assert moves[-1]['data']['from']=={'project':name,'pane':1} and moves[-1]['data']['project']=='extra-a',moves
+                wait(lambda:any(e['data']['project']==name for e in occurrences('pane.focused')),'pane focus was not journaled')
+                wait(lambda:any(e['data']['id']==name for e in occurrences('project.focused')),'project focus was not journaled')
+                # Exits are observed for the open project's panes.
+                move_api('panes.create',dict(project=name,label='Exit hook'),write=True)
+                def remaining():
+                    return [p for p in a.snapshot()['panes'] if p.get('pid') and p['pid']!=moving_pid and p.get('alive')]
+                live=wait(remaining,'the created pane did not start',timeout=30)
+                # The pane pid is its supervisor; end the shell under it.
+                def children(pid):
+                    try:return [int(c) for t in Path('/proc',str(pid),'task').iterdir() for c in (t/'children').read_text().split()]
+                    except FileNotFoundError:return []
+                shells=wait(lambda:children(live[0]['pid']),'created pane has no shell')
+                os.kill(shells[0],signal.SIGKILL)
+                exited=wait(lambda:[e for e in occurrences('pane.exited') if e['data']['project']==name],'pane exit was not journaled',timeout=30)[-1]['data']
+                assert exited['epoch'],exited
+                print(json.dumps(dict(result='PASS',hook_occurrences=True,moved_between_projects=True,through_tab_menu=args.move_project_ui,process_preserved=True,source_identity_preserved=True,stale_move_rejected=True,ssh=args.ssh,cells=args.cells)),flush=True)
                 raise SystemExit(0)
         original_pid=a.snapshot()['panes'][0]['pid']
         if claude_resume:

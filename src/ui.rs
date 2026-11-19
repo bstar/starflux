@@ -5963,6 +5963,21 @@ impl Controller for Workspace {
                     if stopped.load(Ordering::Acquire) {
                         continue;
                     }
+                    let was_alive = self
+                        .health
+                        .get(&(project.clone(), pane))
+                        .is_some_and(|old| old["alive"] == true);
+                    if was_alive && value["alive"] != true && value["reconnecting"] != true {
+                        // Epochs are known here only for the open project.
+                        let epoch = (project == self.config.workspace)
+                            .then(|| self.state.terminal_epochs.get(&pane).cloned())
+                            .flatten();
+                        crate::automation::journal::occurred_later(
+                            format!("panes/{project}/{}", pane + 1),
+                            "exited",
+                            json!({"project": project, "pane": pane + 1, "epoch": epoch}),
+                        );
+                    }
                     if value["exited"] == true && value["reaped"] == true {
                         if let Err(error) = self.remove_exited_terminal(&project, pane) {
                             self.note(format!("Close exited terminal: {error:#}"));
