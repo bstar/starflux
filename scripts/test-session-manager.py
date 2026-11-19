@@ -1784,6 +1784,11 @@ GLib.MainLoop().run()
                 try:first,other=wait(agent_overview,'independent controller agents not found',timeout=45)
                 except AssertionError:
                     print(json.dumps(dict(agent_pages=api('machines.agents',dict(machines=[saved['id'],second['id'],broken_page['id']])))),flush=True)
+                    for label,call in [('remote_first',lambda:api('panes.get',dict(project=name,pane=1),machine=saved['id'])),
+                                       ('local_first',lambda:api('panes.get',dict(project=name,pane=1))),
+                                       ('remote_live',lambda:api('agents.live',dict(),machine=saved['id']))]:
+                        try:print(json.dumps({label:call()})[:3000],flush=True)
+                        except Exception as error:print(label,'failed',error,flush=True)
                     raise
                 assert any(row['project']==name and row['harness']=='codex' for row in first),first
                 assert [row['project'] for row in other]==[second_project],other
