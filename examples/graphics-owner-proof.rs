@@ -2,6 +2,8 @@
 //! tmux server, desktop window, agent or saved configuration is accessed.
 #[path = "../src/graphics_decode.rs"]
 mod graphics_decode;
+#[path = "../src/graphics_placeholders.rs"]
+mod graphics_placeholders;
 #[path = "../src/graphics_reply.rs"]
 mod graphics_reply;
 #[path = "../src/graphics_requests.rs"]

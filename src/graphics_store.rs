@@ -103,6 +103,9 @@ pub struct Store {
     key: u64,
     images: VecDeque<Image>,
     placements: Vec<Placement>,
+    /// Virtual placements (`U=1`): shown only where Unicode placeholder cells
+    /// reference their image, never placed on the grid directly.
+    virtuals: Vec<Placement>,
     bytes: usize,
     limits: Limits,
     buffer_epochs: [uuid::Uuid; 2],
@@ -211,6 +214,7 @@ impl Store {
             key: 0,
             images: VecDeque::new(),
             placements: Vec::new(),
+            virtuals: Vec::new(),
             bytes: 0,
             limits: Limits::default(),
             buffer_epochs: [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()],
@@ -248,6 +252,7 @@ impl Store {
             let image = self.images.remove(index).unwrap();
             self.bytes -= image.pixels.rgba.capacity();
             self.placements.retain(|p| p.image != key);
+            self.virtuals.retain(|p| p.image != key);
         }
     }
     fn image(&self, alternate: bool, id: u32) -> Option<&Image> {
@@ -307,9 +312,14 @@ impl Store {
         let pixels = decoded?;
         let controls = &transmission.controls;
         let id = controls.number(b'i', 0)?;
-        if controls.has(b'I') || controls.has(b'U') || controls.has(b'P') || controls.has(b'Q') {
+        if controls.has(b'I')
+            || controls.has(b'P')
+            || controls.has(b'Q')
+            || (controls.has(b'U') && controls.number(b'U', 0)? != 1)
+        {
             return Err(Error::Unsupported.into());
         }
+        let virtual_placement = controls.number(b'U', 0)? == 1;
         match controls.character(b'a', b't')? {
             b'q' => {
                 Self::validate_pixels(pixels.as_ref().ok_or(Error::Invalid)?)?;
@@ -378,6 +388,9 @@ impl Store {
                     alternate,
                     pixels: Arc::new(ImageData { pixels, retained }),
                 });
+                if virtual_placement {
+                    return Ok(self.place_virtual(place));
+                }
                 self.finish_placement(place, controls)
             }
             b'p' => {
@@ -393,6 +406,9 @@ impl Store {
                     image.key,
                     alternate,
                 )?;
+                if virtual_placement {
+                    return Ok(self.place_virtual(Some(place)));
+                }
                 let replaces = place.id != 0
                     && self
                         .placements
@@ -422,6 +438,13 @@ impl Store {
                             }
                             !visible
                         });
+                        self.virtuals.retain(|p| {
+                            let ours = p.alternate == alternate;
+                            if ours {
+                                deleted.push(p.image);
+                            }
+                            !ours
+                        });
                         if selector == b'A' {
                             for key in deleted {
                                 if !self.placements.iter().any(|p| p.image == key) {
@@ -435,7 +458,13 @@ impl Store {
                             self.placements.retain(|p| {
                                 p.image != key || (placement_id != 0 && p.id != placement_id)
                             });
-                            if selector == b'I' && !self.placements.iter().any(|p| p.image == key) {
+                            self.virtuals.retain(|p| {
+                                p.image != key || (placement_id != 0 && p.id != placement_id)
+                            });
+                            if selector == b'I'
+                                && !self.placements.iter().any(|p| p.image == key)
+                                && !self.virtuals.iter().any(|p| p.image == key)
+                            {
                                 self.remove(key);
                             }
                         }
@@ -459,6 +488,86 @@ impl Store {
             return Err(Error::TooLarge);
         }
         Ok(())
+    }
+    /// Record a virtual placement; the cursor does not move.
+    fn place_virtual(&mut self, placement: Option<Placement>) -> Outcome {
+        if let Some(p) = placement {
+            self.virtuals
+                .retain(|old| old.image != p.image || old.id != p.id);
+            if self.virtuals.len() >= self.limits.placements {
+                self.virtuals.remove(0);
+            }
+            self.virtuals.push(p);
+        }
+        Outcome::default()
+    }
+    /// Tiles for the Unicode placeholder cells visible on `screen`, as one-cell
+    /// placements of their virtual placement's image. Bounded to 4096 cells.
+    pub fn placeholder_tiles(&self, screen: &vt100::Screen, cell: [u16; 2]) -> Vec<Placement> {
+        let alternate = screen.alternate_screen();
+        let (rows, columns) = screen.size();
+        let mut tiles = Vec::new();
+        for row in 0..rows {
+            let mut previous = None;
+            for column in 0..columns {
+                let Some(content) = screen.cell(row, column) else {
+                    previous = None;
+                    continue;
+                };
+                let tile = crate::graphics_placeholders::decode(
+                    content.contents(),
+                    content.fgcolor(),
+                    previous,
+                );
+                previous = tile;
+                let Some(tile) = tile else { continue };
+                let Some(image) = self.image(alternate, tile.image) else {
+                    continue;
+                };
+                let Some(virtual_placement) = self
+                    .virtuals
+                    .iter()
+                    .rev()
+                    .find(|p| p.image == image.key && p.alternate == alternate)
+                else {
+                    continue;
+                };
+                let Ok(fitted) = virtual_placement.at_cell(cell) else {
+                    continue;
+                };
+                let [grid_columns, grid_rows] = fitted.cells;
+                if tile.column >= grid_columns || tile.row >= grid_rows {
+                    continue;
+                }
+                let [x, y, w, h] = virtual_placement.source;
+                let x0 = x + tile.column * w / grid_columns;
+                let x1 = x + (tile.column + 1) * w / grid_columns;
+                let y0 = y + tile.row * h / grid_rows;
+                let y1 = y + (tile.row + 1) * h / grid_rows;
+                if x1 <= x0 || y1 <= y0 {
+                    continue;
+                }
+                tiles.push(Placement {
+                    image: image.key,
+                    id: 0,
+                    alternate,
+                    origin: (row, column),
+                    source: [x0, y0, x1 - x0, y1 - y0],
+                    offset: [0, 0],
+                    inset: [0, 0],
+                    pixels: [u32::from(cell[0]), u32::from(cell[1])],
+                    cells: [1, 1],
+                    z: virtual_placement.z,
+                    requested_cells: [1, 1],
+                    row_shift: 0,
+                    clip_rows: None,
+                });
+                if tiles.len() >= 4096 {
+                    return tiles;
+                }
+            }
+        }
+        tiles
     }
     fn finish_placement(
         &mut self,
@@ -600,6 +709,53 @@ mod tests {
     use super::*;
     use crate::graphics_transfer::Assembler;
     use base64::{Engine, engine::general_purpose::STANDARD};
+    #[test]
+    fn virtual_placements_show_only_through_unicode_placeholder_tiles() {
+        let mut store = Store::new(generation());
+        let transmission = Assembler::default()
+            .push(
+                format!(
+                    "Ga=T,U=1,f=32,s=2,v=1,c=2,r=1,i=7;{}",
+                    STANDARD.encode([9; 8])
+                )
+                .as_bytes(),
+                (0, 0),
+            )
+            .unwrap()
+            .unwrap();
+        let stamp = store.stamp(1, false);
+        let outcome = store
+            .apply(
+                &stamp,
+                &transmission,
+                transmission.decode_image().map(Some),
+                geometry(),
+            )
+            .unwrap();
+        assert_eq!(
+            outcome,
+            Outcome::default(),
+            "a virtual placement moves nothing"
+        );
+        assert_eq!(store.placements(false).count(), 0);
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process("\x1b[38;5;7m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\u{305}\u{30D}".as_bytes());
+        let tiles = store.placeholder_tiles(parser.screen(), [8, 16]);
+        assert_eq!(
+            tiles
+                .iter()
+                .map(|t| (t.origin, t.source))
+                .collect::<Vec<_>>(),
+            [((0, 0), [0, 0, 1, 1]), ((0, 1), [1, 0, 1, 1])]
+        );
+        assert!(
+            tiles
+                .iter()
+                .all(|t| t.pixels == [8, 16] && t.cells == [1, 1])
+        );
+        apply(&mut store, 2, false, &command("a=d,d=A")).unwrap();
+        assert!(store.placeholder_tiles(parser.screen(), [8, 16]).is_empty());
+    }
     #[test]
     fn shared_retained_budget_rejects_growth_without_losing_old_images() {
         let budget = Budget::new(8);

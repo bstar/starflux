@@ -1,6 +1,8 @@
 //! Disposable read-only transport acceptance executable. Not an installed app.
 #[path = "../src/graphics_paint.rs"]
 mod graphics_paint;
+#[path = "../src/graphics_placeholders.rs"]
+mod graphics_placeholders;
 #[path = "../src/graphics_resources.rs"]
 mod graphics_resources;
 #[path = "../src/graphics_store.rs"]

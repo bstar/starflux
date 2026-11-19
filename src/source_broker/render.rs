@@ -251,10 +251,13 @@ impl Job {
         let s = &self.snapshot;
         let mut resources = resources.clone();
         resources.working = resources.presentation.clone();
-        let mut raster = crate::graphics_paint::compose(
-            s.store
-                .as_ref()
-                .context("Graphics snapshot is unavailable")?,
+        let store = s
+            .store
+            .as_ref()
+            .context("Graphics snapshot is unavailable")?;
+        let tiles = store.placeholder_tiles(&s.screen, s.size.cell);
+        let mut raster = crate::graphics_paint::compose_tiles(
+            store,
             crate::graphics_paint::View {
                 origin: [0, 0],
                 width: u32::from(s.size.columns) * u32::from(s.size.cell[0]),
@@ -263,6 +266,7 @@ impl Job {
                 alternate: s.screen.alternate_screen(),
             },
             &[],
+            &tiles,
             &resources,
         )
         .map_err(|e| anyhow::anyhow!("Source composition: {e:?}"))?;

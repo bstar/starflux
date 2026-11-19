@@ -156,6 +156,17 @@ pub fn compose(
     masks: &[Rect],
     resources: &Resources,
 ) -> Result<Raster, Error> {
+    compose_tiles(store, view, masks, &[], resources)
+}
+/// Compose the store's placements plus one-cell `tiles` (Unicode placeholder
+/// cells), which are already at the view's cell size.
+pub fn compose_tiles(
+    store: &Store,
+    view: View,
+    masks: &[Rect],
+    tiles: &[crate::graphics_store::Placement],
+    resources: &Resources,
+) -> Result<Raster, Error> {
     let pixels = u64::from(view.width) * u64::from(view.height);
     if view.width == 0 || view.height == 0 || view.cell.iter().any(|n| *n == 0 || *n > 256) {
         return Err(Error::Invalid);
@@ -168,6 +179,11 @@ pub fn compose(
         let placement = p.at_cell(view.cell)?;
         if let Some(bounds) = bounds(&placement, view) {
             placements.push((placement, bounds));
+        }
+    }
+    for tile in tiles {
+        if let Some(bounds) = bounds(tile, view) {
+            placements.push((tile.clone(), bounds));
         }
     }
     if placements.is_empty() {
@@ -356,6 +372,11 @@ pub(crate) fn cell_text(cell: &vt100::Cell, columns: u16) -> std::borrow::Cow<'_
         return Cow::Borrowed(" ");
     }
     let text = cell.contents();
+    if text.starts_with(crate::graphics_placeholders::PLACEHOLDER) {
+        // A Unicode placeholder shows its image tile in the image planes; the
+        // host terminal must not receive the placeholder character itself.
+        return Cow::Borrowed(" ");
+    }
     if text.width() <= usize::from(columns) {
         return Cow::Borrowed(text);
     }

@@ -6,6 +6,8 @@ mod graphics_decode;
 mod graphics_owner;
 #[path = "../src/graphics_paint.rs"]
 mod graphics_paint;
+#[path = "../src/graphics_placeholders.rs"]
+mod graphics_placeholders;
 #[path = "../src/graphics_planes.rs"]
 mod graphics_planes;
 #[path = "../src/graphics_reply.rs"]

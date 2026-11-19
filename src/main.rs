@@ -31,6 +31,7 @@ mod graphics_delivery;
 mod graphics_frontend;
 mod graphics_owner;
 mod graphics_paint;
+mod graphics_placeholders;
 mod graphics_planes;
 mod graphics_reply;
 mod graphics_requests;

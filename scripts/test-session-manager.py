@@ -109,6 +109,12 @@ for line in sys.stdin:
   print('GRAPHICS_READY',flush=True)
  if line.strip()=='DELETE_GRAPHICS':
   sys.stdout.write('\\x1b_Ga=d,q=2,d=A;\\x1b\\\\');sys.stdout.flush()
+ if line.strip()=='PLACEHOLDER':
+  # A virtual placement (U=1) shown through two Unicode placeholder cells.
+  rgba=bytes(v for y in range(20) for x in range(20) for v in [255,0,0,255])
+  sys.stdout.write('\\x1b_Ga=T,U=1,q=2,f=32,s=20,v=20,c=2,r=1,i=77;'+base64.b64encode(rgba).decode()+'\\x1b\\\\')
+  sys.stdout.write('\\x1b[38;5;77m\\U0010EEEE\\u0305\\u0305\\U0010EEEE\\u0305\\u030D\\x1b[39m\\n');sys.stdout.flush()
+  print('PLACEHOLDER_READY',flush=True)
  if line.strip()=='QUERY':
   # How programs detect Kitty graphics: a graphics query followed by DA1.
   import termios,tty
@@ -550,6 +556,15 @@ GLib.MainLoop().run()
                     wait(lambda:a.snapshot()['project_state']['space']=='terminals' and any(c.get('planes',{}).get('above') for c in a.images),'terminal return did not restore retained image')
                     a.images=[];b.images=[];a.paste('DELETE_GRAPHICS');a.key('enter')
                     wait(lambda:any(c.get('op')=='planes' and not c['planes'].get('below') and not c['planes'].get('above') for c in a.images),'deleted source image stayed visible')
+                    a.images=[];a.paste('PLACEHOLDER');a.key('enter')
+                    wait(lambda:any((c.get('planes') or {}).get('above') for c in a.images),'Unicode placeholder did not show its image')
+                    # The source keeps the placeholder text; the frames sent to the
+                    # host terminal must show blank cells there instead.
+                    def frame_text(client):
+                        return '\n'.join(run.get('text','') for frame in client.frames.values()
+                                          for row in frame.get('rows',[]) for run in row.get('runs',[]))
+                    wait(lambda:'PLACEHOLDER_READY' in frame_text(a),'placeholder output did not reach the host frame')
+                    assert '\U0010EEEE' not in frame_text(a),'placeholder characters reached the host text'
                 else:
                     assert not a.images and not b.images,'cells mode received a graphical extension'
                 def terminal_text(client):return '\n'.join(t['text'] for t in client.snapshot().get('direct_terminals',[]))
@@ -558,7 +573,7 @@ GLib.MainLoop().run()
                 reply=terminal_text(a).split('QUERY_REPLY=',1)[1]
                 advertised='_Gi=31;OK' in reply and reply.index('_Gi=31;OK')<reply.index('[?')
                 assert advertised,'native terminal did not advertise Kitty graphics before DA1: '+reply[:120]
-                print(json.dumps(dict(result='PASS',native_images=not args.cells,kitty_graphics_advertised=advertised,saved_screen_images=not args.cells,lossless_planes=not args.cells,one_pixel_detail=not args.cells,review_hides_and_restores=not args.cells,app_space_switch=not args.cells,image_delete=not args.cells,cells_receive_no_graphics=args.cells,ssh=args.ssh)),flush=True)
+                print(json.dumps(dict(result='PASS',native_images=not args.cells,kitty_graphics_advertised=advertised,saved_screen_images=not args.cells,unicode_placeholders=not args.cells,lossless_planes=not args.cells,one_pixel_detail=not args.cells,review_hides_and_restores=not args.cells,app_space_switch=not args.cells,image_delete=not args.cells,cells_receive_no_graphics=args.cells,ssh=args.ssh)),flush=True)
                 raise SystemExit(0)
             if args.move_project:
                 def move_api(method,params,write=False,ok=True):

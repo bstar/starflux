@@ -10,8 +10,13 @@ SSH. `scripts/native/test-native-presenter.py`,
 `scripts/native/test-native-image-delivery.py` and the real Kitty screenshot
 proof `scripts/native/test-native-presenter-kitty.py` cover the presenter. The
 default tmux backend does not carry images. Saved screens archive and redisplay the
-visible images. File and shared-memory transfers, animation and Unicode
-placeholders are not supported yet. Existing App Space streaming is separate.
+visible images. Unicode placeholders (`U=1` virtual placements shown through
+U+10EEEE cells) are supported: each placeholder cell shows its image tile in
+the image planes and reaches the host terminal as a blank cell. File and
+shared-memory transfers and animation are not supported. File, temporary-file
+and shared-memory transfers are refused deliberately, because they would let a
+terminal program make the host read arbitrary local paths or memory. Existing
+App Space streaming is separate.
 
 The native parser now frames APC strings in output order, delivering complete
 APC bodies through callbacks. It bounds them to 8 KiB, distinguishes BEL from
@@ -372,9 +377,8 @@ This remains a candidate, not an installed backend or completed graphics parity.
 Remaining requirements include production source recovery/cleanup, compatible
 observation of existing sources, buffer-switch/resize/load coverage, host
 placement-loss recovery, larger/chunked image transport and constrained-network
-media acceptance. File/shared-memory transfers, animation and Unicode
-placeholder compatibility remain separate unsupported protocol work. Cold-start
-screen archives still do not restore image pixels. The original parity goal
+media acceptance. File/shared-memory transfers are refused by design; animation
+remains unsupported protocol work. The original parity goal
 and its unchecked requirements remain active.
 
 The final delivery implementation is asynchronous: the local relay admits an
