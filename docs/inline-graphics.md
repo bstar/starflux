@@ -9,9 +9,9 @@ restore, deletion, and that cells views receive no graphics, locally and over
 SSH. `scripts/native/test-native-presenter.py`,
 `scripts/native/test-native-image-delivery.py` and the real Kitty screenshot
 proof `scripts/native/test-native-presenter-kitty.py` cover the presenter. The
-default tmux backend does not carry images. File and shared-memory transfers,
-animation, Unicode placeholders and image pixels in cold-start archives are not
-supported yet. Existing App Space streaming is separate.
+default tmux backend does not carry images. Saved screens archive and redisplay the
+visible images. File and shared-memory transfers, animation and Unicode
+placeholders are not supported yet. Existing App Space streaming is separate.
 
 The native parser now frames APC strings in output order, delivering complete
 APC bodies through callbacks. It bounds them to 8 KiB, distinguishes BEL from

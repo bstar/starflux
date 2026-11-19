@@ -32,6 +32,64 @@ pub struct Screen {
     pub cursor: (u16, u16),
     #[serde(rename = "formatted_base64", with = "screen_bytes")]
     pub formatted: String,
+    /// SHA-256 of the image sidecar saved with this screen. The sidecar keeps
+    /// large images out of the screen record, whose size older readers bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images_digest: Option<String>,
+    /// Inline image planes visible at capture, kept in the sidecar file.
+    #[serde(skip)]
+    pub images: Option<Images>,
+}
+/// Image planes archived with a saved screen, in the presenter's wire form.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Images {
+    pub cell: [u16; 2],
+    pub planes: crate::graphics_planes::Wire,
+}
+impl std::fmt::Debug for Images {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Images({}x{})", self.planes.width, self.planes.height)
+    }
+}
+/// Encoded sidecar limit, matching the presenter's combined plane payload.
+const IMAGE_LIMIT: usize = 3 * 1024 * 1024;
+impl Images {
+    fn validate(&self) -> Result<()> {
+        use base64::Engine;
+        ensure!(
+            self.cell[0] > 0
+                && self.cell[1] > 0
+                && (1..=8192).contains(&self.planes.width)
+                && (1..=8192).contains(&self.planes.height)
+                && self.planes.bytes() <= IMAGE_LIMIT,
+            "Saved images exceed their limits"
+        );
+        for plane in [&self.planes.below, &self.planes.above]
+            .into_iter()
+            .flatten()
+        {
+            let png = base64::engine::general_purpose::STANDARD.decode(plane)?;
+            ensure!(
+                png.starts_with(b"\x89PNG\r\n\x1a\n"),
+                "Saved image plane is not a PNG"
+            );
+        }
+        Ok(())
+    }
+    fn encode(&self) -> Result<(Vec<u8>, String)> {
+        use sha2::Digest;
+        let bytes = serde_json::to_vec(self)?;
+        ensure!(
+            bytes.len() <= IMAGE_LIMIT + 4096,
+            "Saved images exceed their limits"
+        );
+        let digest = sha2::Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok((bytes, digest))
+    }
 }
 mod screen_bytes {
     use base64::Engine;
@@ -104,6 +162,8 @@ impl Screen {
                     .contents_formatted_bounded(LIMIT)
                     .context("Saved screen exceeds its formatted byte limit")?,
             )?,
+            images_digest: None,
+            images: None,
         };
         result.validate()?;
         Ok(result)
@@ -160,6 +220,7 @@ impl Screen {
             && self.cursor == other.cursor
             && self.alternate == other.alternate
             && self.formatted == other.formatted
+            && self.images_digest == other.images_digest
     }
     fn older_than(&self, current: &Self) -> bool {
         if self.observer_boot_id.is_some() && self.observer_boot_id == current.observer_boot_id {
@@ -177,6 +238,34 @@ impl Screen {
         parser.process(self.formatted.as_bytes());
         Ok(parser.screen().clone())
     }
+}
+fn images_path(project: &str, pane: usize, previous: bool) -> Result<PathBuf> {
+    Ok(path(project, pane, previous)?.with_file_name(format!(
+        "p{pane}.{}.json",
+        if previous {
+            "previous-images"
+        } else {
+            "images"
+        }
+    )))
+}
+/// Attach the sidecar images when they match the screen's recorded digest; a
+/// missing or mismatched sidecar leaves the screen without images.
+fn attach_images(screen: &mut Screen, previous: bool) {
+    let Some(expected) = screen.images_digest.clone() else {
+        return;
+    };
+    let loaded = (|| -> Result<Images> {
+        let file = open_archive(&images_path(&screen.project, screen.pane, previous)?)?;
+        let mut bytes = Vec::new();
+        file.take((IMAGE_LIMIT + 4097) as u64)
+            .read_to_end(&mut bytes)?;
+        let images: Images = serde_json::from_slice(&bytes)?;
+        images.validate()?;
+        ensure!(images.encode()?.1 == expected, "Saved images changed");
+        Ok(images)
+    })();
+    screen.images = loaded.ok();
 }
 fn read_screen(path: &std::path::Path) -> Result<Vec<u8>> {
     let file = open_archive(path).context("No saved screen is available yet")?;
@@ -200,7 +289,35 @@ fn open_archive(path: &std::path::Path) -> std::io::Result<fs::File> {
 }
 pub fn load(project: &str, pane: usize, previous: bool) -> Result<Screen> {
     let bytes = read_screen(&path(project, pane, previous)?)?;
-    decode_screen(&bytes, project, pane)
+    let mut screen = decode_screen(&bytes, project, pane)?;
+    attach_images(&mut screen, previous);
+    Ok(screen)
+}
+/// Write a screen and its image sidecar. The sidecar is written first and the
+/// screen records its digest, so a reader never pairs a screen with other images.
+fn persist_screen(screen: &Screen, previous: bool) -> Result<()> {
+    let sidecar = images_path(&screen.project, screen.pane, previous)?;
+    let mut record = screen.clone();
+    record.images_digest = match &screen.images {
+        Some(images) => {
+            images.validate()?;
+            let (bytes, digest) = images.encode()?;
+            crate::automation::persist(&sidecar, &bytes)?;
+            Some(digest)
+        }
+        None => {
+            match fs::remove_file(&sidecar) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
+            None
+        }
+    };
+    crate::automation::persist(
+        &path(&screen.project, screen.pane, previous)?,
+        &serde_json::to_vec(&record)?,
+    )
 }
 fn decode_screen(bytes: &[u8], project: &str, pane: usize) -> Result<Screen> {
     ensure!(
@@ -254,28 +371,37 @@ pub(crate) fn save(config: &Config, screen: &Screen) -> Result<()> {
     {
         return Ok(());
     }
-    let current_path = path(&screen.project, screen.pane, false)?;
     if let Ok(current) = load(&screen.project, screen.pane, false) {
         if screen.older_than(&current) {
             return Ok(());
         }
         if !current.same_owner(screen) {
-            crate::automation::persist(
-                &path(&screen.project, screen.pane, true)?,
-                &serde_json::to_vec(&current)?,
-            )?;
-        } else if current.same_view(screen) {
+            persist_screen(&current, true)?;
+        } else if current.same_view(&{
+            let mut candidate = screen.clone();
+            candidate.images_digest = screen
+                .images
+                .as_ref()
+                .map(|images| images.encode().map(|(_, digest)| digest))
+                .transpose()?;
+            candidate
+        }) {
             return Ok(());
         }
     }
-    crate::automation::persist(&current_path, &serde_json::to_vec(screen)?)
+    persist_screen(screen, false)
 }
 pub fn clear(project: &str, pane: usize) -> Result<()> {
     for previous in [false, true] {
-        match fs::remove_file(path(project, pane, previous)?) {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+        for file in [
+            path(project, pane, previous)?,
+            images_path(project, pane, previous)?,
+        ] {
+            match fs::remove_file(file) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
         }
     }
     Ok(())
@@ -396,6 +522,8 @@ mod tests {
             alternate: original.alternate_screen(),
             cursor: original.cursor_position(),
             formatted: String::from_utf8(original.contents_formatted()).unwrap(),
+            images_digest: None,
+            images: None,
         };
         let mut updated = screen.clone();
         assert!(screen.same_view(&updated));

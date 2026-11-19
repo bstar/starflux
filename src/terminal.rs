@@ -237,6 +237,8 @@ pub struct Terminal {
     native_memory: Option<Arc<crate::graphics_resources::Lease>>,
     #[cfg(target_os = "linux")]
     native_planes: Option<Arc<crate::native_view::ImagePlanes>>,
+    /// Images archived with the saved screen shown in review, if any.
+    review_images: Option<crate::cold_start::Images>,
     plane_previous: Option<String>,
     #[cfg(target_os = "linux")]
     native_review_memory: Option<Arc<crate::graphics_resources::Lease>>,
@@ -349,6 +351,7 @@ impl Terminal {
             native_memory: None,
             #[cfg(target_os = "linux")]
             native_planes: None,
+            review_images: None,
             plane_previous: None,
             #[cfg(target_os = "linux")]
             native_review_memory: None,
@@ -411,6 +414,7 @@ impl Terminal {
             native_memory: None,
             #[cfg(target_os = "linux")]
             native_planes: None,
+            review_images: None,
             plane_previous: None,
             #[cfg(target_os = "linux")]
             native_review_memory: None,
@@ -649,7 +653,12 @@ impl Terminal {
     pub fn has_planes(&self) -> bool {
         #[cfg(target_os = "linux")]
         {
-            self.native_planes.is_some() && self.review.is_none() && self.selection.is_none()
+            self.selection.is_none()
+                && if self.review.is_some() {
+                    self.review_images.is_some()
+                } else {
+                    self.native_planes.is_some()
+                }
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -669,6 +678,37 @@ impl Terminal {
         #[cfg(target_os = "linux")]
         if let Some(native) = &self.native {
             native.pixels(enabled);
+        }
+        if enabled
+            && self.selection.is_none()
+            && self.review.is_some()
+            && let Some(images) = &self.review_images
+        {
+            // A saved screen shows the images archived with it, at the cell
+            // size they were captured with; the presenter scales them.
+            let cell = images.cell;
+            let cols = images.planes.width / u32::from(cell[0]);
+            let rows = images.planes.height / u32::from(cell[1]);
+            if cols == 0
+                || rows == 0
+                || cols * u32::from(cell[0]) != images.planes.width
+                || rows * u32::from(cell[1]) != images.planes.height
+                || cols > u32::from(rect.width)
+                || rows > u32::from(rect.height)
+            {
+                return self
+                    .plane_previous
+                    .take()
+                    .map(|_| serde_json::json!({"op":"clear","view":view}));
+            }
+            let key = format!("saved:{}:{generation}:{rect:?}:{cell:?}", images.planes.id);
+            if self.plane_previous.as_ref() == Some(&key) {
+                return None;
+            }
+            self.plane_previous = Some(key);
+            return Some(
+                serde_json::json!({"op":"planes","view":view,"generation":generation,"rect":[u32::from(rect.x),u32::from(rect.y),cols,rows],"cell":cell,"planes":images.planes}),
+            );
         }
         if !enabled || self.review.is_some() || self.selection.is_some() {
             return self
@@ -938,7 +978,15 @@ impl Terminal {
         let saved =
             crate::cold_start::Screen::capture(config, pane, epoch, health, self.parser.screen());
         self.parser.screen_mut().set_scrollback(offset);
-        saved
+        let mut saved = saved?;
+        #[cfg(target_os = "linux")]
+        if let Some(planes) = &self.native_planes {
+            saved.images = Some(crate::cold_start::Images {
+                cell: self.cell_size(),
+                planes: planes.wire.clone(),
+            });
+        }
+        Ok(saved)
     }
     pub fn snapshot_attempted(&mut self, accepted: bool) {
         self.snapshot_dirty = !accepted;
@@ -972,6 +1020,8 @@ impl Terminal {
             .as_mut()
             .unwrap()
             .replace_snapshot(&screen, &source, Some(saved.cursor));
+        self.review_images = saved.images.clone();
+        self.plane_previous = None;
         self.native_dirty = true;
         Ok(())
     }
@@ -989,6 +1039,7 @@ impl Terminal {
         {
             self.native_review_memory = self.native_memory.clone();
         }
+        self.review_images = None;
         self.review = Some(crate::terminal_history::History::new(
             self.parser.screen(),
             search,

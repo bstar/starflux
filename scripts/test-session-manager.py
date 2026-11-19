@@ -534,6 +534,15 @@ GLib.MainLoop().run()
                     wait(lambda:any(c.get('op')=='clear' for c in a.images),'review did not hide native images')
                     a.images=[];a.key('escape')
                     wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'review did not restore retained native images')
+                    # Saved screens archive the visible images beside the screen record.
+                    sidecar=tmp/'data/starflux/screens'/name/'p0.images.json'
+                    wait(sidecar.exists,'saved screen did not archive its images',timeout=40)
+                    record=json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text())
+                    assert record.get('images_digest'),'saved screen does not reference its images'
+                    a.images=[];a.action('terminal:saved-current')
+                    wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'saved screen did not show its archived images: '+json.dumps(dict(sidecar=sidecar.exists(),digest=bool(json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text()).get('images_digest')),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images],review={k:v for k,v in a.snapshot().items() if 'review' in k or 'history' in k or 'saved' in k})))
+                    a.images=[];a.key('escape')
+                    wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'leaving the saved screen did not restore live images')
                     a.images=[];a.action('view:apps')
                     wait(lambda:a.snapshot()['project_state']['space']=='apps' and any(c.get('op')=='clear' for c in a.images),'App Space did not clear inline images: '+json.dumps(dict(space=a.snapshot().get('project_state',{}).get('space'),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images][-6:])))
                     assert alive(image_pid),"App Space switch stopped the terminal process"
@@ -549,7 +558,7 @@ GLib.MainLoop().run()
                 reply=terminal_text(a).split('QUERY_REPLY=',1)[1]
                 advertised='_Gi=31;OK' in reply and reply.index('_Gi=31;OK')<reply.index('[?')
                 assert advertised,'native terminal did not advertise Kitty graphics before DA1: '+reply[:120]
-                print(json.dumps(dict(result='PASS',native_images=not args.cells,kitty_graphics_advertised=advertised,lossless_planes=not args.cells,one_pixel_detail=not args.cells,review_hides_and_restores=not args.cells,app_space_switch=not args.cells,image_delete=not args.cells,cells_receive_no_graphics=args.cells,ssh=args.ssh)),flush=True)
+                print(json.dumps(dict(result='PASS',native_images=not args.cells,kitty_graphics_advertised=advertised,saved_screen_images=not args.cells,lossless_planes=not args.cells,one_pixel_detail=not args.cells,review_hides_and_restores=not args.cells,app_space_switch=not args.cells,image_delete=not args.cells,cells_receive_no_graphics=args.cells,ssh=args.ssh)),flush=True)
                 raise SystemExit(0)
             if args.move_project:
                 def move_api(method,params,write=False,ok=True):
