@@ -71,6 +71,113 @@ pub fn request_switch(view: &str, destination: MachineSwitch) -> Result<()> {
     Ok(())
 }
 
+/// A remote controller's request that this presenter switch to another of the
+/// machines saved on this computer, carried in the session's closing error.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSwitch {
+    pub machine: String,
+    pub revision: String,
+    pub graphical: bool,
+}
+
+/// The closing message a remote controller sends to switch its presenter.
+pub fn remote_switch_signal(request: &RemoteSwitch) -> Result<String> {
+    Ok(format!(
+        "{SWITCH_SIGNAL}:{}",
+        serde_json::to_string(request)?
+    ))
+}
+
+fn remote_switch_request(result: &Result<()>) -> Option<RemoteSwitch> {
+    let error = result.as_ref().err()?;
+    error.chain().find_map(|cause| {
+        let text = cause.to_string();
+        let text = text.strip_prefix("Graphical session: ").unwrap_or(&text);
+        let payload = text.strip_prefix(SWITCH_SIGNAL)?.strip_prefix(':')?;
+        (payload.len() <= 1024)
+            .then(|| serde_json::from_str(payload).ok())
+            .flatten()
+    })
+}
+
+/// Whether this frontend presents a remote controller's session.
+pub fn is_remote_view() -> bool {
+    FRONTEND
+        .get()
+        .is_some_and(|frontend| frontend.remote.is_some())
+}
+
+/// The machines saved on this computer that a remote controller may offer as
+/// switch destinations: identities and labels only, at most 16.
+pub fn local_machines_notice() -> Option<String> {
+    if !is_remote_view() {
+        return None;
+    }
+    let machines = crate::machines::list()
+        .ok()?
+        .into_iter()
+        .filter(|machine| machine.enabled)
+        .take(16)
+        .map(|machine| {
+            serde_json::json!({
+                "id": machine.id,
+                "revision": machine.revision,
+                "label": machine.label.chars().take(64).collect::<String>(),
+                "target": machine.target.chars().take(128).collect::<String>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if machines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "local-machines:{}",
+        serde_json::to_string(&machines).ok()?
+    ))
+}
+
+/// Open another saved machine in this terminal at a remote controller's
+/// request. Only a profile saved on this computer, unchanged since it was
+/// offered, is accepted; the controller never names a host or command. The
+/// original local view, if any, stays the return target.
+fn switch_remote(frontend: &Frontend, request: RemoteSwitch) -> Result<()> {
+    let launched = (|| -> Result<std::io::Error> {
+        let machine = crate::machines::get(&request.machine)?;
+        ensure!(
+            machine.enabled && machine.revision == request.revision,
+            "Machine changed"
+        );
+        let project = crate::machines::check_workspace(&machine)?;
+        let next_view = format!("v-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+        let mut command = std::process::Command::new(&frontend.executable);
+        if let Some(origin) = RETURN.get() {
+            command.env(RETURN_ENV, serde_json::to_string(origin)?);
+        }
+        command.args([
+            "--machine",
+            &machine.id,
+            "--workspace",
+            &project,
+            "--frontend",
+            &next_view,
+            if request.graphical {
+                "--graphical"
+            } else {
+                "--cells"
+            },
+        ]);
+        Ok(command.exec())
+    })();
+    let error = match launched {
+        Ok(error) => {
+            anyhow::Error::from(error).context("Could not open saved machine in this terminal")
+        }
+        Err(error) => error.context("Machine switch"),
+    };
+    return_local(Err(error))
+}
+
 const RETURN_ENV: &str = "STARFLUX_LOCAL_RETURN";
 static RETURN: OnceLock<ReturnLaunch> = OnceLock::new();
 
@@ -339,6 +446,11 @@ pub fn finish(result: Result<()>) -> Result<()> {
     let Some(frontend) = FRONTEND.get() else {
         return return_local(result);
     };
+    if frontend.remote.is_some()
+        && let Some(request) = remote_switch_request(&result)
+    {
+        return switch_remote(frontend, request);
+    }
     if frontend.remote.is_none()
         && local_presenter(&frontend.workspace).is_ok_and(|lease| lease.pid == std::process::id())
         && let Ok(path) = switch_path(&frontend.workspace, "local-presenter")
@@ -460,6 +572,30 @@ pub fn finish(result: Result<()>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_switch_signals_round_trip_through_the_closing_error() {
+        let request = RemoteSwitch {
+            machine: "m-1".into(),
+            revision: "r-2".into(),
+            graphical: true,
+        };
+        let message = remote_switch_signal(&request).unwrap();
+        for text in [message.clone(), format!("Graphical session: {message}")] {
+            assert_eq!(
+                remote_switch_request(&Err(anyhow::anyhow!(text))),
+                Some(request.clone())
+            );
+        }
+        // The plain local switch signal and unrelated errors carry no request.
+        for text in [
+            SWITCH_SIGNAL.to_string(),
+            format!("{SWITCH_SIGNAL}:{{}}"),
+            "Remote view ended".into(),
+        ] {
+            assert_eq!(remote_switch_request(&Err(anyhow::anyhow!(text))), None);
+        }
+        assert_eq!(remote_switch_request(&Ok(())), None);
+    }
     use std::process::Command;
 
     #[test]

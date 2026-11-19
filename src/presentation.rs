@@ -36,6 +36,7 @@ impl Mode {
     }
 }
 static ANNOUNCE_LOCAL_RETURN: AtomicBool = AtomicBool::new(false);
+static ANNOUNCE_LOCAL_MACHINES: Mutex<Option<String>> = Mutex::new(None);
 static REQUIRE_GRAPHICAL: AtomicBool = AtomicBool::new(false);
 static FOCUS_NOTICE: AtomicU8 = AtomicU8::new(0);
 static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -75,6 +76,9 @@ fn notice() -> Option<String> {
     if ANNOUNCE_LOCAL_RETURN.swap(false, Ordering::Relaxed) {
         return Some("local-return-available".into());
     }
+    if let Some(machines) = ANNOUNCE_LOCAL_MACHINES.lock().unwrap().take() {
+        return Some(machines);
+    }
 
     // CORE handles pointer cancellation separately from application focus.
     match FOCUS_NOTICE.swap(0, Ordering::Relaxed) {
@@ -105,6 +109,7 @@ fn preference(mode: Mode) -> PresentationPreference {
 pub fn run(launch: Launch, mode: Mode) -> Result<()> {
     let _font_output = crate::font_frontend::LocalOutput::start()?;
     ANNOUNCE_LOCAL_RETURN.store(crate::refresh::has_local_return(), Ordering::Relaxed);
+    *ANNOUNCE_LOCAL_MACHINES.lock().unwrap() = crate::refresh::local_machines_notice();
     REQUIRE_GRAPHICAL.store(mode == Mode::Graphical, Ordering::Relaxed);
     client::run_with_preference(
         launch,

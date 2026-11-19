@@ -1982,7 +1982,36 @@ GLib.MainLoop().run()
                                      if item['action']=='machines:return-local'),None)
                     option=wait(return_option,'machine menu did not offer return to local view')
                     assert option['label']=='Return to local view'
-                    remote_action(option['action'])
+                    # The remote view offers this computer's saved machines and switches
+                    # straight to one; the original local view stays the return target.
+                    def local_machine_option():
+                        try:current=json.loads((remote_state/(target_identity+'.state.json')).read_text())
+                        except (OSError,ValueError):return None
+                        return next((item for item in (current.get('context_menu') or {}).get('items',[])
+                                     if item['action'].startswith('machines:switch-local:'+saved['id']+':')),None)
+                    direct=wait(local_machine_option,'remote view did not offer the machines saved on this computer')
+                    assert direct['label'].startswith('Switch to Build machine 界'),direct
+                    first_prior=set(state.glob('*.frontend.json'))
+                    local_rendered_after_return.clear()
+                    remote_action(direct['action'])
+                    def direct_switched():
+                        for path in set(state.glob('*.frontend.json'))-first_prior:
+                            view=json.loads(path.read_text())
+                            if view.get('workspace')==name and view['id']!=switch_identity:return view['id']
+                    direct_identity=wait(direct_switched,'remote view did not switch directly to the other machine',timeout=40)
+                    wait(local_rendered_after_return.is_set,'the direct switch did not render the other machine')
+                    assert presenter.poll() is None and alive(original_pid) and alive(ninth_pid)
+                    def direct_action(action):
+                        subprocess.run([str(app),'--workspace',name,'--frontend',direct_identity,'--action',action],
+                                       env=env,check=True,capture_output=True)
+                    direct_action('machines:list')
+                    def direct_return_option():
+                        try:current=json.loads((state/(direct_identity+'.state.json')).read_text())
+                        except (OSError,ValueError):return None
+                        return next((item for item in (current.get('context_menu') or {}).get('items',[])
+                                     if item['action']=='machines:return-local'),None)
+                    option=wait(direct_return_option,'the directly switched view lost its return to the local view')
+                    direct_action(option['action'])
                     def returned():
                         snap=local_snapshot()
                         return snap.get('controller_pid') not in (None,local_controller) and snap.get('active_project')==name and snap.get('panes',[{}])[0].get('pid')==original_pid
@@ -2125,7 +2154,7 @@ GLib.MainLoop().run()
             api('machines.save',{**valid,'label':'Must not overwrite'},write=True,ok=False)
             assert catalog.read_text()=='{broken';catalog.write_bytes(prior)
             assert alive(original_pid) and alive(child_pid) and a.process.poll() is None and b.process.poll() is None
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,keyboard_onboarding=True,connection_probe=True,saved_workspace_launch=True,remote_api_forwarding=True,combined_agent_pages=True,combined_agent_menu=True,scoped_agent_pagination=True,scoped_agent_api=True,machine_agent_api_filters=True,agent_workspace_command=True,exact_pane_launch=True,stale_pane_generation_rejected=True,same_terminal_machine_switch=True,default_workspace_switch=True,cancelled_machine_check=True,returns_to_local_view=True,machine_return_menu=True,failed_switch_launch_returns=True,stale_agent_workspace_rejected=True,remote_project=True,profile_editing=True,concurrent_profiles=True,stale_edits_rejected=True,strict_host_key_check=True,failed_endpoint_isolation=True,removal_preserves_processes=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,direct_remote_switch=True,keyboard_onboarding=True,connection_probe=True,saved_workspace_launch=True,remote_api_forwarding=True,combined_agent_pages=True,combined_agent_menu=True,scoped_agent_pagination=True,scoped_agent_api=True,machine_agent_api_filters=True,agent_workspace_command=True,exact_pane_launch=True,stale_pane_generation_rejected=True,same_terminal_machine_switch=True,default_workspace_switch=True,cancelled_machine_check=True,returns_to_local_view=True,machine_return_menu=True,failed_switch_launch_returns=True,stale_agent_workspace_rejected=True,remote_project=True,profile_editing=True,concurrent_profiles=True,stale_edits_rejected=True,strict_host_key_check=True,failed_endpoint_isolation=True,removal_preserves_processes=True)))
             raise SystemExit(0)
         if args.worktrees:
             import uuid

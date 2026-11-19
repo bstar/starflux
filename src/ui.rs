@@ -268,6 +268,8 @@ pub struct Workspace {
     machine_agents_token: Option<Instant>,
     machine_switch_token: Option<Instant>,
     local_return_available: bool,
+    /// Machines saved on the presenting computer, announced by a remote view.
+    local_machines: Vec<machine_ui::LocalMachine>,
     machine_pending: BTreeMap<String, Instant>,
     worktree_token: Option<Instant>,
     worktree_catalog: Option<(Config, crate::worktrees::Catalog)>,
@@ -525,6 +527,7 @@ impl Workspace {
             machine_agents_token: None,
             machine_switch_token: None,
             local_return_available: false,
+            local_machines: Vec::new(),
             machine_pending: BTreeMap::new(),
             worktree_token: None,
             worktree_catalog: None,
@@ -6607,6 +6610,10 @@ impl Controller for Workspace {
             }
             if message == "local-return-available" {
                 self.local_return_available = true;
+                return;
+            }
+            if let Some(machines) = message.strip_prefix("local-machines:") {
+                self.local_machines = machine_ui::LocalMachine::parse(machines);
                 return;
             }
             if message == "require-graphical" {

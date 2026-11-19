@@ -9,6 +9,44 @@ pub(super) struct AgentScope {
     origin: Option<(usize, usize)>,
 }
 const AGENT_MENU: &str = "Agents on saved machines";
+/// A machine saved on the presenting computer, as a remote view announced it.
+/// The presenter validates any switch against its own profile again.
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LocalMachine {
+    id: String,
+    revision: String,
+    label: String,
+    target: String,
+}
+impl LocalMachine {
+    pub(super) fn parse(text: &str) -> Vec<Self> {
+        let token = |value: &str, limit: usize| {
+            !value.is_empty()
+                && value.len() <= limit
+                && value
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+        };
+        let printable = |value: &str, limit: usize| {
+            value.chars().count() <= limit && !value.chars().any(char::is_control)
+        };
+        if text.len() > 16 * 1024 {
+            return Vec::new();
+        }
+        serde_json::from_str::<Vec<Self>>(text)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| {
+                token(&m.id, 64)
+                    && token(&m.revision, 128)
+                    && printable(&m.label, 64)
+                    && printable(&m.target, 128)
+            })
+            .take(16)
+            .collect()
+    }
+}
 impl Workspace {
     pub(super) fn machine_menu(&mut self) -> Result<()> {
         self.release();
@@ -25,6 +63,19 @@ impl Workspace {
                     "Return to local view",
                     "Keep this session running",
                     "machines:return-local",
+                ),
+            );
+        }
+        // A remote view can go straight to another machine saved on the
+        // presenting computer; this controller's own profiles follow below.
+        let offset = usize::from(self.local_return_available);
+        for (index, machine) in self.local_machines.iter().enumerate() {
+            items.insert(
+                offset + index,
+                machine_item(
+                    &format!("Switch to {} · {}", machine.label, machine.target),
+                    "Saved on this computer · keep this session running",
+                    &format!("machines:switch-local:{}:{}", machine.id, machine.revision),
                 ),
             );
         }
@@ -433,6 +484,33 @@ impl Workspace {
                 self.context_menu = None;
                 self.note("Machine switch canceled".into());
             }
+            _ if action.starts_with("switch-local:") => {
+                let (id, revision) = action["switch-local:".len()..]
+                    .split_once(':')
+                    .context("Invalid machine switch")?;
+                let machine = self
+                    .local_machines
+                    .iter()
+                    .find(|m| m.id == id && m.revision == revision)
+                    .cloned()
+                    .context("That machine is no longer offered by this computer")?;
+                ensure!(
+                    self.transfer.is_none() && self.receiving.is_none(),
+                    "Finish the active file transfer first"
+                );
+                let message =
+                    crate::refresh::remote_switch_signal(&crate::refresh::RemoteSwitch {
+                        machine: machine.id.clone(),
+                        revision: machine.revision.clone(),
+                        graphical: !self.cells,
+                    })?;
+                self.context_menu = None;
+                self.release();
+                self.save();
+                self.note(format!("Switching to {}…", machine.label));
+                self.effects.push(ServerMessage::Error { message });
+                self.quit = true;
+            }
             "return-local" => {
                 ensure!(
                     self.local_return_available,
@@ -703,5 +781,29 @@ fn machine_item(label: &str, hint: &str, action: &str) -> crate::shelf::MenuItem
         label: label.into(),
         hint: hint.into(),
         action: action.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalMachine;
+
+    #[test]
+    fn announced_local_machines_are_validated_and_bounded() {
+        let good = r#"{"id":"m-1","revision":"r1","label":"Build 界","target":"build.example"}"#;
+        let bad_id = r#"{"id":"../x","revision":"r1","label":"x","target":"y"}"#;
+        let control = r#"{"id":"m-2","revision":"r1","label":"a\u001bb","target":"y"}"#;
+        let parsed = LocalMachine::parse(&format!("[{good},{bad_id},{control}]"));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].label, "Build 界");
+        let many = format!("[{}]", vec![good; 40].join(","));
+        assert_eq!(LocalMachine::parse(&many).len(), 16);
+        assert!(LocalMachine::parse("not json").is_empty());
+        assert!(
+            LocalMachine::parse(
+                r#"[{"id":"m","revision":"r","label":"l","target":"t","command":"x"}]"#
+            )
+            .is_empty()
+        );
     }
 }

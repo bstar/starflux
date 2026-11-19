@@ -76,5 +76,15 @@ workspace’s terminal and App Space processes keep running. The destination
 gets its own frontend identity. Choose **Cancel** or press **Esc** while the
 check is pending to keep the current view open. A failed check also leaves
 it open. Choose **Return to local view** from the Machines menu, or detach, to restore
-the original local view in the same terminal. A failed remote launch also returns to the local view. Direct
-switching between remote controllers remains open.
+the original local view in the same terminal. A failed remote launch also returns to the local view.
+
+From a remote view, the Machines menu also lists the machines saved on the
+presenting computer as **Switch to …**. Choosing one opens that machine's
+configured workspace (or its remote default) in the same terminal without
+returning to the local view first; the remote session keeps running. The
+presenting computer's profiles decide where it connects: the remote controller
+only names a profile the presenter offered, and the presenter accepts it only
+while that profile is saved, enabled and unchanged. The original local view
+stays the return target, so **Return to local view** from the new machine
+still restores it. If the destination cannot be reached, the terminal returns
+to the local view, or ends when the remote view was launched directly.
