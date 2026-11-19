@@ -91,7 +91,20 @@ claude_resume=json.loads(os.environ.get('STARFLUX_TEST_CLAUDE_RESUME','null')) i
 
 # Unix socket paths are limited to about 108 bytes, and the second controller's
 # tmux socket sits several levels deep. Nix shells set a long TMPDIR, so use /tmp.
-with tempfile.TemporaryDirectory(prefix='starflux-session-proof-',dir='/tmp' if os.path.isdir('/tmp') else None) as directory:
+class ProofDirectory(tempfile.TemporaryDirectory):
+    """Detached services (such as the plugin service) may write briefly after a
+    test ends; retry removal instead of failing a passing run."""
+    def cleanup(self):
+        self._finalizer.detach()
+        for _ in range(50):
+            try:
+                shutil.rmtree(self.name);return
+            except FileNotFoundError:
+                return
+            except OSError:
+                time.sleep(.1)
+        shutil.rmtree(self.name,ignore_errors=True)
+with ProofDirectory(prefix='starflux-session-proof-',dir='/tmp' if os.path.isdir('/tmp') else None) as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     name='sessions-'+secrets.token_hex(4)
     shell=tmp/'fake-shell'
@@ -1976,7 +1989,13 @@ GLib.MainLoop().run()
                                               marker=(state/(switch_identity+'.machine-switch.json')).exists(),
                                               presenter=presenter.poll())),flush=True)
                         raise
-                    wait(remote_rendered.is_set,'the same terminal did not render the remote process')
+                    try:wait(remote_rendered.is_set,'the same terminal did not render the remote process')
+                    except AssertionError:
+                        snap=local_snapshot()
+                        print(json.dumps(dict(switch_history=snap.get('history'),target=target_identity,
+                                              presenter=presenter.poll(),
+                                              presenter_log=(tmp/'machine-switch-presenter.log').read_text()[-2000:])),flush=True)
+                        raise
                     assert presenter.poll() is None and alive(original_pid) and alive(ninth_pid)
                     assert a.snapshot()['active_project']==name
                     def remote_action(action):
