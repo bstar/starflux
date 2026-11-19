@@ -391,6 +391,69 @@ impl Workspace {
                 self.layout();
                 self.save();
             }
+            a if a.starts_with("pane-project:") => {
+                let (id, rest) = a["pane-project:".len()..]
+                    .split_once(':')
+                    .context("Invalid project move")?;
+                let id: usize = id.parse()?;
+                let _lock = crate::project_sync::transaction(&self.config)?;
+                self.sync_project()?;
+                let epoch = self
+                    .state
+                    .terminal_epochs
+                    .get(&id)
+                    .cloned()
+                    .context("Terminal no longer exists")?;
+                if rest == "menu" {
+                    self.release();
+                    self.context_menu = Some(crate::shelf::ContextMenu {
+                        position: [16, 16],
+                        title: "Move to project".into(),
+                        subtitle: "The terminal keeps running".into(),
+                        items: self
+                            .move_destinations()
+                            .into_iter()
+                            .map(|(workspace, label)| crate::shelf::MenuItem {
+                                label,
+                                hint: String::new(),
+                                action: format!("pane-project:{id}:{workspace}:{epoch}"),
+                            })
+                            .collect(),
+                        selected: Some(0),
+                    });
+                    return Ok(true);
+                }
+                let (workspace, expected) = rest.split_once(':').context("Invalid project move")?;
+                ensure!(
+                    expected == epoch,
+                    "The terminal was replaced; reopen the menu"
+                );
+                let destination = self
+                    .projects
+                    .iter()
+                    .find(|project| project.workspace == workspace)
+                    .cloned()
+                    .context("Project no longer exists")?;
+                let source = self.config.clone();
+                let tx = self.tx.clone();
+                drop(_lock);
+                std::thread::spawn(move || {
+                    let message =
+                        match crate::pane_transfer::move_to_project(&source, id, &destination) {
+                            Ok(_) => format!(
+                                "Moved terminal {} to {}",
+                                id + 1,
+                                destination
+                                    .label
+                                    .as_deref()
+                                    .unwrap_or(&destination.workspace)
+                            ),
+                            Err(error) => format!("Terminal {} was not moved: {error:#}", id + 1),
+                        };
+                    let _ = tx.send(Event::Status(message));
+                });
+                return Ok(true);
+            }
             a if a.starts_with("pane-edge:") => {
                 let (id, direction) = a["pane-edge:".len()..]
                     .split_once(':')

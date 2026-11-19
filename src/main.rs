@@ -53,6 +53,7 @@ mod navigation;
 mod notifications;
 #[cfg(test)]
 mod osc8_tests;
+mod pane_transfer;
 mod panes;
 mod plugin_links;
 mod plugin_packages;

@@ -31,6 +31,8 @@ parser.add_argument('--ssh',action='store_true')
 parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
+parser.add_argument('--move-project',action='store_true',help='Move a live native terminal to another project')
+parser.add_argument('--move-project-ui',action='store_true',help='Move it through the tab menu action instead of the API')
 parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
 parser.add_argument('--agent-mux',action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
@@ -65,6 +67,8 @@ parser.add_argument('--ssh-notification-client',action='store_true')
 args=parser.parse_args()
 if args.ssh_notification_client:args.ssh=True;args.notifications=True
 if args.native_launch_race:args.native_sources=True;args.agent_lifecycle=True
+if args.move_project_ui:args.move_project=True
+if args.move_project:args.native_sources=True
 if args.plugin_pane_upgrade:args.plugin_panes_ui=True
 if args.plugin_popups_managed:args.plugin_popups_ui=True
 if args.plugin_popup_keyboard:args.plugin_popups_ui=True
@@ -461,6 +465,40 @@ GLib.MainLoop().run()
             references=[c.snapshot()['project_state']['native_sources']['0']['binding'] for c in (a,b)]
             assert references[0]==references[1],'independent views did not share the native source'
             print(json.dumps(dict(native_source_backend_verified=True,ssh=args.ssh,cells=args.cells)),flush=True)
+            if args.move_project:
+                def move_api(method,params,write=False,ok=True):
+                    request=dict(version=1,id='move-project-proof',method=method,params=params)
+                    if write:request['operation_id']=secrets.token_hex(16)
+                    response=json.loads(subprocess.check_output([str(app),'--api',json.dumps(request)],env=env,timeout=20))
+                    assert response['ok']==ok,response
+                    return response.get('result',response.get('error'))
+                def model(project):
+                    try:return json.loads((tmp/'data/starflux/projects'/(project+'.model.json')).read_text())
+                    except FileNotFoundError:return {}
+                before=model(name)['native_sources']['0']['binding']
+                moving_pid=a.snapshot()['panes'][0]['pid']
+                target=move_api('panes.get',dict(project=name,pane=1))['target']
+                if args.move_project_ui:
+                    a.action('pane-project:0:extra-a:'+before['terminal_epoch'])
+                    wait(lambda:any(b['binding']['source']==before['source'] for b in model('extra-a').get('native_sources',{}).values()),'tab menu move did not reach the destination project: '+str(a.snapshot().get('status')))
+                    slot=next(k for k,b in model('extra-a')['native_sources'].items() if b['binding']['source']==before['source'])
+                else:
+                    moved=move_api('panes.move_project',dict(target=target,project='extra-a'),write=True)
+                    assert moved['moved'] and moved['project']=='extra-a',moved
+                    slot=str(moved['pane']-1)
+                wait(lambda:not any(b['binding']['source']==before['source'] for b in model(name).get('native_sources',{}).values()),'original project kept the moved terminal')
+                destination=model('extra-a')
+                binding=destination['native_sources'][slot]['binding']
+                assert binding['source']==before['source'] and binding['terminal_epoch']==before['terminal_epoch'],'moved terminal lost its source identity'
+                assert destination['terminal_epochs'][slot]==before['terminal_epoch']
+                assert not any(b['binding']['source']==before['source'] for b in model(name).get('native_sources',{}).values()),'original project still owns the moved terminal'
+                assert alive(moving_pid),'moving stopped the terminal process'
+                slots=tmp/'data/starflux/native-sources/panes'
+                assert not (slots/name/'p0.json').exists() and (slots/'extra-a'/('p'+slot+'.json')).exists(),'broker slot did not move'
+                # The stale target no longer identifies a terminal in the original project.
+                move_api('panes.move_project',dict(target=target,project='extra-b'),write=True,ok=False)
+                print(json.dumps(dict(result='PASS',moved_between_projects=True,through_tab_menu=args.move_project_ui,process_preserved=True,source_identity_preserved=True,stale_move_rejected=True,ssh=args.ssh,cells=args.cells)),flush=True)
+                raise SystemExit(0)
         original_pid=a.snapshot()['panes'][0]['pid']
         if claude_resume:
             assert claude_resume[0]=='bwrap' and '--unshare-net' in claude_resume

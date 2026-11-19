@@ -203,6 +203,21 @@ impl Directory {
         }
         result
     }
+    /// Durably remove one metadata file; a missing file is not an error.
+    pub(super) fn remove(&self, name: &str) -> Result<()> {
+        valid_name(name)?;
+        ensure!(self.current(), "Native source namespace changed");
+        let name = CString::new(name)?;
+        if unsafe { libc::unlinkat(self.file.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+            let error = io::Error::last_os_error();
+            ensure!(
+                error.kind() == io::ErrorKind::NotFound,
+                "Cannot remove native metadata: {error}"
+            );
+        }
+        self.file.sync_all()?;
+        Ok(())
+    }
     fn lock(&self, name: &str, deadline: Duration) -> Result<File> {
         let file = self.file(name, true)?;
         let began = Instant::now();
@@ -700,6 +715,53 @@ impl Handle {
         Ok(wanted)
     }
 }
+/// Move a live source's slot record to another project's pane on the same host.
+/// The source process, its supervisor and its terminal epoch are unchanged; only
+/// the authoritative slot changes. The destination is written and synced before
+/// the source record is removed, so an interruption leaves at most a stale
+/// source record, never a missing destination. Locks are taken in project order.
+pub fn transfer_slot(
+    data: &Path,
+    expected: &Binding,
+    project: &str,
+    pane: usize,
+) -> Result<Binding> {
+    slot_shape(project, pane, &expected.terminal_epoch)?;
+    ensure!(
+        expected.source.is_some(),
+        "Native launch outcome is unknown; the terminal cannot move"
+    );
+    ensure!(
+        expected.project != project,
+        "Moves within one project keep their slot"
+    );
+    let from = slots(data, &expected.project)?;
+    let to = slots(data, project)?;
+    let (_first, _second) = if expected.project.as_str() < project {
+        let first = from.lock("slots.lock", Duration::from_secs(5))?;
+        (first, to.lock("slots.lock", Duration::from_secs(5))?)
+    } else {
+        let first = to.lock("slots.lock", Duration::from_secs(5))?;
+        (first, from.lock("slots.lock", Duration::from_secs(5))?)
+    };
+    ensure!(
+        read_binding(&from, &expected.project, expected.pane)?.as_ref() == Some(expected),
+        "Native slot changed before the move"
+    );
+    if let Some(existing) = read_binding(&to, project, pane)? {
+        ensure!(
+            existing.terminal_epoch != expected.terminal_epoch,
+            "Destination pane already holds this terminal"
+        );
+    }
+    let mut moved = expected.clone();
+    moved.project = project.into();
+    moved.pane = pane;
+    moved.validate()?;
+    to.write(&format!("p{pane}.json"), &moved)?;
+    from.remove(&format!("p{}.json", expected.pane))?;
+    Ok(moved)
+}
 /// Read-only recovery. It can discover a source which survived an uncertain Open
 /// reply, but cannot send a saved command or start a replacement broker.
 pub fn reattach_slot(data: &Path, project: &str, pane: usize, epoch: &str) -> Result<Binding> {
@@ -851,6 +913,65 @@ mod tests {
         drop(listener);
         clean_stale_socket(&directory).unwrap();
         assert!(!path.exists());
+    }
+    #[test]
+    fn transfer_moves_one_slot_record_and_refuses_stale_or_duplicate_moves() {
+        use crate::native_protocol::{Binding, Identity, Reference};
+        let tmp = private_temp();
+        let data = tmp.path().join("data");
+        let (boot, id, source_epoch) = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
+        let binding = Binding {
+            version: 1,
+            project: "alpha".into(),
+            pane: 2,
+            terminal_epoch: uuid::Uuid::new_v4().to_string(),
+            owner: Identity {
+                instance: uuid::Uuid::new_v4().to_string(),
+                boot: boot.clone(),
+                pid: 1234,
+                start_ticks: 1,
+            },
+            source_id: id.clone(),
+            source_epoch: source_epoch.clone(),
+            launch_digest: "ab".repeat(32),
+            source: Some(Reference {
+                id,
+                epoch: source_epoch,
+                boot,
+                pid: 1235,
+                start_ticks: 2,
+            }),
+        };
+        slots(&data, "alpha")
+            .unwrap()
+            .write("p2.json", &binding)
+            .unwrap();
+        let moved = transfer_slot(&data, &binding, "beta", 5).unwrap();
+        assert_eq!((moved.project.as_str(), moved.pane), ("beta", 5));
+        assert_eq!(moved.terminal_epoch, binding.terminal_epoch);
+        assert_eq!(moved.source, binding.source);
+        assert!(read_slot(&data, "alpha", 2).unwrap().is_none());
+        assert_eq!(read_slot(&data, "beta", 5).unwrap().as_ref(), Some(&moved));
+        // The old binding is no longer authoritative, so it cannot move again.
+        assert!(transfer_slot(&data, &binding, "gamma", 0).is_err());
+        // A destination that already holds this terminal is refused.
+        slots(&data, "gamma")
+            .unwrap()
+            .write("p1.json", &{
+                let mut copy = moved.clone();
+                copy.project = "gamma".into();
+                copy.pane = 1;
+                copy
+            })
+            .unwrap();
+        assert!(transfer_slot(&data, &moved, "gamma", 1).is_err());
+        let mut unknown = moved.clone();
+        unknown.source = None;
+        assert!(transfer_slot(&data, &unknown, "delta", 0).is_err());
     }
     #[test]
     fn native_slot_lookup_never_creates_missing_namespaces() {

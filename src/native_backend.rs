@@ -491,6 +491,47 @@ fn dispatch(request: Value) -> Result<Value> {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
+        "transfer" => {
+            let target: Pane = serde_json::from_value(request["target"].clone())?;
+            target.validate()?;
+            let expected = &target.binding;
+            let project = request["project"]
+                .as_str()
+                .context("Missing destination project")?;
+            let pane = request["pane"]
+                .as_u64()
+                .and_then(|pane| usize::try_from(pane).ok())
+                .context("Missing destination pane")?;
+            ensure!(
+                service::read_slot(&target.namespace, &expected.project, expected.pane)?.as_ref()
+                    == Some(expected),
+                "Native slot changed before the move"
+            );
+            ensure!(
+                !source_broker::retirement::owner_dead(&expected.owner)?,
+                "Native owner is gone; recover the terminal before moving it"
+            );
+            let source = expected
+                .source
+                .as_ref()
+                .context("Native launch outcome is unknown; the terminal cannot move")?;
+            let handle = service::existing(&target.namespace, &expected.owner)?;
+            let list = handle.connect()?.call(source_broker::Action::List)?;
+            let live = list.as_array().is_some_and(|entries| {
+                entries.iter().any(|info| {
+                    info["source"]["id"] == source.id
+                        && info["exited"] != true
+                        && info["closing"] != true
+                })
+            });
+            ensure!(live, "Native terminal has exited; it was not moved");
+            let moved = service::transfer_slot(&target.namespace, expected, project, pane)?;
+            Ok(serde_json::to_value(Pane {
+                namespace: target.namespace,
+                binding: moved,
+                previous: None,
+            })?)
+        }
         "reattach" => {
             let target: Pane = serde_json::from_value(request["target"].clone())?;
             target.validate()?;

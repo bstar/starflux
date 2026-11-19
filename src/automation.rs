@@ -126,6 +126,7 @@ fn mutating(method: &str) -> bool {
             | "panes.rename"
             | "panes.send"
             | "panes.terminate"
+            | "panes.move_project"
             | "panes.recover"
             | "panes.reap"
             | "agents.report"
@@ -207,6 +208,7 @@ const METHODS: &[&str] = &[
     "panes.rename",
     "panes.send",
     "panes.terminate",
+    "panes.move_project",
     "panes.recover",
     "panes.reap",
     "panes.wait",
@@ -1307,6 +1309,28 @@ fn dispatch(request: &Request) -> Result<Value> {
                 (t.pid, t.start_ticks, uuid::Uuid::parse_str(&t.boot_id)?),
             )?;
             Ok(json!({"target":t,"terminated":true}))
+        }
+        "panes.move_project" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct P {
+                target: Value,
+                project: String,
+            }
+            let p: P = params(p)?;
+            let t = target(&p.target)?;
+            let config = project(&t.project)?;
+            let destination = project(&p.project)?;
+            {
+                let _lock = project_sync::transaction(&config)?;
+                guarded(&t)?;
+            }
+            let pane = crate::pane_transfer::move_to_project(
+                &config,
+                usize::from(t.pane - 1),
+                &destination,
+            )?;
+            Ok(json!({"from":t,"project":destination.workspace,"pane":pane + 1,"moved":true}))
         }
         "panes.wait" => wait(p),
         "agents.report" => {

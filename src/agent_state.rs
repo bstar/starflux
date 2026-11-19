@@ -146,6 +146,55 @@ pub fn preserve_conversation(
     }
     Ok(())
 }
+/// Move a terminal's conversation records with it to another project. The
+/// terminal epoch is unchanged by the move, so only this generation's runs,
+/// saved conversation and attention items follow. Callers hold both projects'
+/// model transactions.
+pub fn transfer(from: &Config, pane: usize, to: &Config, target: usize, epoch: &str) -> Result<()> {
+    let mut source = load(from)?;
+    let mut destination = load(to)?;
+    let ours: Vec<String> = source
+        .runs
+        .iter()
+        .filter(|(_, record)| record.pane == pane && record.report.epoch.as_deref() == Some(epoch))
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &ours {
+        if let Some(mut record) = source.runs.remove(id) {
+            record.pane = target;
+            destination.runs.insert(id.clone(), record);
+        }
+    }
+    if source.active.get(&pane).is_some_and(|id| ours.contains(id)) {
+        let id = source.active.remove(&pane).expect("checked above");
+        destination.active.insert(target, id);
+    }
+    if source
+        .saved_conversations
+        .get(&pane)
+        .is_some_and(|saved| saved.epoch == epoch)
+    {
+        let saved = source
+            .saved_conversations
+            .remove(&pane)
+            .expect("checked above");
+        destination.saved_conversations.insert(target, saved);
+    }
+    source.observed.remove(&pane);
+    let (moving, staying): (Vec<_>, Vec<_>) = std::mem::take(&mut source.attention)
+        .into_iter()
+        .partition(|item| item.pane == pane && item.epoch.as_deref() == Some(epoch));
+    source.attention = staying;
+    destination
+        .attention
+        .extend(moving.into_iter().map(|mut item| {
+            item.pane = target;
+            item
+        }));
+    starcore::fs::write_private(&path(to)?, &serde_json::to_vec_pretty(&destination)?)?;
+    starcore::fs::write_private(&path(from)?, &serde_json::to_vec_pretty(&source)?)?;
+    Ok(())
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Attention {
     #[serde(default)]

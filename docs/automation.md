@@ -39,6 +39,7 @@ Responses contain `version`, the supplied `id`, `ok`, and either `result` or `er
 | `panes.rename` | `target`, `label` |
 | `panes.send` | `target`, `text`, optional `submit` (default false) |
 | `panes.terminate` | `target`, `confirm: "TERMINATE"`; ends that terminal in all views |
+| `panes.move_project` | `target`, `project`; moves a live native terminal to another project on the same host and returns its new `pane` |
 | `panes.wait` | `target`, condition, optional timeout; see below |
 | `agents.live` | Optional `project`, `session`, `offset` and `limit` (1–16). Filters are applied before counting panes or checking agent processes. Returns foreground observations and per-pane errors. |
 | `agents.report` | `project`, `pane`, structured `report`; same validation as the lifecycle CLI |

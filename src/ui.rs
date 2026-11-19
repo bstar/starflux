@@ -825,6 +825,24 @@ impl Workspace {
                 ))
                 .is_some_and(|health| health["native_pending_recovery_available"] == true)
     }
+    /// Other projects on this project's host, which can receive a native terminal.
+    fn move_destinations(&self) -> Vec<(String, String)> {
+        self.projects
+            .iter()
+            .filter(|project| {
+                project.workspace != self.config.workspace
+                    && project.host == self.config.host
+                    && project.ssh_config == self.config.ssh_config
+            })
+            .map(|project| {
+                let label = project
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| project.workspace.clone());
+                (project.workspace.clone(), label)
+            })
+            .collect()
+    }
     fn native_retirement_supported(&self, pane: usize) -> bool {
         !self.state.native_sources.contains_key(&pane)
             || self
@@ -3778,6 +3796,11 @@ impl Workspace {
                         && (self.state.split || self.state.terminal != id)
                         && self.state.plugin_overlay.is_none())
                     .then(|| item("Move pane to edge…", "", format!("pane-edge:{id}:menu"))),
+                )
+                .chain(
+                    (self.state.native_sources.contains_key(&id)
+                        && !self.move_destinations().is_empty())
+                    .then(|| item("Move to project…", "", format!("pane-project:{id}:menu"))),
                 )
                 .chain(
                     (!self.config.externally_owned(id) && self.native_retirement_supported(id))
