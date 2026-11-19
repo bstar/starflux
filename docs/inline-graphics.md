@@ -1,7 +1,17 @@
 # Inline terminal graphics implementation
 
-This work is incomplete. Native terminals do not yet advertise Kitty graphics
-support or show retained images. Existing App Space streaming is separate.
+Native terminals (projects with `native_terminals` enabled) show inline Kitty
+graphics. They answer a graphics query before DA1, so programs detect support,
+and retained images reach every graphical view as lossless planes through the
+local presenter. `scripts/test-session-manager.py --native-images` checks query
+advertisement, one-pixel detail, copy-mode hide/restore, App Space clear and
+restore, deletion, and that cells views receive no graphics, locally and over
+SSH. `scripts/native/test-native-presenter.py`,
+`scripts/native/test-native-image-delivery.py` and the real Kitty screenshot
+proof `scripts/native/test-native-presenter-kitty.py` cover the presenter. The
+default tmux backend does not carry images. File and shared-memory transfers,
+animation, Unicode placeholders and image pixels in cold-start archives are not
+supported yet. Existing App Space streaming is separate.
 
 The native parser now frames APC strings in output order, delivering complete
 APC bodies through callbacks. It bounds them to 8 KiB, distinguishes BEL from

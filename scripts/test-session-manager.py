@@ -32,6 +32,7 @@ parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
 parser.add_argument('--move-project',action='store_true',help='Move a live native terminal to another project')
+parser.add_argument('--native-images',action='store_true',help='Check inline Kitty images in native terminals')
 parser.add_argument('--move-project-ui',action='store_true',help='Move it through the tab menu action instead of the API')
 parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
 parser.add_argument('--agent-mux',action='store_true')
@@ -68,7 +69,7 @@ args=parser.parse_args()
 if args.ssh_notification_client:args.ssh=True;args.notifications=True
 if args.native_launch_race:args.native_sources=True;args.agent_lifecycle=True
 if args.move_project_ui:args.move_project=True
-if args.move_project:args.native_sources=True
+if args.move_project or args.native_images:args.native_sources=True
 if args.plugin_pane_upgrade:args.plugin_panes_ui=True
 if args.plugin_popups_managed:args.plugin_popups_ui=True
 if args.plugin_popup_keyboard:args.plugin_popups_ui=True
@@ -95,6 +96,29 @@ with tempfile.TemporaryDirectory(prefix='starflux-session-proof-',dir='/tmp' if 
     name='sessions-'+secrets.token_hex(4)
     shell=tmp/'fake-shell'
     shell.write_text("#!/usr/bin/python3\nimport os,sys\nprint('SESSION_PROOF_PID='+str(os.getpid()),flush=True)\nfor line in sys.stdin:print('REPLY='+line.strip(),flush=True)\n")
+    if args.native_images:
+        # A 20x20 checkerboard Kitty image on GRAPHICS; DELETE_GRAPHICS removes it.
+        shell.write_text("""#!/usr/bin/python3
+import os,sys,base64
+print('SESSION_PROOF_PID='+str(os.getpid()),flush=True)
+for line in sys.stdin:
+ print('REPLY='+line.strip(),flush=True)
+ if line.strip()=='GRAPHICS':
+  rgba=bytes(v for y in range(20) for x in range(20) for v in ([255,255,255,255] if (x+y)%2 else [0,0,0,255]))
+  sys.stdout.write('\\x1b[H\\x1b_Ga=T,q=2,f=32,s=20,v=20,c=2,r=1,i=99;'+base64.b64encode(rgba).decode()+'\\x1b\\\\');sys.stdout.flush()
+  print('GRAPHICS_READY',flush=True)
+ if line.strip()=='DELETE_GRAPHICS':
+  sys.stdout.write('\\x1b_Ga=d,q=2,d=A;\\x1b\\\\');sys.stdout.flush()
+ if line.strip()=='QUERY':
+  # How programs detect Kitty graphics: a graphics query followed by DA1.
+  import termios,tty
+  saved=termios.tcgetattr(0);tty.setraw(0)
+  try:
+   os.write(1,b'\\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\\x1b\\\\\\x1b[c');reply=b''
+   while not reply.endswith(b'c'):reply+=os.read(0,64)
+  finally:termios.tcsetattr(0,termios.TCSADRAIN,saved)
+  print('QUERY_REPLY='+repr(reply),flush=True)
+""")
     if args.plugin_panes_ui:
         # tmux launches explicit argv through its default shell with -c. The
         # fake shell must execute that mode instead of swallowing the command.
@@ -246,17 +270,32 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
                 assert not same_owner(),'private native owner did not retire before fixture cleanup'
     class Client:
         def __init__(self,identity,remote=False,executable=None):
-            self.executable=executable;self.identity=identity;self.scene=None;self.messages=queue.Queue();self.serial=0;self.frames={};self.clipboards=[];self.all_frames=[]
+            self.executable=executable;self.identity=identity;self.scene=None;self.messages=queue.Queue();self.serial=0;self.frames={};self.images=[];self.clipboards=[];self.all_frames=[]
             command=[str(executable or app),'--graphical-relay',name+'@'+identity]
-            if remote:command=ssh_args+[shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX',(ENV+'_CONFIG_PATH'),'PATH')],*command])]
+            client_env=env
+            if args.native_images:
+                # Native image planes go to a local presenter over this socket;
+                # each view records the frames its presenter accepts.
+                output=tmp/(identity+'-images.sock')
+                listener=socket.socket(socket.AF_UNIX);listener.bind(str(output));listener.listen()
+                def present():
+                    while True:
+                        connection,_=listener.accept()
+                        with connection:
+                            request=json.loads(connection.makefile('rb').readline() or b'null')
+                            if isinstance(request,dict) and request.get('op')!='probe':
+                                self.images.append(request);connection.sendall(b'\x01')
+                threading.Thread(target=present,daemon=True).start()
+                client_env={**env,'STARFLUX_FONT_OUTPUT':str(output)}
+            if remote:command=ssh_args+[shlex.join(['env',*[k+'='+v for k,v in client_env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX',(ENV+'_CONFIG_PATH'),'STARFLUX_FONT_OUTPUT','PATH')],*command])]
             self.log=(tmp/(identity+'.log')).open('a')
-            self.process=subprocess.Popen(command,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log);processes.append(self.process);clients.append(self)
+            self.process=subprocess.Popen(command,env=client_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log);processes.append(self.process);clients.append(self)
             def read():
                 for line in self.process.stdout:
                     try:self.messages.put(json.loads(line))
                     except ValueError:self.messages.put(dict(type='invalid',line=repr(line)))
             threading.Thread(target=read,daemon=True).start()
-            self.send(dict(type='hello',version=1,client=identity,viewport=dict(columns=100,rows=35,width=1000,height=700,generation=1),capabilities=dict(image_transport="kitty",pixel_geometry="measured",pointer_precision="cells",native_terminal_cells=True,cell_presentation=args.cells,native_surfaces=True,pixel_layout=not args.cells,physical_text=True,keyboard=True,paste=True,presentation_ack=True)))
+            self.send(dict(type='hello',version=1,client=identity,viewport=dict(columns=100,rows=35,width=1000,height=700,generation=1),capabilities=dict(image_transport="kitty",pixel_geometry="measured",pointer_precision="cells",native_terminal_cells=True,cell_presentation=args.cells,native_surfaces=True,streamed_frames=args.native_images and not args.cells,pixel_layout=not args.cells,physical_text=True,keyboard=True,paste=True,presentation_ack=True)))
         def send(self,message):
             self.process.stdin.write(json.dumps(message).encode()+b'\n');self.process.stdin.flush()
         def pump(self):
@@ -269,6 +308,8 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
                     stream=message['frame']['stream']
                     if '-p' in stream and stream.rsplit('-p',1)[1].isdigit():self.frames[int(stream.rsplit('-p',1)[1])]=message['frame']
                     if args.cold_start or args.plugin_ui or args.plugin_panes_ui or args.plugin_popups_ui:self.all_frames=(self.all_frames+[message['frame']])[-100:]
+                if message['type']=='osc72' and message.get('meta')=='starflux-image-planes-v1':
+                    self.images.append(json.loads(message['payload']));self.send(dict(type='effect_ack',id=message.get('id',0)))
                 if message['type']=='clipboard':self.clipboards.append(message['text'])
         def snapshot(self):
             try:return json.loads((state/(self.identity+'.state.json')).read_text())
@@ -465,6 +506,51 @@ GLib.MainLoop().run()
             references=[c.snapshot()['project_state']['native_sources']['0']['binding'] for c in (a,b)]
             assert references[0]==references[1],'independent views did not share the native source'
             print(json.dumps(dict(native_source_backend_verified=True,ssh=args.ssh,cells=args.cells)),flush=True)
+            if args.native_images:
+                image_pid=a.snapshot()['panes'][0]['pid']
+                if not args.cells:
+                    for client in (a,b):client.input(dict(kind='notice',message='starflux-font-v1:'+json.dumps(dict(family='monospace',millipoints=13000,image_planes_v1=True))))
+                a.paste('GRAPHICS');a.key('enter')
+                if not args.cells:
+                    wait(lambda:any(c.get('planes',{}).get('above') for c in a.images) and any(c.get('planes',{}).get('above') for c in b.images),'lossless image planes did not reach both views')
+                    import zlib
+                    command=next(c for c in reversed(a.images) if c.get('planes',{}).get('above'))
+                    png=base64.b64decode(command['planes']['above']);assert png[:8]==b'\x89PNG\r\n\x1a\n' and png[24:26]==bytes([8,6])
+                    width,height=struct.unpack('>II',png[16:24]);position=8;compressed=b''
+                    while position<len(png):
+                        size=int.from_bytes(png[position:position+4],'big');kind=png[position+4:position+8]
+                        if kind==b'IDAT':compressed+=png[position+8:position+8+size]
+                        position+=size+12
+                    raw=zlib.decompressobj().decompress(compressed,width*4+1);png_row=bytearray(raw[1:]);filter_kind=raw[0];assert filter_kind in range(5)
+                    # For the first PNG row the upper/upper-left predictors are zero.
+                    for i in range(len(png_row)):
+                        left=png_row[i-4] if i>=4 else 0
+                        predictor=left if filter_kind in (1,4) else left//2 if filter_kind==3 else 0
+                        png_row[i]=(png_row[i]+predictor)&255
+                    pixel=lambda x:tuple(png_row[x*4:x*4+4])
+                    assert pixel(0)==(0,0,0,255) and pixel(1)==(255,255,255,255) and pixel(2)==(0,0,0,255),'one-pixel image detail was lost'
+                    assert not pixel(20)[3],'plane escaped source image bounds'
+                    a.images=[];a.action('terminal:copy-mode')
+                    wait(lambda:any(c.get('op')=='clear' for c in a.images),'review did not hide native images')
+                    a.images=[];a.key('escape')
+                    wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'review did not restore retained native images')
+                    a.images=[];a.action('view:apps')
+                    wait(lambda:a.snapshot()['project_state']['space']=='apps' and any(c.get('op')=='clear' for c in a.images),'App Space did not clear inline images: '+json.dumps(dict(space=a.snapshot().get('project_state',{}).get('space'),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images][-6:])))
+                    assert alive(image_pid),"App Space switch stopped the terminal process"
+                    a.images=[];a.action('view:terminals')
+                    wait(lambda:a.snapshot()['project_state']['space']=='terminals' and any(c.get('planes',{}).get('above') for c in a.images),'terminal return did not restore retained image')
+                    a.images=[];b.images=[];a.paste('DELETE_GRAPHICS');a.key('enter')
+                    wait(lambda:any(c.get('op')=='planes' and not c['planes'].get('below') and not c['planes'].get('above') for c in a.images),'deleted source image stayed visible')
+                else:
+                    assert not a.images and not b.images,'cells mode received a graphical extension'
+                def terminal_text(client):return '\n'.join(t['text'] for t in client.snapshot().get('direct_terminals',[]))
+                a.paste('QUERY');a.key('enter')
+                wait(lambda:'QUERY_REPLY=' in terminal_text(a),'terminal did not answer the graphics query')
+                reply=terminal_text(a).split('QUERY_REPLY=',1)[1]
+                advertised='_Gi=31;OK' in reply and reply.index('_Gi=31;OK')<reply.index('[?')
+                assert advertised,'native terminal did not advertise Kitty graphics before DA1: '+reply[:120]
+                print(json.dumps(dict(result='PASS',native_images=not args.cells,kitty_graphics_advertised=advertised,lossless_planes=not args.cells,one_pixel_detail=not args.cells,review_hides_and_restores=not args.cells,app_space_switch=not args.cells,image_delete=not args.cells,cells_receive_no_graphics=args.cells,ssh=args.ssh)),flush=True)
+                raise SystemExit(0)
             if args.move_project:
                 def move_api(method,params,write=False,ok=True):
                     request=dict(version=1,id='move-project-proof',method=method,params=params)
