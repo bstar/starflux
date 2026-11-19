@@ -1757,7 +1757,7 @@ GLib.MainLoop().run()
             switch_started=tmp/'switch-started'
             switch_checked=tmp/'switch-checked'
             second_command=shlex.join(['env',*[key+'='+second_env[key] for key in
-                ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL')],str(app)])
+                ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH') if key in second_env],str(app)])
             second_wrapper.write_text('#!/bin/sh\n'
                 + 'if [ "$1" = --prepare-pane-launch ] && [ -f '+shlex.quote(str(reject_prepare))
                 + ' ]; then echo "private destination failed after preflight" >&2; exit 2; fi\n'
