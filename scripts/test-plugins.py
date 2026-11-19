@@ -9,7 +9,7 @@ app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).r
 with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
     tmp=Path(temporary);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_','STARFLUX_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
-    env.update(TMUX_TMPDIR=str(tmp/'tmux'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),STARFLUX_SNAPSHOT_SERVICE='off',STARFLUX_agent_mux=str(tmp/('no-'+PROGRAM)))
+    env.update(TMUX_TMPDIR=str(tmp/'tmux'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),STARFLUX_SNAPSHOT_SERVICE='off',STARFLUX_AGENT_MUX=str(tmp/('no-'+PROGRAM)))
     data=tmp/'data/starflux/plugins';package=tmp/'package with spaces 界';package.mkdir();daemon=None;ssh=[]
     def wait(predicate,label,timeout=20):
         end=time.monotonic()+timeout

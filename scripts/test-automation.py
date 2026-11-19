@@ -17,8 +17,8 @@ import threading
 import time
 import uuid
 
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument(('--'+PROGRAM),action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
-if args.agent_mux and not args.session_imports:parser.error(('--'+PROGRAM+' requires --session-imports'))
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
+if args.agent_mux and not args.session_imports:parser.error'--agent-mux requires --session-imports'
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
@@ -276,7 +276,7 @@ while True:
                 assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='stale_source',('restarted '+DISPLAY+' server accepted an old reference')
             slow=tmp/'slow-discovery';record=tmp/'query-processes'
             slow.write_text('#!/usr/bin/python3\nimport os,subprocess,time,json\nfrom pathlib import Path\nchild=subprocess.Popen(["sleep","6"])\nPath('+repr(str(record))+').write_text(json.dumps([os.getpid(),child.pid]))\nchild.wait()\nprint("{\\\"sessions\\\":[]}")\n');slow.chmod(0o700)
-            delayed=Client(dict(STARFLUX_agent_mux=str(slow)))
+            delayed=Client(dict(STARFLUX_AGENT_MUX=str(slow)))
             failure=delayed.call('sessions.external',ok=False,deadline_ms=500)
             assert failure['code']=='deadline_exceeded' and record.exists(),failure
             query_pids=json.loads(record.read_text())

@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
     config.joinpath('config.toml').write_text('onboarding = false\n')
     shell=tmp/'shell';shell.write_text("#!/usr/bin/python3\nimport os,sys,signal,fcntl,termios,struct\nprint('LIVE_ADOPTION_PID='+str(os.getpid()),flush=True)\ndef resize(*args):\n rows,cols=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,b'\\0'*8))[:2];print('SIZE='+str(rows)+'x'+str(cols),flush=True)\nsignal.signal(signal.SIGWINCH,resize)\nfor line in sys.stdin:print('REPLY='+line.strip(),flush=True)\n");shell.chmod(0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_'))}
-    env.update(XDG_CONFIG_HOME=str(tmp/'config'),agent_mux_CONFIG_PATH=str(config/'config.toml'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native')
+    env.update(XDG_CONFIG_HOME=str(tmp/'config'),**{ENV+'_CONFIG_PATH':str(config/'config.toml')},XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native')
     log=(tmp/'source.log').open('w')
     source=subprocess.Popen([(PROGRAM),'server'],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
     broker_pid=None;plan=None;view_processes=[];peer=None

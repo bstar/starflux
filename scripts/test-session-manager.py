@@ -32,7 +32,7 @@ parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
 parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
-parser.add_argument(('--'+PROGRAM),action='store_true')
+parser.add_argument('--agent-mux',action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
 parser.add_argument('--agent-lifecycle',action='store_true')
 parser.add_argument('--pane-layouts',action='store_true')
@@ -149,7 +149,7 @@ for line in sys.stdin:
         text=shell.read_text();text=text.replace("for line in sys.stdin:","print("+repr('\x1b]8;id=fixture;'+hidden+'\x1b\\OSC8_LABEL_界é\x1b]8;;\x1b\\')+",flush=True)\nfor line in sys.stdin:")
         shell.write_text(text)
     env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
-    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_agent_mux=(PROGRAM) if args.agent_mux else str(tmp/(PROGRAM+'-not-installed')))
+    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_AGENT_MUX=(PROGRAM) if args.agent_mux else str(tmp/(PROGRAM+'-not-installed')))
     if args.native_launch_race:
         gate=tmp/'launch-gate';gate.mkdir()
         bindir=tmp/'gate-bin';bindir.mkdir()

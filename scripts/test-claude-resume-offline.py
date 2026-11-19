@@ -82,10 +82,10 @@ with tempfile.TemporaryDirectory(prefix="starflux-claude-proof-") as directory:
                     child.kill()
                     child.wait()
 
-    if args.starflux:
+    for presentation in ([["--cells"], ["--ssh", "--cells"]] if args.starflux else []):
         subprocess.run(
             [sys.executable, str(Path(__file__).with_name("test-session-manager.py")),
-             "--agent-lifecycle", "--cells"],
+             "--agent-lifecycle", *presentation],
             env={
                 **os.environ,
                 "STARFLUX_TEST_APP": str(args.starflux.resolve(strict=True)),

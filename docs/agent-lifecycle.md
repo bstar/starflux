@@ -98,8 +98,15 @@ the provider-confirmed ID and the exact launch arguments, opens a new tab, and
 checks the ID reported by Codex. It also checks process retention on frontend
 refresh and explicit recovery to a shell. Local graphical, local cells and
 loopback SSH cells passed using Codex 0.169.0 with the disposable profile.
-Automatic registration, the daemon-backed Codex path and Claude recovery
-remain unverified.
+On 2026-11-19 the same fixture passed with Codex 0.170.0 in all four local/SSH
+and graphical/cells combinations.
+
+`scripts/test-claude-resume-offline.py /path/to/claude --starflux LAUNCHER`
+verifies Claude Code the same way. With Claude Code 2.1.328 in a disposable,
+network-disabled profile, `SessionStart` reported the exact startup and resume
+IDs, and the STAR/FLUX Agent Status resume action relaunched that exact Claude
+session locally and over loopback SSH in cells, keeping the original process.
+Automatic registration and the daemon-backed Codex path remain unverified.
 
 An opt-in local adapter is available at `scripts/agent-session-hook.py`. Add it
 as a **synchronous** Codex `SessionStart` command for the bound launch and
