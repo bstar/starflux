@@ -116,7 +116,7 @@ A package contains `starflux-plugin.json`:
 }
 ```
 
-This is STAR/FLUX's native JSON ABI, not Herdr's TOML manifest. Plugin IDs permit
+This is STAR/FLUX's native JSON ABI, not the agent multiplexer's TOML manifest. Plugin IDs permit
 letters, digits, dots, underscores and hyphens, up to 64 bytes. Action/hook IDs
 use the same set without dots. Unknown manifest fields are rejected. A manifest
 is limited to 64 KiB, 32 actions and 32 hooks. An action has 1–64 literal argv
@@ -414,6 +414,6 @@ terminals and frontend-targeted placement are implemented. Transient popup
 terminals have focused native UI, actual cells-client and App Space acceptance;
 broader lifecycle and actual graphical-host capture remain under audit.
 Broader hook semantics remain unfinished. The native ABI should not be presented
-as compatible with every Herdr plugin. The queue/worker bounds and hook backpressure have focused concurrent-publisher
+as compatible with every agent multiplexer plugin. The queue/worker bounds and hook backpressure have focused concurrent-publisher
 coverage. Multi-plugin scheduling, source/lifecycle failure coverage and broader
 service-restart semantics remain under audit.

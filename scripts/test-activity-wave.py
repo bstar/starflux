@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Real GPU activity wave using a disposable read-only Herdr API fixture."""
+"""Real GPU activity wave using a disposable read-only the agent multiplexer API fixture."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import json,os,subprocess,tempfile,time,uuid
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
@@ -20,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-wave-') as temp:
     temp=Path(temp);address='unix:'+str(temp/'kitty.sock');statuses=temp/'statuses.json';revisions=temp/'revisions.json'
     statuses.write_text(json.dumps({'w0':'working','w1':'idle','w2':'blocked'}))
     revisions.write_text(json.dumps({'w0':0,'w1':0,'w2':0}))
-    source=temp/'herdr-fixture'
+    source=temp/(PROGRAM+'-fixture')
     source.write_text('''#!/usr/bin/python3
 import json,sys,os
 from pathlib import Path
@@ -47,7 +48,7 @@ else:raise SystemExit(2)
 '''.replace('FIXTURE',repr(str(repo/'scripts/direct-terminal-fixture.py'))));source.chmod(0o700)
     for i,name in enumerate(names):
         pane={'terminal_id':'term'+str(i),'pane_id':f'w{i}:p1','tab_id':f'w{i}:t1','label':'Codex','cwd':str(temp),'agent':'codex'}
-        config={'workspace':name,'label':['Building renderer','Idle project','DEC'][i],'collection':prefix,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'codex','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app),'herdr':{'session':'wave-test','workspace_id':'w'+str(i),'order':i,'executable':str(source),'panes':{'0':pane,'31':pane}}}
+        config={'workspace':name,'label':['Building renderer','Idle project','DEC'][i],'collection':prefix,'theme':'kanagawa','host':None,'directory':str(temp),'agent':'codex','executable':str(repo/'target/release/starflux'),'project_host':True,'desktop_helper':str(app),(PROGRAM):{'session':'wave-test','workspace_id':'w'+str(i),'order':i,'executable':str(source),'panes':{'0':pane,'31':pane}}}
         path=runtime/(name+'.json');path.write_text(json.dumps(config));path.chmod(0o600)
         data.mkdir(parents=True,exist_ok=True)
         path=data/(name+'.layout.json');path.write_text(json.dumps({'space':'agent','agent':31,'terminal':0,'terminals':[0]}));path.chmod(0o600)
@@ -144,7 +145,7 @@ else:raise SystemExit(2)
         wait(lambda:state()['controller_pid']!=old and not state()['project_navigation']['high_first'] and state()['project_order']==names[::-1],'Low preference and full order were not restored')
         requests=[json.loads(l) for l in (temp/'requests').read_text().splitlines()]
         assert all(r in [['agent','list'],['api','snapshot'],['pane','get'],['pane','read'],['terminal','attach']] for r in requests)
-        result={'passed':True,'first_sample_uses_backend_recency':True,'working_agents_automatically_on_top_in_high':True,'low_is_full_reverse_with_busiest_at_bottom':True,'sort_text_has_hover_border_only':True,'only_working_agent_icons_animate':True,'idle_agent_icons_clear':True,'pending_question_marker':True,'blocked_status_does_not_falsely_request_attention':True,'explicit_approval_has_static_amber_marker':True,'reduced_motion_and_idle_timer':True,'sort_and_history_survive_restart':True,'sort_preserves_selected_project':True,'batched_read_only_activity':True,'original_herdr_sessions_touched':False}
+        result={'passed':True,'first_sample_uses_backend_recency':True,'working_agents_automatically_on_top_in_high':True,'low_is_full_reverse_with_busiest_at_bottom':True,'sort_text_has_hover_border_only':True,'only_working_agent_icons_animate':True,'idle_agent_icons_clear':True,'pending_question_marker':True,'blocked_status_does_not_falsely_request_attention':True,'explicit_approval_has_static_amber_marker':True,'reduced_motion_and_idle_timer':True,'sort_and_history_survive_restart':True,'sort_preserves_selected_project':True,'batched_read_only_activity':True,('original_'+PROGRAM+'_sessions_touched'):False}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
     except BaseException:
         try:(out/'failure-state.json').write_text(json.dumps(state(),indent=2))

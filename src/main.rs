@@ -1,5 +1,6 @@
 mod activity;
 mod adoption;
+mod agent_mux;
 mod agent_state;
 mod app_audio;
 mod app_desktop;
@@ -36,7 +37,6 @@ mod graphics_resources;
 mod graphics_store;
 mod graphics_stream;
 mod graphics_transfer;
-mod herdr;
 mod host_env;
 #[cfg(test)]
 mod inline_graphics_tests;
@@ -127,15 +127,15 @@ struct Args {
     sessions: bool,
     #[arg(long, hide = true)]
     default_workspace: bool,
-    /// Import the default Herdr session as an isolated interactive collection
+    /// Import the default multiplexer session as an isolated interactive collection
     #[arg(long)]
-    import_herdr: bool,
-    /// Transfer live default Herdr terminals into STAR/FLUX without restarting them
+    import_agent_mux: bool,
+    /// Transfer live default multiplexer terminals into STAR/FLUX without restarting them
     #[arg(long)]
-    migrate_herdr: bool,
-    /// Prepare and back up a live Herdr migration without applying it
+    migrate_agent_mux: bool,
+    /// Prepare and back up a live multiplexer migration without applying it
     #[arg(long)]
-    plan_herdr_migration: bool,
+    plan_agent_mux_migration: bool,
     /// Application-wide Kitty/chrome theme (see --themes); defaults to system
     #[arg(long)]
     theme: Option<String>,
@@ -471,10 +471,13 @@ fn run() -> Result<()> {
         ))?;
         return client::run_terminal_socket_with_events(&proxy.path, terminal_event);
     }
-    if raw.get(1).is_some_and(|s| s == "--herdr-view") {
-        return herdr::viewer(
-            raw.get(2).context("Missing Herdr session")?,
-            raw.get(3).context("Missing Herdr pane")?,
+    if raw.get(1).is_some_and(|s| {
+        // Panes launched by earlier builds saved the flag under the program's name.
+        s == "--agent-mux-view" || *s == format!("--{}-view", agent_mux::PROGRAM)
+    }) {
+        return agent_mux::viewer(
+            raw.get(2).context("Missing multiplexer session")?,
+            raw.get(3).context("Missing multiplexer pane")?,
         );
     }
     if raw.get(1).is_some_and(|s| s == "--wait-ui-refresh") {
@@ -581,8 +584,8 @@ fn run() -> Result<()> {
     } else {
         presentation::Mode::Auto
     };
-    if a.migrate_herdr || a.plan_herdr_migration {
-        return adoption::migrate(a.plan_herdr_migration);
+    if a.migrate_agent_mux || a.plan_agent_mux_migration {
+        return adoption::migrate(a.plan_agent_mux_migration);
     }
     if a.default_workspace {
         println!(
@@ -733,8 +736,8 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
-    if a.import_herdr {
-        herdr::import("default")?;
+    if a.import_agent_mux {
+        agent_mux::import("default")?;
         return Ok(());
     }
     if a.themes {
@@ -809,7 +812,7 @@ fn run() -> Result<()> {
         workspace: a.workspace.clone(),
         label: None,
         collection: None,
-        herdr: None,
+        agent_mux: None,
         tmux: None,
         adopted: Default::default(),
         native_terminals: a.native_terminals,
@@ -1139,7 +1142,7 @@ mod workspace_tests {
             workspace: name,
             label: None,
             collection: None,
-            herdr: None,
+            agent_mux: None,
             tmux: None,
             adopted: Default::default(),
             native_terminals: false,

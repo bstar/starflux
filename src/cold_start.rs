@@ -235,7 +235,7 @@ pub(crate) fn save(config: &Config, screen: &Screen) -> Result<()> {
         "host",
         "ssh_config",
         "project_host",
-        "herdr",
+        crate::agent_mux::PROGRAM,
         "tmux",
         "adopted",
     ]

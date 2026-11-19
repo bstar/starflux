@@ -171,7 +171,7 @@ Claude's own callback registers the UUID against the new pane. The source
 process remains alive. This test uses print mode. The interactive client
 stopped at its connectivity check in the offline profile.
 
-For an imported Herdr terminal, the tab menu's **Agent status / conversation**
+For an imported agent-multiplexer terminal, the tab menu's **Agent status / conversation**
 view checks the live source and displays its pane ID and shell PID. The
 diagnostic is read-only and reports when the source identity is unavailable.
 

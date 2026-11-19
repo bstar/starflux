@@ -1,4 +1,4 @@
-# Herdr parity: implementation checkpoint
+# agent workspace parity: implementation checkpoint
 
 Resumed at the user's request on 2026-11-01 after the 2026-10-30 pause.
 The full parity objective remains unfinished. This document is a resumption checklist, not a completion claim.
@@ -16,7 +16,7 @@ graphical local/SSH and cells reboot tests passed, including restored input,
 split layouts, saved conversations and no replay of consumed launch intents.
 Delayed backend startup over SSH also recovered automatically. Evidence:
 `target/reboot-latest-{local,ssh,cells,retry,refresh}.log`. The saved default is
-still `herdr-default`; its replacement has been requested from the user and has
+still `<multiplexer>-default`; its replacement has been requested from the user and has
 not been guessed. This validates recovery, not the unfinished parity objective.
 
 The preceding goal work made verified progress: reboot recovery now retires
@@ -40,7 +40,7 @@ release workspace build, formatting and strict release Clippy passed again
 (`target/reboot-terminal-*`, `target/reboot-host-recovery.log`). The live view
 was refreshed; its existing live shell and agent PIDs were preserved, while
 the already exited empty-PID pane was reaped normally. The saved default remains
-`herdr-default`; the user's intended replacement has been requested and has not
+`<multiplexer>-default`; the user's intended replacement has been requested and has not
 been inferred or changed. This does not complete the broader parity goal.
 
 A further reboot audit on 2026-11-01 revalidated the installed local release
@@ -84,9 +84,9 @@ shipping UI, adds executable acceptance coverage and records direct evidence.
 | Agent identity and recovery | Durable conversation/run records, guarded lifecycle reports, health diagnostics, explicit exact-conversation resume in a new tab | Automatic provider adapters that populate identity and lifecycle correctly; real provider acceptance without prompting live user agents |
 | Attention and notifications | Durable global inbox, filtering/search/read/dismissal, guarded navigation, configurable local desktop delivery and retention | Desktop notification delivery to the SSH client and provider integration coverage |
 | Panes | Nested horizontal/vertical splits, focus, resizing, movement/swap, zoom, per-view layouts, close-without-stopping and guarded explicit termination | Cross-project moves and tab-group workflows; complete acceptance coverage |
-| Automation | Versioned JSONL API, operation receipts, guarded input, event subscriptions/cursors, session imports, acknowledged per-window commands | Remaining session-management operations and source-owned input adapter gaps; audit the advertised API against actual Herdr workflows |
+| Automation | Versioned JSONL API, operation receipts, guarded input, event subscriptions/cursors, session imports, acknowledged per-window commands | Remaining session-management operations and source-owned input adapter gaps; audit the advertised API against actual the agent multiplexer workflows |
 | Worktrees | Host-aware list/create/open/remove, identity and cleanliness guards, process/launch leases, grouping | Broader acceptance and integration with remaining agent/machine workflows |
-| History | Search, match navigation, frozen review/copy mode, native/tmux/Herdr capture | Inline graphics are not retained by this text-history implementation |
+| History | Search, match navigation, frozen review/copy mode, native/tmux/agent-multiplexer capture | Inline graphics are not retained by this text-history implementation |
 | Machines | Saved SSH profiles, revision guards, onboarding/probes, host-specific projects and failure handling | Combined machine/agent controller view and broader multi-host coverage |
 | Keyboard | Configurable prefix/direct controls, command help, keyboard menus/dialogs, pane navigation | Exercise new plugin surfaces; continue auditing all remaining surfaces |
 | Cold start | Private bounded text snapshots, previous snapshot, launch receipts, read-only previews, independent background collector | Inline graphics and legacy pixel archives; complete restoration guarantees and failure coverage |
@@ -121,7 +121,7 @@ local build output and is not a durable shipped artifact.
 Code is in `src/plugins.rs`, `src/plugin_store.rs`, `src/plugin_runner.rs` and
 `src/plugin_ui.rs`, with dispatch in `main.rs`, `automation.rs` and `ui.rs`.
 The manifest is native version-1 JSON named `starflux-plugin.json`; it is not
-compatible with Herdr's TOML manifest. No new Cargo dependency was introduced.
+compatible with the agent multiplexer's TOML manifest. No new Cargo dependency was introduced.
 
 Implemented:
 
@@ -251,7 +251,7 @@ restoration, OSC 8 destinations, broader hooks/provider interactions,
 managed-version metadata corruption isolation, large registry/API pagination,
 retention/pruning, and full source/lifecycle/packaging acceptance. Retained
 versions currently require explicit uninstall to release their disk space.
-The native JSON manifest is not Herdr TOML compatibility.
+The native JSON manifest is not the agent multiplexer TOML compatibility.
 
 Current final-build acceptance passed:
 
@@ -273,7 +273,7 @@ Current final-build acceptance passed:
 The existing GIO dependency now enables its GLib 2.66 URI parser feature; no new
 crate or STAR/KIT pin is introduced. The broader release/Nix packaging gate has
 not been run for this checkpoint. These focused results do not establish full
-plugin or Herdr parity. The real plugin registry was empty; tests did not enable
+plugin or agent workspace parity. The real plugin registry was empty; tests did not enable
 a real plugin, prompt a user agent or stop user terminal/App Space processes.
 The eligible live frontend was refreshed from the final build; terminal process
 identities and its current zero-worker App Space inventory were preserved
@@ -512,7 +512,7 @@ context, preserve App Space workers, and validate owner death, child cleanup,
 modal/singleton refusal, resizing and independent frontends with private fixtures.
 
 1. Inspect the current code and checkpoint evidence; revalidate tests when new
-   changes or failures justify it. Full plugin and Herdr parity remain unproven.
+   changes or failures justify it. Full plugin and agent workspace parity remain unproven.
 2. Extend graphical/cells acceptance as managed packages, panes, links and hooks
    are implemented; keep narrow-window, keyboard and independent-window coverage.
 3. Expand process tests for project CWD/foreign-host guards, worktree removal
@@ -561,7 +561,7 @@ These checks do not validate the subsequent popup source changes.
 The real eligible frontend was refreshed to that placement executable during
 the reboot follow-up. Its existing shell/agent identities were preserved, and a
 previously absent shell was restored. No real plugin was enabled and no real
-agent received test input. Saved default `herdr-default` remains unchanged pending
+agent received test input. Saved default `<multiplexer>-default` remains unchanged pending
 the user's intended selection. Private reboot recovery passed again locally and
 over SSH, as did startup retry over SSH (`target/reboot-user-{local,ssh,retry}.log`).
 The observed saved-screen error also exposed a valid parser cursor at the wrap
@@ -625,7 +625,7 @@ proof of the popup code. Poll confirmed live handles instead of restarting on an
 observation timeout. Live real frontends remain on the validated placement build;
 no real plugin has been enabled, and no real agent received test input.
 
-Popup implementation is an increment, not full Herdr/plugin parity. Continue
+Popup implementation is an increment, not full the agent multiplexer/plugin parity. Continue
 bounded record retention, corrupt/stale ownership repair, project/foreign-host
 worktree guards, source races, transient keyboard escape controls and actual
 graphical-host focus/capture acceptance. Then continue the original agent
@@ -875,10 +875,10 @@ gate remains live on confirmed handle 43119, progressing through snapshots,
 cold-runtime recovery and narrow-window acceptance. Its completed Nix check is
 recorded above; do not claim the serial gate has finished yet.
 
-Re-inspecting the existing local Herdr 0.9.1 source confirms that the parity
+Re-inspecting the existing local agent multiplexer 0.9.1 source confirms that the parity
 target includes Kitty retained images, media queries, Unicode placeholders and
 `pane.graphics.info/set/clear/stream` APIs, not just forwarding a picture. The
-relevant source lives at `target/herdr-source-v0.9.1`; no Herdr implementation
+relevant source lives at `target/agent-mux-source-v0.9.1`; no agent multiplexer implementation
 code was copied into the new modules. Full graphics parity remains unproven.
 
 The isolated candidate adds `src/graphics_reply.rs`: generation-bound tickets,
@@ -1093,7 +1093,7 @@ using only the separately named candidate example targets for expiry acceptance.
 The preceding reboot audit was progress: current local/SSH cold-start and
 startup-retry fixtures passed, and the real frontend was refreshed with its
 shell/agent identity preserved (`target/reboot-current-user-*.log`). The default
-remains `herdr-default`; the user's requested replacement is still unknown.
+remains `<multiplexer>-default`; the user's requested replacement is still unknown.
 
 The canonical pipeline serial gate (exec 65649) has now completed with exit 0,
 including session/default startup, nested panes, history, snapshot upgrade,
@@ -1528,7 +1528,7 @@ terminal pass. The original full parity goal remains active.
 
 Previous goal turn made progress: reboot-recovery/startup-retry acceptance passed
 locally and over SSH, and a guarded UI refresh preserved the live terminal PID
-and selected project. The saved default remains `herdr-default` pending the
+and selected project. The saved default remains `<multiplexer>-default` pending the
 user's intended replacement; it was not guessed or changed.
 
 The preceding native-source broker's full serial gate (exec 95078) and frozen
@@ -1673,7 +1673,7 @@ existing-source observation/adoption, health/lifecycle/history/snapshot and
 automation mapping, actual sharp graphical image delivery, clipboard/title/
 notification forwarding, verified resync and interrupted-creation/process-group
 supervision still need implementation. Do not enable a narrower cells-only or
-new-sources-only path and call the full graphics/Herdr parity goal complete.
+new-sources-only path and call the full graphics/agent workspace parity goal complete.
 All other unfinished original goal requirements remain active.
 
 The promoted managed-owner canonical chain (exec 18010) reached verified exit
@@ -2205,7 +2205,7 @@ Evidence: `target/native-tree-resumed-{clippy,unit,minimal,build}.log`,
 `target/native-tree-resumed-{loss-local,loss-ssh,tree-ssh,shell}.log`,
 `target/native-tree-resumed-ui-{local,ssh,cells,ssh-cells}.log`, and
 `target/native-tree-resumed-older-{local,ssh}.log`. Updated source/fixture patches
-and checksums are in `checkpoints/native-process-supervision/`. The installed
+and checksums are in the `native-process-supervision` checkpoint (merged on 2026-11-19; kept in git history). The installed
 binary SHA-256 and all 5 original PID/start identities are unchanged; see
 `target/native-tree-resumed-live-safety.json`.
 
@@ -2253,12 +2253,12 @@ refuse unsupported lifecycle commands.
 Evidence is in `target/native-links-{clippy,unit,minimal,build}.log`,
 `target/native-links-ui-{local,ssh,cells,ssh-cells}.log` and
 `target/native-links-older-{local,ssh}.log`. The separate
-`checkpoints/native-hyperlinks/` source patch and receipt preserve reconstruction
+the `native-hyperlinks` checkpoint (merged on 2026-11-19; kept in git history) source patch and receipt preserve reconstruction
 and evidence hashes. All 5 original production PID/start identities and the
 installed executable are unchanged relative to this stage's baseline.
 
 This completes the tested OSC 8 forwarding slice, not native migration or full
-Herdr parity. General clipboard/title/bell/attention forwarding, owner-loss and
+agent workspace parity. General clipboard/title/bell/attention forwarding, owner-loss and
 never-delivered intent recovery, broader source adoption, graphics/history and
 placement compatibility, network/media stress, current application/UI rebasing
 and canonical release/Nix gates remain. Every other unchecked requirement in
@@ -2309,7 +2309,7 @@ Evidence is `target/native-metadata-{clippy,unit,minimal,build}.log`,
 `target/native-metadata-wire-{local,ssh}.log`,
 `target/native-metadata-links-{local,ssh,cells,ssh-cells}.log`, and
 `target/native-metadata-older-{local,ssh}.log`. The separate
-`checkpoints/native-metadata/` preserves the incremental source patch, fixtures
+the `native-metadata` checkpoint (merged on 2026-11-19; kept in git history) preserves the incremental source patch, fixtures
 and evidence hashes. Original production PID/start identities and the installed
 executable remain unchanged relative to this stage's recorded baseline.
 
@@ -2366,7 +2366,7 @@ Evidence: `target/native-launch-fence-{clippy,unit,minimal,build}.log`,
 `target/native-launch-fence-ui-{local,ssh,cells,ssh-cells}.log`,
 `target/native-launch-fence-metadata-{local,ssh}.log`, and
 `target/native-launch-fence-older-{local,ssh}.log`. The separate
-`checkpoints/native-launch-fence/` contains the incremental patch, fixtures and
+the `native-launch-fence` checkpoint (merged on 2026-11-19; kept in git history) contains the incremental patch, fixtures and
 validation identities. Original production PID/start identities and the installed
 executable remain unchanged relative to this stage's baseline.
 
@@ -2417,7 +2417,7 @@ Evidence: `target/native-owner-loss-{clippy,unit,minimal,build}.log`,
 `target/native-owner-loss-{local,ssh,pending-local,pending-ssh,guardian-local,guardian-ssh}.log`,
 `target/native-owner-loss-ui-{local,ssh,cells,ssh-cells}.log`,
 `target/native-owner-loss-{fence-local,fence-ssh,metadata-local,metadata-ssh,older-local,older-ssh,shell,tree-ssh}.log`.
-The separate `checkpoints/native-owner-loss/` saves incremental source, fixtures
+The separate the `native-owner-loss` checkpoint (merged on 2026-11-19; kept in git history) saves incremental source, fixtures
 and reconstruction/validation identities. Original production PID/start identities
 and the installed executable remain unchanged relative to this stage's baseline.
 
@@ -2427,7 +2427,7 @@ missing/lost journals, unsupported legacy sources and broader adoption still
 refuse replacement. Remaining attention, graphics/history/placement and network/
 media cases, application/UI rebasing and canonical release/Nix gates remain;
 every other unchecked requirement in `docs/plan.md` stays in scope. The candidate
-is uninstalled and the full Herdr parity goal remains active.
+is uninstalled and the full agent workspace parity goal remains active.
 
 ### November 14 — native candidate rebased onto current code and UI
 
@@ -2464,7 +2464,7 @@ over SSH. All fixtures use private namespaces and fake programs. Evidence is in
 `target/native-rebase-{links-local,links-ssh-cells,metadata-local,metadata-ssh-cells,fence-local,fence-ssh-cells}.log`,
 and `target/native-rebase-portfolio-{local,ssh-cells}.log`.
 
-The separate `checkpoints/native-rebased/` archives a patch against the current
+The separate the `native-rebased` checkpoint (merged on 2026-11-19; kept in git history) archives a patch against the current
 canonical commit and a saved canonical UI patch, replacing the earlier base for
 integration. Its reconstruction/validation receipt verifies all controlled source
 files and original production PID/start identities. The installed executable and
@@ -2473,7 +2473,7 @@ five tracked production processes remain unchanged.
 The candidate remains uninstalled. Remaining uncertified recovery/adoption,
 attention, graphics/history/placement and constrained-network/media cases,
 canonical release/Nix acceptance and production integration remain. This completes
-the current-code rebase slice, not the Herdr parity goal; every unchecked item in
+the current-code rebase slice, not the agent workspace parity goal; every unchecked item in
 `docs/plan.md` remains in scope.
 
 ### November 14 — production-layout release acceptance started
@@ -2555,7 +2555,7 @@ main tests ignored in each matrix.
 
 The two-file source increment, shared-fixture changes, reconstruction verifier
 and eight validation log identities are saved in
-`checkpoints/native-conversation-recovery/`. It follows the rebased checkpoint;
+the `native-conversation-recovery` checkpoint (merged on 2026-11-19; kept in git history). It follows the rebased checkpoint;
 the older patch and its evidence have not been rewritten to claim this fix.
 Logs use `target/native-conversation-recovery-final-*.log`. The increment's own
 Nix package/smoke check is running separately in
@@ -2577,7 +2577,7 @@ private environment and retired; no production owners were touched.
 The candidate remains uninstalled and has not been promoted into canonical Rust
 source. Broader adoption/uncertified recovery, attention forwarding, graphics/
 placement/network/media compatibility, production integration and every other
-unchecked requirement in `docs/plan.md` remain in scope. Full Herdr parity is not
+unchecked requirement in `docs/plan.md` remain in scope. Full agent workspace parity is not
 complete.
 
 ### November 14 — requested program startup is acknowledged before publication
@@ -2610,7 +2610,7 @@ locally and over SSH. The actual failed-exec UI menu/confirmation and shared fre
 source pass locally in graphical mode and over SSH in cells mode, preserving the
 sibling pane and never running its saved launch hint. The reconstructed four-file
 increment, fixture changes and ten validation log identities are in
-`checkpoints/native-startup/`; logs are `target/native-startup-*.log`.
+the `native-startup` checkpoint (merged on 2026-11-19; kept in git history); logs are `target/native-startup-*.log`.
 
 The release checkout now contains both increments. Its separate continuation,
 `target/native-release-gate-startup-resume.log`, reruns formatting, strict Clippy,
@@ -2649,7 +2649,7 @@ again before publication; an identical already-ready reference from another view
 is accepted. Legacy/imported/plugin permission handling is retained.
 
 This two-file increment reconstructs exactly in
-`checkpoints/native-launch-authority/`. Strict Clippy, all-feature release tests
+the `native-launch-authority` checkpoint (merged on 2026-11-19; kept in git history). Strict Clippy, all-feature release tests
 (278 main plus 4 client; 4 main ignored), binary build and private final-binary
 cold-runtime/saved-vector resume locally in graphical mode and over SSH in cells
 mode pass. Deterministically forcing the handoff race, further repetition,
@@ -2657,7 +2657,7 @@ minimal-feature and Nix checks on this exact increment remain necessary. Earlier
 startup acceptance must not be relabeled as validation of this later change.
 
 The complete pause handoff is [parity-handoff-2026-11-14.md](parity-handoff-2026-11-14.md).
-It preserves the full remaining Herdr parity scope and prioritizes real provider
+It preserves the full remaining agent workspace parity scope and prioritizes real provider
 identity capture/resume. A fake program executing a saved vector does not prove
 that Codex/Claude restored an AI conversation. No native increment was installed
 or promoted into canonical Rust source, no live sessions were migrated and all
@@ -2694,7 +2694,7 @@ preserved, and wrapper smoke coverage is distinct from binary race coverage.
 ARM64 and a complete unchanged canonical release-gate invocation remain unproven.
 
 Evidence/source/snapshot hashes are saved in
-`checkpoints/native-launch-authority/validation-resumed.json`; logs use
+the `native-launch-authority` checkpoint (merged on 2026-11-19; kept in git history); logs use
 `target/native-launch-race-*` and `target/native-launch-authority-resumed-*`.
 The staged Rust source reconstructs to the same two-file launch-authority
 increment. Canonical Rust source and dependency pins are untouched. Installed
@@ -2805,28 +2805,28 @@ paste, explicit submission, replay protection, changed target and copy-mode
 rejection, and preserved source topology. The owned-pane automation suite
 also passed over SSH. Logs are in
 `target/imported-tmux-input-final-{local,ssh,owned-ssh}.log`.
-Imported Herdr guarded input remains open.
+Imported the agent multiplexer guarded input remains open.
 
-## Imported Herdr process diagnostics
+## Imported the agent multiplexer process diagnostics
 
-`panes.get` verifies the same owned Herdr socket and server process before
+`panes.get` verifies the same owned agent-multiplexer socket and server process before
 and after querying pane process information. The imported pane and terminal
 IDs must match before STAR/FLUX publishes the shell PID, start time and
 foreground process group. Legacy records without a terminal ID report that
 identity is unavailable.
 
-The private Herdr import fixtures passed locally and over loopback SSH. They
+The private agent-multiplexer import fixtures passed locally and over loopback SSH. They
 matched the reported shell PID and terminal ID to the original live panes,
 verified that diagnostics did not restart a stopped source, and confirmed
 that an inspected pane exposes neither an action target nor write
 capabilities. The owned automation regression passed. Evidence is in
-`target/herdr-identity-{local,ssh,owned}.log`. Herdr's input schema has no
+`target/agent-mux-identity-{local,ssh,owned}.log`. The agent multiplexer's input schema has no
 expected process or terminal identity, so guarded writes remain open.
 
 The tab menu's **Agent status / conversation** view now loads the imported
-Herdr identity asynchronously. Private graphical and SSH cells fixtures
+the agent multiplexer identity asynchronously. Private graphical and SSH cells fixtures
 verified the read-only row matched an original shell PID and the source
-processes survived. Results are in `target/herdr-menu-final-{local,ssh-cells}.log`.
+processes survived. Results are in `target/agent-mux-menu-final-{local,ssh-cells}.log`.
 
 ## Per-machine agent view
 
@@ -2911,12 +2911,12 @@ literal punctuation. Local graphical and SSH cells fixtures verified the
 search toggle, original-case clipboard text and the headless results. See
 `target/history-ignore-case-{unit,local,ssh-cells}.log`.
 
-Imported Herdr history now checks the source socket, server process and
+Imported the agent multiplexer history now checks the source socket, server process and
 terminal ID on either side of the capture. A stopped source is rejected
-before invoking the read command. Private Herdr fixtures passed locally and
+before invoking the read command. Private agent-multiplexer fixtures passed locally and
 over SSH, including case-insensitive API paging, interactive search and a
 read against a stopped source that left it stopped. See
-`target/herdr-history-guard-{local,ssh-cells}.log`.
+`target/agent-mux-history-guard-{local,ssh-cells}.log`.
 
 The `agents.live` API now accepts project and session filters. They apply
 before pagination and terminal inspection, so unrelated panes cannot consume
@@ -3059,7 +3059,7 @@ agent-state unit tests passed, including both disconnect cases. See
 The pane observation API now offers an opt-in unavailable result with saved
 identity and layered disconnect diagnostics. It never grants a live target or
 write capabilities from a failed inspection. Private local and loopback SSH
-import tests stopped their isolated Herdr servers and confirmed that the
+import tests stopped their isolated the agent multiplexer servers and confirmed that the
 observation left those servers stopped. See `target/pane-unavailable-{local,ssh}.log`.
 
 Pane input capability and guarded send now share a transport readiness check.

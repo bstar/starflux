@@ -1,4 +1,4 @@
-//! Non-destructive Herdr import and interactive links to existing terminals.
+//! Non-destructive multiplexer import and interactive links to existing terminals.
 use crate::{
     project_state::{self, ProjectState, Space},
     runtime::Config,
@@ -14,6 +14,50 @@ use std::{
     process::{Command, Stdio},
     time::Duration,
 };
+/// The external agent multiplexer STAR/FLUX imports sessions from. This is
+/// its executable, configuration directory and socket name, and the value
+/// saved project files, source references and the automation API use for it.
+pub const PROGRAM: &str = "herdr";
+
+/// [`PROGRAM`] capitalized, for display.
+pub fn display_name() -> String {
+    let mut chars = PROGRAM.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// Keeps a project's import binding under the [`PROGRAM`] key that earlier
+/// builds wrote, so existing project files stay bound to their sessions.
+pub mod saved {
+    use super::{PROGRAM, Source};
+    use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap};
+
+    pub fn serialize<S: Serializer>(
+        source: &Option<Source>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(usize::from(source.is_some())))?;
+        if let Some(source) = source {
+            map.serialize_entry(PROGRAM, source)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Source>, D::Error> {
+        let mut rest =
+            std::collections::BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+        rest.remove(PROGRAM)
+            .filter(|value| !value.is_null())
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Pane {
     #[serde(default)]
@@ -69,26 +113,26 @@ impl Source {
     pub(crate) fn history_identity(&self, pane: usize) -> Result<(Value, String)> {
         let stored = self.panes.get(&pane).context("Imported pane is missing")?;
         let socket = socket_path(&self.session)?;
-        let before = crate::session_import::herdr_server_stamp(&socket)?;
+        let before = crate::session_import::agent_mux_server_stamp(&socket)?;
         let current = self.pane_snapshot(pane)?;
         let terminal = current["terminal_id"]
             .as_str()
-            .context("Herdr terminal identity unavailable")?;
+            .context("Multiplexer terminal identity unavailable")?;
         ensure!(
             current["pane_id"] == stored.pane_id
                 && (stored.terminal_id.is_empty() || terminal == stored.terminal_id),
-            "Herdr pane or terminal identity changed"
+            "Multiplexer pane or terminal identity changed"
         );
         ensure!(
-            before == crate::session_import::herdr_server_stamp(&socket)?,
-            "Herdr source server changed"
+            before == crate::session_import::agent_mux_server_stamp(&socket)?,
+            "Multiplexer source server changed"
         );
         Ok((before, terminal.to_owned()))
     }
     pub(crate) fn inspect_identity(&self, pane: usize) -> Result<Value> {
         let stored = self.panes.get(&pane).context("Imported pane is missing")?;
         let socket = socket_path(&self.session)?;
-        let before = crate::session_import::herdr_server_stamp(&socket)?;
+        let before = crate::session_import::agent_mux_server_stamp(&socket)?;
         let output = crate::read_query::output(self.command(&[
             "pane",
             "process-info",
@@ -99,12 +143,13 @@ impl Source {
         ensure!(
             health["pane_id"] == stored.pane_id
                 && (stored.terminal_id.is_empty() || health["terminal_id"] == stored.terminal_id),
-            "Herdr pane or terminal identity changed"
+            "Multiplexer pane or terminal identity changed"
         );
-        let after = crate::session_import::herdr_server_stamp(&socket)?;
-        ensure!(before == after, "Herdr source server changed");
+        let after = crate::session_import::agent_mux_server_stamp(&socket)?;
+        ensure!(before == after, "Multiplexer source server changed");
         if stored.terminal_id.is_empty() {
-            health["identity_error"] = json!("Reimport the Herdr session to bind this terminal");
+            health["identity_error"] =
+                json!("Reimport the multiplexer session to bind this terminal");
             return Ok(health);
         }
         let info = output.and_then(|bytes| Ok(serde_json::from_slice::<Value>(&bytes)?));
@@ -121,11 +166,13 @@ impl Source {
                     health["foreground_process_group"] =
                         info["foreground_process_group_id"].clone();
                 } else {
-                    health["identity_error"] = json!("Herdr did not report a live shell process");
+                    health["identity_error"] =
+                        json!("Multiplexer did not report a live shell process");
                 }
             }
             _ => {
-                health["identity_error"] = json!("Herdr pane process information is unavailable");
+                health["identity_error"] =
+                    json!("Multiplexer pane process information is unavailable");
             }
         }
         Ok(health)
@@ -143,7 +190,7 @@ impl Source {
             .as_str()
             .filter(|cwd| !cwd.is_empty())
             .or_else(|| p["cwd"].as_str());
-        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().unwrap_or("Herdr shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":"herdr","read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
+        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().unwrap_or("Multiplexer shell"),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":crate::agent_mux::PROGRAM,"read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
     }
 }
 pub fn import(session: &str) -> Result<Config> {
@@ -156,24 +203,24 @@ pub(crate) fn socket_path(session: &str) -> Result<PathBuf> {
             && session
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
-        "Invalid Herdr session name"
+        "Invalid multiplexer session name"
     );
     let home = std::env::home_dir().context("No home directory")?;
-    let config_path = std::env::var_os("HERDR_CONFIG_PATH")
+    let config_path = std::env::var_os(format!("{}_CONFIG_PATH", PROGRAM.to_ascii_uppercase()))
         .map(PathBuf::from)
-        .unwrap_or(home.join(".config/herdr/config.toml"));
+        .unwrap_or(home.join(".config").join(PROGRAM).join("config.toml"));
     Ok(if session == "default" {
         config_path
             .parent()
-            .context("No Herdr config directory")?
-            .join("herdr.sock")
+            .context("No multiplexer config directory")?
+            .join(format!("{PROGRAM}.sock"))
     } else {
         config_path
             .parent()
-            .context("No Herdr config directory")?
+            .context("No multiplexer config directory")?
             .join("sessions")
             .join(session)
-            .join("herdr.sock")
+            .join(format!("{PROGRAM}.sock"))
     })
 }
 pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
@@ -185,10 +232,11 @@ pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
     let metadata = fs::symlink_metadata(&socket)?;
     ensure!(
         metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() },
-        "Herdr session socket is not owned by this user"
+        "Multiplexer session socket is not owned by this user"
     );
-    drop(UnixStream::connect(&socket).context("Herdr session is not running")?);
-    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
+    drop(UnixStream::connect(&socket).context("Multiplexer session is not running")?);
+    let executable =
+        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
     let mut command = Command::new(executable);
     command.args(["--session", session, "api", "snapshot"]);
     Ok(serde_json::from_slice(&crate::read_query::output(
@@ -196,25 +244,26 @@ pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
     )?)?)
 }
 pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> {
-    let executable = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
+    let executable =
+        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
     let socket = socket_path(session)?;
     let saved_path = socket.with_file_name("session.json");
     let saved: Value = match fs::read(&saved_path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).context("Read saved Herdr layout")?,
+        Ok(bytes) => serde_json::from_slice(&bytes).context("Read saved multiplexer layout")?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(error) => return Err(error).context("Read saved Herdr layout"),
+        Err(error) => return Err(error).context("Read saved multiplexer layout"),
     };
     let snap = &snapshot["result"]["snapshot"];
     let workspaces = snap["workspaces"]
         .as_array()
-        .context("Herdr snapshot has no workspaces")?;
+        .context("Multiplexer snapshot has no workspaces")?;
     let panes = snap["panes"]
         .as_array()
-        .context("Herdr snapshot has no panes")?;
+        .context("Multiplexer snapshot has no panes")?;
     let tabs = snap["tabs"]
         .as_array()
-        .context("Herdr snapshot has no tabs")?;
-    let collection = format!("herdr-{session}");
+        .context("Multiplexer snapshot has no tabs")?;
+    let collection = format!("{PROGRAM}-{session}");
     let root = project_state::data_root()?;
     let mut selected = None;
     let mut count = 0;
@@ -223,7 +272,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
     for (order, w) in workspaces.iter().enumerate() {
         let wid = w["workspace_id"]
             .as_str()
-            .context("Herdr workspace has no identity")?;
+            .context("Multiplexer workspace has no identity")?;
         let workspace = format!("{collection}-{wid}");
         let saved_workspace = saved["workspaces"]
             .as_array()
@@ -237,7 +286,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         }
         ensure!(
             ws_panes.len() <= 30,
-            "Herdr workspace has more than 30 panes"
+            "Multiplexer workspace has more than 30 panes"
         );
         let label = w["label"].as_str().unwrap_or(wid).to_owned();
         let directory = saved_workspace
@@ -257,11 +306,11 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         for (index, pane) in ws_panes.iter().enumerate() {
             let pid = pane["pane_id"]
                 .as_str()
-                .context("Herdr pane has no identity")?
+                .context("Multiplexer pane has no identity")?
                 .to_owned();
             let tid = pane["tab_id"]
                 .as_str()
-                .context("Herdr pane has no tab identity")?
+                .context("Multiplexer pane has no tab identity")?
                 .to_owned();
             let tab = tabs.iter().find(|t| t["tab_id"] == tid);
             let name = tab.and_then(|t| t["label"].as_str()).unwrap_or("Terminal");
@@ -278,7 +327,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
                 Pane {
                     terminal_id: pane["terminal_id"]
                         .as_str()
-                        .context("Herdr pane has no terminal identity")?
+                        .context("Multiplexer pane has no terminal identity")?
                         .into(),
                     pane_id: pid,
                     tab_id: tid,
@@ -304,7 +353,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
             workspace: workspace.clone(),
             label: Some(label.clone()),
             collection: Some(collection.clone()),
-            herdr: Some(source),
+            agent_mux: Some(source),
             tmux: None,
             adopted: Default::default(),
             native_terminals: false,
@@ -322,7 +371,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         if path.exists() {
             let old: Config = serde_json::from_slice(&fs::read(&path)?)?;
             ensure!(
-                old.herdr
+                old.agent_mux
                     .as_ref()
                     .is_some_and(|s| s.session == session && s.workspace_id == wid),
                 "Import would overwrite an unrelated project"
@@ -351,8 +400,8 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         pane_count += ws_panes.len();
         imported.push(json!({"workspace":workspace,"source_workspace":wid,"label":label,"directory":directory,"panes":ws_panes.len(),"order":order}));
     }
-    let config = selected.context("Herdr has no workspaces to import")?;
-    let report = json!({"source":"Herdr","session":session,"workspaces":count,"tabs":tabs.len(),"panes":pane_count,"agents":snap["agents"].as_array().map_or(0,Vec::len),"selected":config.workspace,"read_only":false,"live_terminal_attachments":true,"source_processes_restarted":false,"collection":collection,"projects":imported});
+    let config = selected.context("Multiplexer has no workspaces to import")?;
+    let report = json!({"source":"Multiplexer","session":session,"workspaces":count,"tabs":tabs.len(),"panes":pane_count,"agents":snap["agents"].as_array().map_or(0,Vec::len),"selected":config.workspace,"read_only":false,"live_terminal_attachments":true,"source_processes_restarted":false,"collection":collection,"projects":imported});
     starcore::fs::write_private(
         &root.join(format!("{collection}.import.json")),
         &serde_json::to_vec_pretty(&report)?,
@@ -362,7 +411,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
         &serde_json::to_vec_pretty(&snapshot)?,
     )?;
     eprintln!(
-        "Imported {count} Herdr workspaces, {} tabs and {pane_count} panes as interactive live terminal references.\nOpen with: starflux --workspace {}",
+        "Imported {count} multiplexer workspaces, {} tabs and {pane_count} panes as interactive live terminal references.\nOpen with: starflux --workspace {}",
         tabs.len(),
         config.workspace
     );
@@ -374,9 +423,10 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
             && pane
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b":_-".contains(&b)),
-        "Invalid Herdr pane identity"
+        "Invalid multiplexer pane identity"
     );
-    let executable = std::env::var("STARFLUX_HERDR").unwrap_or("herdr".into());
+    let executable =
+        std::env::var("STARFLUX_AGENT_MUX").unwrap_or(crate::agent_mux::PROGRAM.into());
     starcore::crossterm::terminal::enable_raw_mode()?;
     let _guard = Restore;
     let mut last = Vec::new();
@@ -410,7 +460,8 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
             let mut stdout = std::io::stdout().lock();
             write!(
                 stdout,
-                "\x1b[?25l\x1b[?7l\x1b[0m\x1b[H\x1b[2J\x1b[38;2;139;164;220mHerdr / {session} / {pane} / READ-ONLY LIVE VIEW\x1b[0m\r\n\r\n"
+                "\x1b[?25l\x1b[?7l\x1b[0m\x1b[H\x1b[2J\x1b[38;2;139;164;220m{} / {session} / {pane} / READ-ONLY LIVE VIEW\x1b[0m\r\n\r\n",
+                display_name()
             )?;
             let text = String::from_utf8_lossy(&bytes).replace('\n', "\r\n");
             stdout.write_all(text.as_bytes())?;
@@ -430,5 +481,41 @@ impl Drop for Restore {
     }
 }
 pub fn reject_write() -> Result<Value> {
-    bail!("Herdr owns the imported session lifecycle; use its live attachment for input")
+    bail!("Multiplexer owns the imported session lifecycle; use its live attachment for input")
+}
+
+#[cfg(test)]
+mod saved_tests {
+    #[test]
+    fn project_files_keep_their_binding_under_the_program_key() {
+        let source = super::Source {
+            session: "default".into(),
+            workspace_id: "w1".into(),
+            order: 0,
+            executable: super::PROGRAM.into(),
+            panes: Default::default(),
+        };
+        let mut value = serde_json::json!({"workspace": "proof"});
+        value[super::PROGRAM] = serde_json::to_value(&source).unwrap();
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Holder {
+            workspace: String,
+            #[serde(flatten, with = "super::saved")]
+            agent_mux: Option<super::Source>,
+        }
+        let loaded: Holder = serde_json::from_value(value).unwrap();
+        assert_eq!(loaded.agent_mux.as_ref().unwrap().workspace_id, "w1");
+        let saved = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(saved[super::PROGRAM]["session"], "default");
+        let empty: Holder =
+            serde_json::from_value(serde_json::json!({"workspace": "p", super::PROGRAM: null}))
+                .unwrap();
+        assert!(empty.agent_mux.is_none());
+        assert!(
+            serde_json::to_value(&empty)
+                .unwrap()
+                .get(super::PROGRAM)
+                .is_none()
+        );
+    }
 }

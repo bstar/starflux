@@ -526,7 +526,7 @@ pub fn create_project(
         workspace: name.into(),
         label: None,
         collection,
-        herdr: None,
+        agent_mux: None,
         tmux: None,
         adopted: Default::default(),
         native_terminals: false,

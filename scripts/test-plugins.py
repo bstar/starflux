@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Private plugin commands, hooks and worker failure tests, optionally over SSH."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import argparse,concurrent.futures,getpass,json,os,shlex,shutil,signal,socket,subprocess,tempfile,time,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--capacity',action='store_true');parser.add_argument('--packages',action='store_true');parser.add_argument('--links',action='store_true');parser.add_argument('--panes',action='store_true');args=parser.parse_args()
@@ -7,8 +8,8 @@ root=Path(__file__).resolve().parents[1]
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
     tmp=Path(temporary);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
-    env={k:v for k,v in os.environ.items() if not k.startswith(('HERDR_','BASH_FUNC_','STARFLUX_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
-    env.update(TMUX_TMPDIR=str(tmp/'tmux'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),STARFLUX_SNAPSHOT_SERVICE='off',STARFLUX_HERDR=str(tmp/'no-herdr'))
+    env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_','STARFLUX_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
+    env.update(TMUX_TMPDIR=str(tmp/'tmux'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),STARFLUX_SNAPSHOT_SERVICE='off',STARFLUX_agent_mux=str(tmp/('no-'+PROGRAM)))
     data=tmp/'data/starflux/plugins';package=tmp/'package with spaces 界';package.mkdir();daemon=None;ssh=[]
     def wait(predicate,label,timeout=20):
         end=time.monotonic()+timeout
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
         if method in ('plugins.install','plugins.update'):request['deadline_ms']=90000
         if write:request['operation_id']=operation or str(uuid.uuid4())
         command=[str(app),'--api',json.dumps(request)]
-        if args.ssh:command=ssh+[shlex.join(['env',*[key+'='+value for key,value in scope.items() if key in ('SHELL','TMUX_TMPDIR','XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','STARFLUX_SNAPSHOT_SERVICE','STARFLUX_PLUGIN_SERVICE','STARFLUX_HERDR','GIT_SSH_COMMAND','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM')],*command])]
+        if args.ssh:command=ssh+[shlex.join(['env',*[key+'='+value for key,value in scope.items() if key in ('SHELL','TMUX_TMPDIR','XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','STARFLUX_SNAPSHOT_SERVICE','STARFLUX_PLUGIN_SERVICE','STARFLUX_AGENT_MUX','GIT_SSH_COMMAND','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM')],*command])]
         response=json.loads(subprocess.check_output(command,env=scope,timeout=100));assert response['ok']==ok,response
         return response['result'] if ok else response['error']
     def catalogue(scope=None):return api('plugins.list',scope=scope)

@@ -432,7 +432,7 @@ fn input_transport_available(health: &Value, adopted: bool) -> bool {
         && (!adopted || health["bridge_connected"] == true)
 }
 fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) -> Value {
-    let target = if health["source"] != "herdr"
+    let target = if health["source"] != crate::agent_mux::PROGRAM
         && let Ok((pid, start, boot)) = config.terminal_identity(id, health)
     {
         json!(Target {
@@ -497,10 +497,10 @@ fn guarded(target: &Target) -> Result<(Config, ProjectState, usize, Value)> {
         return Err(fault("stale_target", "Terminal generation changed"));
     }
     let health = inspect(&config, id)?;
-    if health["source"] == "herdr" {
+    if health["source"] == crate::agent_mux::PROGRAM {
         return Err(fault(
             "unsupported_capability",
-            "Imported Herdr process identities are read-only",
+            "Imported multiplexer process identities are read-only",
         ));
     }
     let identity = config
@@ -1026,7 +1026,7 @@ fn dispatch(request: &Request) -> Result<Value> {
             let state = ProjectState::load(&config)?;
             let id = pane(&config, &state, p.pane)?;
             let health = if let Some(source) = config
-                .herdr
+                .agent_mux
                 .as_ref()
                 .filter(|source| source.panes.contains_key(&id))
             {

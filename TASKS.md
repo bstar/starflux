@@ -51,7 +51,7 @@ Task checkboxes reflect completed acceptance criteria; the demo progress below a
 
 ## Planning completion
 
-- [x] Investigate Herdr and the local STAR/CORE and STAR/SCREEN foundations.
+- [x] Investigate the agent multiplexer and the local STAR/CORE and STAR/SCREEN foundations.
 - [x] Define the architecture, open decisions, runtime boundaries and failure guarantees.
 - [x] Make real remote harness attachment delivery an M0 acceptance requirement.
 - [x] Create ordered implementation tasks with dependencies and exit criteria.

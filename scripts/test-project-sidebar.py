@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real GPU sidebar test using disposable projects and the imported project labels."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import json
 import os
 from pathlib import Path
@@ -15,12 +16,12 @@ out=repo/'target/sidebar-proof';out.mkdir(parents=True,exist_ok=True)
 prefix='nav-'+uuid.uuid4().hex[:6]
 names=[f'{prefix}-{i:02}' for i in range(20)]
 sources=[]
-for p in data.glob('herdr-default-*.json'):
+for p in data.glob((PROGRAM+'-default-*.json')):
     try:
         c=json.loads(p.read_text())
-        if isinstance(c,dict) and c.get('collection')=='herdr-default' and c.get('herdr'):sources.append(c)
+        if isinstance(c,dict) and c.get('collection')==(PROGRAM+'-default') and c.get((PROGRAM)):sources.append(c)
     except (ValueError,OSError):pass
-sources.sort(key=lambda c:c['herdr']['order'])
+sources.sort(key=lambda c:c[(PROGRAM)]['order'])
 
 def wait(fn,label):
     end=time.monotonic()+30
@@ -98,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-nav-') as temp:
         old=state()['controller_pid'];invoke(names[0],'--close');time.sleep(.3)
         rc('launch','--type=tab',str(app),'--workspace',names[0])
         wait(lambda:state()['controller_pid']!=old and state()['project_navigation']['sort']=='manual' and state()['project_order']==expected,'Saved manual order did not survive restart')
-        result={'new_project_dialog':True,'all_20_projects_visible':True,'last_row_clickable_without_paging':True,'drag_both_directions_without_activation':True,'escape_cancels_drag':True,'manual_order_survives_activity_and_restart':True,'selection_does_not_change_activity':True,'sidebar_width':s['project_navigation']['sidebar_width'],'original_herdr_sessions_touched':False}
+        result={'new_project_dialog':True,'all_20_projects_visible':True,'last_row_clickable_without_paging':True,'drag_both_directions_without_activation':True,'escape_cancels_drag':True,'manual_order_survives_activity_and_restart':True,'selection_does_not_change_activity':True,'sidebar_width':s['project_navigation']['sidebar_width'],('original_'+PROGRAM+'_sessions_touched'):False}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))
     finally:
         for name in names:

@@ -1,8 +1,8 @@
-# Herdr parity pause handoff — November 14, 2026
+# agent workspace parity pause handoff — November 14, 2026
 
 > Resumed on November 17 at the user's request. The historical pause and evidence
 > below remain unchanged. See the November 17 entry in `parity-progress.md` and
-> `checkpoints/native-launch-authority/validation-resumed.json` for new validation.
+> the `native-launch-authority` checkpoint (merged on 2026-11-19; kept in git history) for new validation.
 > Desktop/mouse control is prohibited; use private protocol fixtures only.
 
 The user requested a pause at a sensible point. The full goal is unfinished.
@@ -32,11 +32,11 @@ the user's explicit priority. Restoring a shell is not successful AI recovery.
 Start with a disposable archive of the canonical commit, outside any enclosing
 Cargo workspace. Apply these patches, in order:
 
-1. `checkpoints/native-rebased/canonical-ui.patch`
-2. `checkpoints/native-rebased/source.patch`
-3. `checkpoints/native-conversation-recovery/source.patch`
-4. `checkpoints/native-startup/source.patch`
-5. `checkpoints/native-launch-authority/source.patch`
+1. the `native-rebased` checkpoint (merged on 2026-11-19; kept in git history)
+2. the `native-rebased` checkpoint (merged on 2026-11-19; kept in git history)
+3. the `native-conversation-recovery` checkpoint (merged on 2026-11-19; kept in git history)
+4. the `native-startup` checkpoint (merged on 2026-11-19; kept in git history)
+5. the `native-launch-authority` checkpoint (merged on 2026-11-19; kept in git history)
 
 The rebased source already contains the older supervision/link/metadata/fence/
 owner-loss chain. Do not apply those older patches again. Each later checkpoint
@@ -131,7 +131,7 @@ source before the opener's final save. Discovery RPCs stay outside the lock.
    no live hook installation or provider inference has been performed.
 5. Finish remaining native ownership/adoption, uncertainty, graphics/history/
    placement, network/media and old-owner acceptance. Integrate canonical Rust
-   source only after validating the exact revision; keep existing tmux/Herdr/
+   source only after validating the exact revision; keep existing tmux/agent-multiplexer/
    transferred sources on their current owners. Do not install or refresh live
    windows merely because compilation or a narrow private fixture passes.
 
@@ -144,7 +144,7 @@ remaining automation/session/input workflows; combined saved-machine agent view
 and controller switching; legacy pixel/inline-graphics cold restoration; remaining
 plugin workflows and graphics compatibility. Preserve completed worktree,
 keyboard, history and narrow-screen behavior when integrating the native source.
-Native-source migration does not replace the full Herdr parity objective.
+Native-source migration does not replace the full agent workspace parity objective.
 
 The goal should remain **paused**, not complete or blocked, until the user asks
 to resume. No feature work or new background validation should continue while

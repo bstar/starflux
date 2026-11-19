@@ -6,7 +6,7 @@ def api(method,params=None,write=False,ok=True):
     request=dict(version=1,id='plugin-ui',method=method,params=params or {})
     if write:request['operation_id']=str(uuid.uuid4())
     command=[str(app),'--api',json.dumps(request)]
-    if args.ssh:command=ssh_args+[shlex.join(['env',*[key+'='+env[key] for key in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','SHELL','TMUX_TMPDIR','STARFLUX_HERDR') if key in env],*command])]
+    if args.ssh:command=ssh_args+[shlex.join(['env',*[key+'='+env[key] for key in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','SHELL','TMUX_TMPDIR','STARFLUX_AGENT_MUX') if key in env],*command])]
     response=json.loads(subprocess.check_output(command,env=env,timeout=15));assert response['ok']==ok,response
     return response.get('result',response.get('error'))
 

@@ -95,7 +95,7 @@ a resize message replaces the interface and processes continue running.
 The **Sessions** control opens the same session manager as graphical mode.
 Use Up/Down to select, Enter to open, Ctrl+N to create, Ctrl+I to import, and
 Delete to request deletion. Type to filter the list and Escape to close it.
-Deletion requires typing `DELETE`; imported tmux/Herdr sources are preserved.
+Deletion requires typing `DELETE`; imported tmux/agent-multiplexer sources are preserved.
 Select **Make default** (or press Ctrl+D in the picker) to choose the session used
 by ordinary launches. The same control clears an existing default.
 

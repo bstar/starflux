@@ -324,11 +324,11 @@ impl Navigation {
         }
         projects.sort_by(|a, b| {
             let order = self.high_compare(&a.workspace, &b.workspace).then_with(|| {
-                a.herdr
+                a.agent_mux
                     .as_ref()
                     .map(|h| h.order)
                     .unwrap_or(usize::MAX)
-                    .cmp(&b.herdr.as_ref().map(|h| h.order).unwrap_or(usize::MAX))
+                    .cmp(&b.agent_mux.as_ref().map(|h| h.order).unwrap_or(usize::MAX))
                     .then_with(|| a.workspace.cmp(&b.workspace))
             });
             if self.high_first {

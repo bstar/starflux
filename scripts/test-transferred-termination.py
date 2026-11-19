@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Terminate one private transferred PTY through the UI; retain its sibling owner."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import fcntl
 import base64
 import importlib.util
@@ -25,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-xfer-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     (tmp/'tmux').mkdir(mode=0o700)
     name='terminate-'+secrets.token_hex(4);server='starflux-adoptproof-'+secrets.token_hex(4);frontend='v-transfer-proof'
-    env={k:v for k,v in os.environ.items() if not k.startswith(('BASH_FUNC_','HERDR_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY','PROMPT_COMMAND','BASH_ENV','ENV')}
+    env={k:v for k,v in os.environ.items() if not k.startswith(('BASH_FUNC_',(ENV+'_'))) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY','PROMPT_COMMAND','BASH_ENV','ENV')}
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL='/bin/bash',HISTFILE='/dev/null',STAR_TERMINAL_RENDERER='native')
     originals=[];masters=[];process=None;broker=None;done=threading.Event();errors=[]
     def child_terminal():os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)

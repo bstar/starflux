@@ -32,7 +32,7 @@ fn socket_stamp(path: &std::path::Path) -> Result<Value> {
 fn hash(value: &Value) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
 }
-pub(crate) fn herdr_server_stamp(socket: &std::path::Path) -> Result<Value> {
+pub(crate) fn agent_mux_server_stamp(socket: &std::path::Path) -> Result<Value> {
     use std::os::fd::AsRawFd;
     let stamp = socket_stamp(socket)?;
     let connection = std::os::unix::net::UnixStream::connect(socket)?;
@@ -110,10 +110,13 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
             None,
         ));
     }
-    ensure!(entry.source == "herdr", "Unsupported import source");
-    let socket = crate::herdr::socket_path(&entry.name)?;
-    let before = herdr_server_stamp(&socket)?;
-    let snapshot = crate::herdr::live_snapshot(&entry.name)?;
+    ensure!(
+        entry.source == crate::agent_mux::PROGRAM,
+        "Unsupported import source"
+    );
+    let socket = crate::agent_mux::socket_path(&entry.name)?;
+    let before = agent_mux_server_stamp(&socket)?;
+    let snapshot = crate::agent_mux::live_snapshot(&entry.name)?;
     let snap = &snapshot["result"]["snapshot"];
     let mut identities = Vec::new();
     for (resource, fields) in [
@@ -126,7 +129,7 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
     ] {
         let rows = snap[resource]
             .as_array()
-            .context("Herdr snapshot lacks source identities")?;
+            .context("Multiplexer snapshot lacks source identities")?;
         for row in rows {
             let mut identity = vec![Value::String(resource.into())];
             for field in &fields {
@@ -134,7 +137,7 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
                     row[*field]
                         .as_str()
                         .is_some_and(|id| !id.is_empty() && id.len() <= 128),
-                    "Herdr snapshot contains an invalid source identity"
+                    "Multiplexer snapshot contains an invalid source identity"
                 );
                 identity.push(row[*field].clone());
             }
@@ -143,12 +146,12 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
     }
     identities.sort();
     ensure!(
-        herdr_server_stamp(&socket)? == before,
-        "Herdr server changed during discovery"
+        agent_mux_server_stamp(&socket)? == before,
+        "Multiplexer server changed during discovery"
     );
     Ok((
         Reference {
-            source: "herdr".into(),
+            source: crate::agent_mux::PROGRAM.into(),
             session: entry.name.clone(),
             socket: None,
             fingerprint: hash(&json!([boot, before, identities]))?,
@@ -171,12 +174,15 @@ pub fn discover() -> Result<Value> {
 pub fn import(reference: Reference) -> Result<Value> {
     if reference.fingerprint.len() != 64
         || !reference.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
-        || !matches!(reference.source.as_str(), "tmux" | "herdr")
+        || !matches!(
+            reference.source.as_str(),
+            "tmux" | crate::agent_mux::PROGRAM
+        )
         || reference.session.is_empty()
         || reference.session.len() > 128
         || (reference.source == "tmux"
             && !reference.socket.as_ref().is_some_and(|p| p.is_absolute()))
-        || (reference.source == "herdr" && reference.socket.is_some())
+        || (reference.source == crate::agent_mux::PROGRAM && reference.socket.is_some())
     {
         return Err(fault("invalid_params", "Invalid source import reference"));
     }
@@ -219,13 +225,13 @@ pub fn import(reference: Reference) -> Result<Value> {
                 current.source == "tmux"
                     && current.socket.as_ref() == Some(&source.socket)
                     && current.session == source.session
-            } else if let Some(source) = &p.herdr {
-                current.source == "herdr" && current.session == source.session
+            } else if let Some(source) = &p.agent_mux {
+                current.source == crate::agent_mux::PROGRAM && current.session == source.session
             } else {
                 false
             }
         })
-        .map(|p| json!({"project":p.workspace,"source":if p.herdr.is_some(){"herdr"}else{"tmux"}}))
+        .map(|p| json!({"project":p.workspace,"source":if p.agent_mux.is_some(){crate::agent_mux::PROGRAM}else{"tmux"}}))
         .collect();
     let _ = crate::snapshot_service::ensure();
     Ok(

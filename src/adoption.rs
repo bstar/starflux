@@ -1,4 +1,4 @@
-//! Live terminal ownership transferred from Herdr, independent of its runtime.
+//! Live terminal ownership transferred from multiplexer, independent of its runtime.
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -194,6 +194,7 @@ impl Terminal {
 }
 fn python(script: &str, args: &[&str]) -> Result<()> {
     Err(crate::host_env::command("python3")
+        .env("STARFLUX_AGENT_MUX_PROGRAM", crate::agent_mux::PROGRAM)
         .args(["-c", script])
         .args(args)
         .exec())
@@ -208,7 +209,7 @@ pub fn receive(plan: &str, socket: &str, token: &str) -> Result<()> {
 pub fn migrate(prepare_only: bool) -> Result<()> {
     ensure!(
         cfg!(target_os = "linux"),
-        "Live Herdr PTY migration currently supports Linux hosts"
+        "Live multiplexer PTY migration currently supports Linux hosts"
     );
     let executable = std::env::current_exe()?;
     let proxy = executable.with_file_name("starflux-pty-proxy");
@@ -217,7 +218,7 @@ pub fn migrate(prepare_only: bool) -> Result<()> {
         "Build the lightweight PTY helper first: ./scripts/build-pty-proxy"
     );
     python(
-        include_str!("../scripts/migrate-herdr.py"),
+        include_str!("../scripts/migrate-agent-mux.py"),
         &[
             if prepare_only { "prepare" } else { "migrate" },
             &executable.to_string_lossy(),
@@ -232,10 +233,10 @@ pub fn validate_plan(path: &str) -> Result<()> {
         .context("Migration documents missing")?;
     for document in documents {
         let value = &document["value"];
-        if document["kind"] == "herdr-retired" {
+        if document["kind"] == format!("{}-retired", crate::agent_mux::PROGRAM) {
             ensure!(
                 value["workspaces"].as_array().is_some_and(|v| v.is_empty()),
-                "Invalid retired Herdr session"
+                "Invalid retired multiplexer session"
             );
             continue;
         }

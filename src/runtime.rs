@@ -30,8 +30,8 @@ pub struct Config {
     pub label: Option<String>,
     #[serde(default)]
     pub collection: Option<String>,
-    #[serde(default)]
-    pub herdr: Option<crate::herdr::Source>,
+    #[serde(flatten, with = "crate::agent_mux::saved")]
+    pub agent_mux: Option<crate::agent_mux::Source>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tmux: Option<crate::tmux_source::Source>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -69,7 +69,7 @@ impl Config {
     pub fn externally_owned(&self, pane: usize) -> bool {
         (pane == 0 && self.tmux.is_some())
             || self
-                .herdr
+                .agent_mux
                 .as_ref()
                 .is_some_and(|h| h.panes.keys().any(|id| self.canonical_pane(*id) == pane))
     }
@@ -111,7 +111,7 @@ impl Config {
         config.validate()?;
         ensure!(
             !config.externally_owned(pane),
-            "Imported tmux/Herdr terminals remain owned by their source"
+            "Imported tmux/agent-multiplexer terminals remain owned by their source"
         );
         let state = crate::project_state::ProjectState::load(&config)?;
         ensure!(
@@ -234,11 +234,11 @@ impl Config {
             io::Seek,
             time::{Duration, Instant},
         };
-        let herdr = self
-            .herdr
+        let agent_mux = self
+            .agent_mux
             .as_ref()
             .filter(|source| source.panes.contains_key(&pane));
-        let herdr_identity = herdr
+        let agent_mux_identity = agent_mux
             .map(|source| source.history_identity(pane))
             .transpose()?;
         let (mut command, source) = if pane == 0
@@ -257,7 +257,7 @@ impl Config {
                 ]),
                 "tmux",
             )
-        } else if let Some(source) = herdr {
+        } else if let Some(source) = agent_mux {
             (
                 source.command(&[
                     "pane",
@@ -271,7 +271,7 @@ impl Config {
                     "text",
                     "--raw",
                 ]),
-                "herdr",
+                crate::agent_mux::PROGRAM,
             )
         } else {
             (
@@ -303,10 +303,10 @@ impl Config {
         output.rewind()?;
         let mut bytes = Vec::new();
         output.take(limit + 1).read_to_end(&mut bytes)?;
-        if let Some((source, identity)) = herdr.zip(herdr_identity) {
+        if let Some((source, identity)) = agent_mux.zip(agent_mux_identity) {
             ensure!(
                 source.history_identity(pane)? == identity,
-                "Herdr source changed during history capture"
+                "Multiplexer source changed during history capture"
             );
         }
         Ok((bytes, source))
@@ -322,7 +322,11 @@ impl Config {
         {
             return source.command(&["capture-pane", "-p", "-e", "-t", &source.session]);
         }
-        if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+        if let Some(source) = self
+            .agent_mux
+            .as_ref()
+            .filter(|h| h.panes.contains_key(&pane))
+        {
             let p = &source.panes[&pane];
             return source.command(&[
                 "pane", "read", &p.pane_id, "--source", "visible", "--format", "text",
@@ -424,11 +428,15 @@ impl Config {
                 }
             }
         }
-        if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+        if let Some(source) = self
+            .agent_mux
+            .as_ref()
+            .filter(|h| h.panes.contains_key(&pane))
+        {
             return match request["action"].as_str() {
                 Some("inspect" | "ensure") => source.inspect(pane),
                 Some("stop") => Ok(json!({"source_preserved":true})),
-                _ => crate::herdr::reject_write(),
+                _ => crate::agent_mux::reject_write(),
             };
         }
 
@@ -460,7 +468,11 @@ impl Config {
             source.inspect()?;
             return Ok(());
         }
-        if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+        if let Some(source) = self
+            .agent_mux
+            .as_ref()
+            .filter(|h| h.panes.contains_key(&pane))
+        {
             source.inspect(pane)?;
             return Ok(());
         }
@@ -522,10 +534,10 @@ impl Config {
         let _worktree = crate::worktrees::ensure_allowed(&config)?;
         ensure!(
             !config
-                .herdr
+                .agent_mux
                 .as_ref()
                 .is_some_and(|h| h.panes.contains_key(&pane)),
-            "Transfer this terminal from Herdr before recovering it"
+            "Transfer this terminal from multiplexer before recovering it"
         );
         if let Some(terminal) = config.adopted_terminal(pane) {
             let alive = match terminal.inspect() {
@@ -582,7 +594,7 @@ impl Config {
         Ok(config)
     }
     pub fn canonical_pane(&self, pane: usize) -> usize {
-        if let Some(source) = &self.herdr
+        if let Some(source) = &self.agent_mux
             && let Some(p) = source.panes.get(&pane)
         {
             return source
@@ -627,7 +639,7 @@ impl Config {
             }
         }
         if self
-            .herdr
+            .agent_mux
             .as_ref()
             .is_some_and(|h| h.panes.contains_key(&pane))
         {
@@ -660,7 +672,7 @@ impl Config {
             let result = child.wait_with_output()?;
             ensure!(
                 result.status.success(),
-                "Herdr attachment paste: {}",
+                "Multiplexer attachment paste: {}",
                 String::from_utf8_lossy(&result.stderr)
             );
             return Ok(());
@@ -680,7 +692,11 @@ impl Config {
         {
             return source.attach_argv();
         }
-        if let Some(source) = self.herdr.as_ref().filter(|h| h.panes.contains_key(&pane)) {
+        if let Some(source) = self
+            .agent_mux
+            .as_ref()
+            .filter(|h| h.panes.contains_key(&pane))
+        {
             let p = &source.panes[&pane];
             if !p.terminal_id.is_empty() {
                 return vec![
@@ -704,7 +720,7 @@ impl Config {
             }
             return vec![
                 std::env::current_exe().unwrap().display().to_string(),
-                "--herdr-view".into(),
+                "--agent-mux-view".into(),
                 source.session.clone(),
                 p.pane_id.clone(),
             ];
@@ -789,7 +805,7 @@ impl Config {
         req["size"] = json!(meta.len());
         req["sha256"] = json!(format!("{:x}", digest.finalize()));
         let mut transport = self.clone();
-        transport.herdr = None;
+        transport.agent_mux = None;
         let mut child = transport
             .command(pane, &req, false)
             .stdin(Stdio::piped())
@@ -911,14 +927,14 @@ mod tests {
         .unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         let mut config:Config=serde_json::from_value(json!({"workspace":"history-limit","host":null,"directory":"/tmp","agent":null,"executable":"starflux"})).unwrap();
-        config.herdr = Some(crate::herdr::Source {
+        config.agent_mux = Some(crate::agent_mux::Source {
             session: "private".into(),
             workspace_id: "w1".into(),
             order: 0,
             executable: executable.display().to_string(),
             panes: [(
                 0,
-                crate::herdr::Pane {
+                crate::agent_mux::Pane {
                     terminal_id: "private".into(),
                     pane_id: "p1".into(),
                     tab_id: "t1".into(),
@@ -989,7 +1005,7 @@ mod tests {
     }
     #[test]
     fn imported_agent_and_tab_share_one_live_terminal_without_takeover() {
-        let pane = crate::herdr::Pane {
+        let pane = crate::agent_mux::Pane {
             terminal_id: "term_original".into(),
             pane_id: "w1:p1".into(),
             tab_id: "w1:t1".into(),
@@ -998,11 +1014,11 @@ mod tests {
             agent: Some("codex".into()),
         };
         let mut c:Config=serde_json::from_value(json!({"workspace":"import-test","host":null,"directory":"/tmp","agent":"codex","executable":"starflux"})).unwrap();
-        c.herdr = Some(crate::herdr::Source {
+        c.agent_mux = Some(crate::agent_mux::Source {
             session: "default".into(),
             workspace_id: "w1".into(),
             order: 0,
-            executable: "/nonexistent/herdr".into(),
+            executable: "/nonexistent/agent_mux".into(),
             panes: [(0, pane.clone()), (31, pane)].into_iter().collect(),
         });
         assert_eq!(c.canonical_pane(31), 0);
@@ -1010,7 +1026,7 @@ mod tests {
         assert_eq!(
             c.attach_argv(0),
             vec![
-                "/nonexistent/herdr",
+                "/nonexistent/agent_mux",
                 "--session",
                 "default",
                 "terminal",
@@ -1046,7 +1062,7 @@ mod tests {
             workspace: workspace.clone(),
             label: None,
             collection: None,
-            herdr: None,
+            agent_mux: None,
             tmux: None,
             adopted: Default::default(),
             native_terminals: false,

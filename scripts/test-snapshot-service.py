@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only collection with no controller, isolated metadata and cold namespaces."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,subprocess,tempfile,time,uuid
 from pathlib import Path
 
@@ -8,7 +9,7 @@ root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
 with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     shell=tmp/'fake-shell';shell.write_text("#!/usr/bin/python3\nimport os,sys\nprint('SNAPSHOT_READY',flush=True)\nfor line in sys.stdin:print('\\x1b[1;31mSAVED_'+line.strip()+'\\x1b[0m',flush=True)\n");shell.chmod(0o700)
-    env={k:v for k,v in os.environ.items() if not k.startswith(('HERDR_','BASH_FUNC_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
+    env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell));env.pop('STARFLUX_SNAPSHOT_SERVICE',None)
     env2={**env,'XDG_DATA_HOME':str(tmp/'second-data')};daemon=None;ssh=[];projects=[];collectors=[]
     def stamp(pid):

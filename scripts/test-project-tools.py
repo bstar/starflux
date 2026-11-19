@@ -3,6 +3,7 @@
 
 Only disposable projects and a private authenticated loopback SSH server are used.
 """
+from agent_mux import DISPLAY, ENV, PROGRAM
 import getpass
 import json
 import os
@@ -166,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-tools-') as temp:
         assert s['project_state']['terminal_labels']['0']=='Build / café'
         assert [p['pid'] for p in s['panes']]==pids
         screenshot('workspace.png')
-        result={'passed':True,'project_and_tab_context_menus':True,'mouse_and_keyboard_selection':True,'outside_click_consumed':True,'unicode_labels_persist_across_restart':True,'session_pids_preserved':pids,'local_and_ssh_git':True,'automatic_refresh':True,'inspector_input_isolated':True,'ssh_scope':'authenticated loopback SSH','original_herdr_sessions_touched':False}
+        result={'passed':True,'project_and_tab_context_menus':True,'mouse_and_keyboard_selection':True,'outside_click_consumed':True,'unicode_labels_persist_across_restart':True,'session_pids_preserved':pids,'local_and_ssh_git':True,'automatic_refresh':True,'inspector_input_isolated':True,'ssh_scope':'authenticated loopback SSH',('original_'+PROGRAM+'_sessions_touched'):False}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
     except BaseException:
         try:(out/'failure-state.json').write_text(json.dumps(state(),indent=2))

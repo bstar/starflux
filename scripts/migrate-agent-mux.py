@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Prepare/back up and apply an explicitly requested, live default-Herdr migration."""
+"""Prepare/back up and apply an explicitly requested, live default agent-multiplexer migration."""
+PROGRAM=__import__('os').environ['STARFLUX_AGENT_MUX_PROGRAM'];ENV=PROGRAM.upper();DISPLAY=PROGRAM[:1].upper()+PROGRAM[1:]
 import base64
 import copy
 import datetime
@@ -29,8 +30,8 @@ def alive(pid):
     except OSError:return False
 
 def query(*args,raw=False):
-    result=subprocess.run(['herdr','--session','default',*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
-    if result.returncode:raise RuntimeError('Herdr read failed: '+result.stderr.decode(errors='replace')[:300])
+    result=subprocess.run([(PROGRAM),'--session','default',*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
+    if result.returncode:raise RuntimeError((DISPLAY+' read failed: ')+result.stderr.decode(errors='replace')[:300])
     return result.stdout if raw else json.loads(result.stdout)
 
 def runtime():return Path(os.environ.get('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}'))/'starflux'
@@ -58,14 +59,14 @@ def ui_clients(config_path,owned_pids):
         if not proc.name.isdigit():continue
         try:
             argv=[v.decode() for v in (proc/'cmdline').read_bytes().split(b'\0') if v]
-            if len(argv)!=1 or Path(argv[0]).name!='herdr':continue
+            if len(argv)!=1 or Path(argv[0]).name!=(PROGRAM):continue
             env={}
             for field in (proc/'environ').read_bytes().split(b'\0'):
                 key,_,value=field.partition(b'=')
-                if key in (b'HERDR_CONFIG_PATH',b'XDG_CONFIG_HOME',b'HERDR_SESSION'):
+                if key in (((ENV+'_CONFIG_PATH').encode()),b'XDG_CONFIG_HOME',((ENV+'_SESSION').encode())):
                     env[key.decode()]=value.decode()
-            client_config=Path(env.get('HERDR_CONFIG_PATH',str(Path(env.get('XDG_CONFIG_HOME',str(Path.home()/'.config')))/'herdr/config.toml')))
-            if client_config.resolve()!=config_path.resolve() or env.get('HERDR_SESSION','default')!='default':continue
+            client_config=Path(env.get((ENV+'_CONFIG_PATH'),str(Path(env.get('XDG_CONFIG_HOME',str(Path.home()/'.config')))/(PROGRAM+'/config.toml'))))
+            if client_config.resolve()!=config_path.resolve() or env.get((ENV+'_SESSION'),'default')!='default':continue
             ancestor=int(proc.name);inside=False
             for _ in range(64):
                 if ancestor in owned_pids:inside=True;break
@@ -80,26 +81,26 @@ def ui_clients(config_path,owned_pids):
 def prepare(executable,proxy):
     root=runtime();data=project_root();root.mkdir(mode=0o700,parents=True,exist_ok=True);data.mkdir(mode=0o700,parents=True,exist_ok=True)
     stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6]
-    run=data.parent/'migrations'/('herdr-default-'+stamp);run.mkdir(mode=0o700,parents=True)
+    run=data.parent/'migrations'/((PROGRAM+'-default-')+stamp);run.mkdir(mode=0o700,parents=True)
     snapshot=query('api','snapshot');live=snapshot['result']['snapshot'];panes=live['panes']
-    if not panes:raise RuntimeError('Herdr has no live panes to migrate')
-    config_path=Path(os.environ.get('HERDR_CONFIG_PATH',Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'herdr/config.toml'))
+    if not panes:raise RuntimeError((DISPLAY+' has no live panes to migrate'))
+    config_path=Path(os.environ.get((ENV+'_CONFIG_PATH'),Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/(PROGRAM+'/config.toml')))
     source=config_path.parent/'session.json';saved=json.loads(source.read_text())
-    atomic(run/'herdr-session.json',source.read_bytes());atomic(run/'herdr-snapshot.json',snapshot)
-    if config_path.exists():atomic(run/'herdr-config.toml',config_path.read_bytes())
+    atomic(run/(PROGRAM+'-session.json'),source.read_bytes());atomic(run/(PROGRAM+'-snapshot.json'),snapshot)
+    if config_path.exists():atomic(run/(PROGRAM+'-config.toml'),config_path.read_bytes())
     documents=[];entries=[];projects=[]
     for order,workspace in enumerate(live['workspaces']):
-        wid=workspace['workspace_id'];name='herdr-default-'+wid
+        wid=workspace['workspace_id'];name=(PROGRAM+'-default-')+wid
         members=[p for p in panes if p['workspace_id']==wid]
         if not members:continue
         projects.append(name)
         path=data/(name+'.json')
         if path.exists():config=json.loads(path.read_text())
         elif (root/(name+'.json')).exists():config=json.loads((root/(name+'.json')).read_text())
-        else:raise RuntimeError('Import the Herdr project metadata first: '+name)
-        source_meta=config.get('herdr')
+        else:raise RuntimeError(('Import the '+DISPLAY+' project metadata first: ')+name)
+        source_meta=config.get((PROGRAM))
         if not source_meta or source_meta['session']!='default' or source_meta['workspace_id']!=wid:
-            raise RuntimeError('Refusing to overwrite a project that no longer references this Herdr session: '+name)
+            raise RuntimeError(('Refusing to overwrite a project that no longer references this '+DISPLAY+' session: ')+name)
         config=copy.deepcopy(config)
         model_path=data/(name+'.model.json');layout_path=data/(name+'.layout.json')
         state=json.loads((model_path if model_path.exists() else layout_path).read_text())
@@ -145,7 +146,7 @@ def prepare(executable,proxy):
             pair=[aliases.get(i,i) for i in state['split_panes']]
             if len(set(pair))!=2 or any(i not in ids for i in pair):state.update(split=False,split_panes=None)
             else:state['split_panes']=pair
-        config.update(herdr=None,agent=None)
+        config.update(agent_mux=None,agent=None)
         for target,value in [(path,config),(root/(name+'.json'),config),(model_path,state)]:
             if target.exists():atomic(run/'backups'/target.parent.name/target.name,target.read_bytes())
             before=json.loads(target.read_text()) if target.exists() else None
@@ -153,9 +154,9 @@ def prepare(executable,proxy):
         atomic(run/'project-summaries'/(name+'.json'),dict(label=config.get('label'),cwd=config.get('directory'),source=wid,terminals=len(members)))
     if len(entries)!=len(panes) or len({p['pid'] for p in entries})!=len(entries):raise RuntimeError('Terminal inventory is not one-to-one')
     views=active_views(root,projects)
-    # A later accidental Herdr launch must not duplicate the migrated agents.
+    # A later accidental the agent multiplexer launch must not duplicate the migrated agents.
     retired=copy.deepcopy(saved);retired.update(workspaces=[],active=None,selected=0)
-    documents.append(dict(path=str(source),value=retired,kind='herdr-retired'))
+    documents.append(dict(path=str(source),value=retired,kind=(PROGRAM+'-retired')))
     for view in views:
         if view['id'].startswith('v-'):continue
         identity='v-'+uuid.uuid4().hex[:24]
@@ -169,7 +170,7 @@ def prepare(executable,proxy):
     if not launch.is_file():launch=Path(executable).resolve()
     clients=ui_clients(config_path,{p['pid'] for p in entries})
     with socket.socket(socket.AF_UNIX) as peer:
-        peer.connect(str(config_path.parent/'herdr.sock'))
+        peer.connect(str(config_path.parent/(PROGRAM+'.sock')))
         source_pid=__import__('struct').unpack('3i',peer.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[0]
     plan=dict(source_pid=source_pid,source_clients=clients,source_config=str(config_path.resolve()),version=1,run=str(run),runtime_root=str(root),project_root=str(data),broker=str(root/('adopted-'+stamp.rsplit('-',1)[-1]+'.sock')),
               executable=str(launch),proxy_executable=str(Path(proxy).resolve()),panes=entries,projects=projects,documents=documents,views=views,
@@ -200,23 +201,23 @@ def apply(path):
             atomic(directory/(str(time.time_ns())+'.json'),'ui:refresh')
         deadline=time.monotonic()+15
         while any(alive(v['pid']) for v in plan['views']):
-            if time.monotonic()>deadline:raise RuntimeError('A frontend could not quiesce; the Herdr server and terminals were left running')
+            if time.monotonic()>deadline:raise RuntimeError(('A frontend could not quiesce; the '+DISPLAY+' server and terminals were left running'))
             time.sleep(.05)
         for document in plan['documents']:
             if document.get('kind')!='project':continue
             target=Path(document['path']);current=json.loads(target.read_text()) if target.exists() else None
             if current!=document['before']:raise RuntimeError('Project metadata changed during preflight; prepare a fresh migration: '+target.name)
-        # Retire UI-only Herdr clients. They own no shell/agent PTYs.
+        # Retire UI-only the agent multiplexer clients. They own no shell/agent PTYs.
         retired=[]
         for client in plan.get('source_clients',[]):
             try:
                 proc=Path('/proc',str(client['pid']));argv=[s for s in (proc/'cmdline').read_bytes().split(b'\0') if s]
                 start=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
-                if start==client['start'] and len(argv)==1 and Path(os.fsdecode(argv[0])).name=='herdr':
+                if start==client['start'] and len(argv)==1 and Path(os.fsdecode(argv[0])).name==(PROGRAM):
                     os.kill(client['pid'],signal.SIGTERM);retired.append(client['pid'])
             except (OSError,ValueError,IndexError):pass
         atomic(run/'status.json',dict(phase='handoff-requested',pid=os.getpid(),retired_ui_clients=retired))
-        command=['herdr','--session','default','server','live-handoff','--import-exe',str(run/'accept')]
+        command=[(PROGRAM),'--session','default','server','live-handoff','--import-exe',str(run/'accept')]
         with (run/'handoff-request.log').open('wb') as log:
             result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=50)
         status=json.loads((run/'status.json').read_text())

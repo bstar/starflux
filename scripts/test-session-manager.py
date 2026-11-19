@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Private sessions, independent views, live tmux/Herdr imports and scoped deletion."""
+"""Private sessions, independent views, live tmux/agent-multiplexer imports and scoped deletion."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import argparse
 import base64
 import fcntl
@@ -31,7 +32,7 @@ parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
 parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
-parser.add_argument('--herdr',action='store_true')
+parser.add_argument(('--'+PROGRAM),action='store_true')
 parser.add_argument('--keyboard-only',action='store_true')
 parser.add_argument('--agent-lifecycle',action='store_true')
 parser.add_argument('--pane-layouts',action='store_true')
@@ -147,8 +148,8 @@ for line in sys.stdin:
         hidden='https://example.invalid/hidden'+(';part'*20)+'?q=destination#OSC8'
         text=shell.read_text();text=text.replace("for line in sys.stdin:","print("+repr('\x1b]8;id=fixture;'+hidden+'\x1b\\OSC8_LABEL_界é\x1b]8;;\x1b\\')+",flush=True)\nfor line in sys.stdin:")
         shell.write_text(text)
-    env={k:v for k,v in os.environ.items() if not k.startswith('HERDR_') and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
-    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_HERDR='herdr' if args.herdr else str(tmp/'herdr-not-installed'))
+    env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
+    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_agent_mux=(PROGRAM) if args.agent_mux else str(tmp/(PROGRAM+'-not-installed')))
     if args.native_launch_race:
         gate=tmp/'launch-gate';gate.mkdir()
         bindir=tmp/'gate-bin';bindir.mkdir()
@@ -205,7 +206,7 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
     (state/(name+'.json')).write_text(json.dumps(dict(workspace=name,label='Original',collection='base',host=None,directory=str(project_directory),agent=None,executable=str(app),project_host=True,**native_config)))
     for extra in ['extra-a','extra-b']:
         (state/(extra+'.json')).write_text(json.dumps(dict(workspace=extra,label=extra,collection='base',host=None,directory=str(tmp),agent=None,executable=str(app),project_host=True,**native_config)))
-    processes=[];clients=[];daemon=None;herdr=None;ssh_args=[]
+    processes=[];clients=[];daemon=None;agent_mux=None;ssh_args=[]
     socket_root=tmp/'tmux'/('tmux-'+str(os.getuid()));socket_root.mkdir(parents=True,mode=0o700);source_socket=socket_root/'fixture'
     def tmux(*arguments):
         return subprocess.check_output(['tmux','-S',str(source_socket),*arguments],env=env,text=True).strip()
@@ -241,7 +242,7 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
         def __init__(self,identity,remote=False,executable=None):
             self.executable=executable;self.identity=identity;self.scene=None;self.messages=queue.Queue();self.serial=0;self.frames={};self.clipboards=[];self.all_frames=[]
             command=[str(executable or app),'--graphical-relay',name+'@'+identity]
-            if remote:command=ssh_args+[shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_HERDR','HERDR_CONFIG_PATH','PATH')],*command])]
+            if remote:command=ssh_args+[shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX',(ENV+'_CONFIG_PATH'),'PATH')],*command])]
             self.log=(tmp/(identity+'.log')).open('a')
             self.process=subprocess.Popen(command,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log);processes.append(self.process);clients.append(self)
             def read():
@@ -337,7 +338,7 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
         controller_state=Path(controller_env['XDG_RUNTIME_DIR'])/'starflux'
         if args.ssh and not machine:
             wrapper=tmp/'remote-starflux'
-            wrapper.write_text('#!/bin/sh\nexec '+shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_HERDR','HERDR_CONFIG_PATH','PATH')],str(app)])+' "$@"\n');wrapper.chmod(0o700)
+            wrapper.write_text('#!/bin/sh\nexec '+shlex.join(['env',*[k+'='+v for k,v in env.items() if k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX',(ENV+'_CONFIG_PATH'),'PATH')],str(app)])+' "$@"\n');wrapper.chmod(0o700)
             config=tmp/'startup-ssh-config'
             config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
             command+=['--ssh','proof','--ssh-config',str(config),'--remote-executable',str(wrapper)]
@@ -434,16 +435,16 @@ GLib.MainLoop().run()
         tmux('new-window','-d','-t','Fixture','-c',str(tmp),str(shell))
         source_pid=int(tmux('display-message','-p','-t','Fixture','#{pane_pid}'))
         source_topology=tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')
-        if args.herdr:
-            config=tmp/'config/herdr';config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env['HERDR_CONFIG_PATH']=str(config/'config.toml')
-            herdr=subprocess.Popen(['herdr','server'],env=env,stdout=(tmp/'herdr.log').open('w'),stderr=subprocess.STDOUT)
-            wait(lambda:(config/'herdr.sock').exists(),'private Herdr server missing')
-            def herdr_cli(*arguments):return json.loads(subprocess.check_output(['herdr',*arguments],env=env))
-            herdr_cli('workspace','create','--cwd',str(tmp),'--label','Herdr Proof One','--no-focus')
-            herdr_cli('workspace','create','--cwd',str(tmp),'--label','Herdr Proof Two','--no-focus')
-            snapshot=herdr_cli('api','snapshot')['result']['snapshot']
-            herdr_pids=[herdr_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in snapshot['panes']]
-            wait(lambda:(config/'session.json').exists(),'private Herdr layout missing')
+        if args.agent_mux:
+            config=tmp/('config/'+PROGRAM);config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env[(ENV+'_CONFIG_PATH')]=str(config/'config.toml')
+            agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
+            wait(lambda:(config/(PROGRAM+'.sock')).exists(),('private '+DISPLAY+' server missing'))
+            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([(PROGRAM),*arguments],env=env))
+            agent_mux_cli('workspace','create','--cwd',str(tmp),'--label',(DISPLAY+' Proof One'),'--no-focus')
+            agent_mux_cli('workspace','create','--cwd',str(tmp),'--label',(DISPLAY+' Proof Two'),'--no-focus')
+            snapshot=agent_mux_cli('api','snapshot')['result']['snapshot']
+            agent_mux_pids=[agent_mux_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in snapshot['panes']]
+            wait(lambda:(config/'session.json').exists(),('private '+DISPLAY+' layout missing'))
         copied=None;entrypoint=None
         if args.query_upgrade or args.plugin_pane_upgrade:
             copied=tmp/'loaded-build';shutil.copy2(root/'target/release/starflux',copied)
@@ -606,7 +607,7 @@ GLib.MainLoop().run()
                     request=dict(version=1,id='category-agent-proof',method=method,params=params)
                     if write:request['operation_id']=secrets.token_hex(16)
                     command=[str(app),'--api',json.dumps(request)]
-                    if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STAR_TERMINAL_RENDERER','STARFLUX_HERDR') if k in env],*command])]
+                    if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX') if k in env],*command])]
                     response=json.loads(subprocess.check_output(command,env=env,timeout=15));assert response['ok']==ok,response
                     return response.get('result',response.get('error'))
                 base=dict(project=name,category=gid)
@@ -716,7 +717,7 @@ GLib.MainLoop().run()
                 request=dict(version=1,id='frontend-proof',method=method,params=params or {})
                 if operation:request['operation_id']=operation
                 command=[str(app),'--api',json.dumps(request)]
-                if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STAR_TERMINAL_RENDERER','STARFLUX_HERDR') if k in env],*command])]
+                if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX') if k in env],*command])]
                 process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                 wait(lambda:process.poll() is not None,'frontend API request did not finish',timeout=20)
                 output,error=process.communicate();result=json.loads(output);assert result['ok']==ok,(result,error.decode())
@@ -955,23 +956,23 @@ GLib.MainLoop().run()
             assert all(t['pane']!=0 for t in a.snapshot().get('direct_terminals',[]))
             assert alive(source_pid) and saved(imported,0)['pid']==source_pid
             assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
-            if args.herdr:
-                hp=snapshot['panes'][0];hidden='background-herdr-'+secrets.token_hex(3)
-                source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which('herdr'),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label='Hidden Herdr',cwd=str(tmp),agent=None)})
-                config.update(workspace=hidden,label='Background Herdr',tmux=None,herdr=source)
+            if args.agent_mux:
+                hp=snapshot['panes'][0];hidden=('background-'+PROGRAM+'-')+secrets.token_hex(3)
+                source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which((PROGRAM)),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label=('Hidden '+DISPLAY),cwd=str(tmp),agent=None)})
+                config.update(workspace=hidden,label=('Background '+DISPLAY),tmux=None,agent_mux=source)
                 (projects/(hidden+'.json')).write_text(json.dumps(config));(projects/(hidden+'.model.json')).write_text(json.dumps(model))
                 (projects/'catalog-version').write_bytes(os.urandom(16))
-                wait(lambda:hidden in a.snapshot().get('project_navigation',{}).get('visible',[]),'hidden Herdr project did not enter catalog')
-                a.action('project:'+hidden);wait(lambda:a.snapshot().get('active_project')==hidden and any(t['pane']==1 for t in a.snapshot().get('direct_terminals',[])),'Herdr source project did not open owned pane')
-                subprocess.run(['herdr','pane','send-text',hp['pane_id'],'UNOPENED_HERDR_界'],env=env,check=True,capture_output=True)
-                subprocess.run(['herdr','pane','send-keys',hp['pane_id'],'enter'],env=env,check=True,capture_output=True)
-                try:wait(lambda:'UNOPENED_HERDR_界' in saved(hidden,0).get('formatted',''),'unattached Herdr pane did not save',timeout=25)
+                wait(lambda:hidden in a.snapshot().get('project_navigation',{}).get('visible',[]),('hidden '+DISPLAY+' project did not enter catalog'))
+                a.action('project:'+hidden);wait(lambda:a.snapshot().get('active_project')==hidden and any(t['pane']==1 for t in a.snapshot().get('direct_terminals',[])),(DISPLAY+' source project did not open owned pane'))
+                subprocess.run([(PROGRAM),'pane','send-text',hp['pane_id'],('UNOPENED_'+ENV+'_界')],env=env,check=True,capture_output=True)
+                subprocess.run([(PROGRAM),'pane','send-keys',hp['pane_id'],'enter'],env=env,check=True,capture_output=True)
+                try:wait(lambda:('UNOPENED_'+ENV+'_界') in saved(hidden,0).get('formatted',''),('unattached '+DISPLAY+' pane did not save'),timeout=25)
                 except AssertionError:
                     print(json.dumps(dict(source_sessions=[{k:s.get(k) for k in ['project','pane','health']} for s in a.snapshot().get('sessions',[])],saved=saved(hidden,0))),flush=True)
                     raise
                 assert all(t['pane']!=0 for t in a.snapshot().get('direct_terminals',[]))
-                assert all(alive(pid) for pid in herdr_pids)
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_never_attached=True,imported_tmux_never_attached=True,imported_herdr_never_attached=args.herdr,unicode_preserved=True,source_identity=True,pause_clear_resume=True,no_renderer_spawned=True,source_processes_preserved=True)))
+                assert all(alive(pid) for pid in agent_mux_pids)
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_never_attached=True,imported_tmux_never_attached=True,imported_agent_mux_never_attached=args.agent_mux,unicode_preserved=True,source_identity=True,pause_clear_resume=True,no_renderer_spawned=True,source_processes_preserved=True)))
             raise SystemExit(0)
         if args.panel_focus:
             def typed():return (tmp/'panel-input').read_bytes() if (tmp/'panel-input').exists() else b''
@@ -2115,7 +2116,7 @@ GLib.MainLoop().run()
                 command=[str(app),'--api',json.dumps(request)]
                 if args.ssh:
                     command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in
-                        ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','HERDR_CONFIG_PATH') if k in env],*command])]
+                        ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH',(ENV+'_CONFIG_PATH')) if k in env],*command])]
                 response=json.loads(subprocess.check_output(command,env=env))
                 if stale:
                     assert not response['ok'] and response['error']['code']=='stale_history',response
@@ -2194,23 +2195,23 @@ GLib.MainLoop().run()
             assert tmux('display-message','-p','-t','Fixture','#{pane_in_mode}')=='0','read-only search changed tmux copy mode'
             a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),'imported history did not copy')
             assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
-            if args.herdr:
+            if args.agent_mux:
                 picker(a,external=True);choose(a,'default')
-                wait(lambda:a.snapshot().get('collection')=='herdr-default' and a.snapshot().get('direct_terminals'),'Herdr history import missing')
-                a.paste('HISTORY\n');wait(lambda:live(a,'ROW 119'),'Herdr history fixture missing')
-                herdr_project=a.snapshot()['active_project']
-                herdr_page=search_api(herdr_project,ignore_case=True)
-                assert herdr_page['source']=='herdr'
-                assert search_api(herdr_project,herdr_page['next_cursor'],ignore_case=True)['matches'][0]['row']>herdr_page['matches'][0]['row']
-                a.shortcut('char:/');wait(lambda:review().get('editing'),'Herdr search did not open')
-                a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')=='herdr','Herdr retained history missing')
-                a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),'Herdr history did not copy')
-                assert all(alive(pid) for pid in herdr_pids),'history capture replaced a Herdr source process'
-                subprocess.run(['herdr','server','stop'],env=env,check=True,capture_output=True)
-                herdr.wait(timeout=5)
-                search_api(herdr_project,unavailable=True)
-                assert not (tmp/'config/herdr/herdr.sock').exists(),'history capture started the stopped source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,headless_styled_history_search=True,ignore_case_search=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_tmux_history=True,imported_herdr_history=args.herdr,guarded_herdr_history_api=args.herdr)))
+                wait(lambda:a.snapshot().get('collection')==(PROGRAM+'-default') and a.snapshot().get('direct_terminals'),(DISPLAY+' history import missing'))
+                a.paste('HISTORY\n');wait(lambda:live(a,'ROW 119'),(DISPLAY+' history fixture missing'))
+                agent_mux_project=a.snapshot()['active_project']
+                agent_mux_page=search_api(agent_mux_project,ignore_case=True)
+                assert agent_mux_page['source']==(PROGRAM)
+                assert search_api(agent_mux_project,agent_mux_page['next_cursor'],ignore_case=True)['matches'][0]['row']>agent_mux_page['matches'][0]['row']
+                a.shortcut('char:/');wait(lambda:review().get('editing'),(DISPLAY+' search did not open'))
+                a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')==(PROGRAM),(DISPLAY+' retained history missing'))
+                a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),(DISPLAY+' history did not copy'))
+                assert all(alive(pid) for pid in agent_mux_pids),('history capture replaced a '+DISPLAY+' source process')
+                subprocess.run([(PROGRAM),'server','stop'],env=env,check=True,capture_output=True)
+                agent_mux.wait(timeout=5)
+                search_api(agent_mux_project,unavailable=True)
+                assert not (tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),'history capture started the stopped source'
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,headless_styled_history_search=True,ignore_case_search=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_tmux_history=True,imported_agent_mux_history=args.agent_mux,guarded_agent_mux_history_api=args.agent_mux)))
             raise SystemExit(0)
         if args.pane_layouts:
             def leaves(client=None):return (client or a).snapshot().get('pane_layout',{}).get('panes',[])
@@ -2375,7 +2376,7 @@ GLib.MainLoop().run()
         if args.agent_lifecycle:
             def cli(*arguments,success=True,workspace=None):
                 command=[str(app),'--workspace',workspace or name,*arguments]
-                if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_HERDR','PATH')],*command])]
+                if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','STAR_TERMINAL_RENDERER','STARFLUX_AGENT_MUX','PATH')],*command])]
                 result=subprocess.run(command,env=env,capture_output=True,text=True)
                 assert (result.returncode==0)==success,result.stderr
                 return json.loads(result.stdout) if success else None
@@ -2669,21 +2670,21 @@ GLib.MainLoop().run()
         assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
         delete(a,'tmux / Fixture')
         assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'Deleting import killed or changed original tmux'
-        if args.herdr:
+        if args.agent_mux:
             picker(a,external=True);choose(a,'default')
-            wait(lambda:a.snapshot().get('collection')=='herdr-default' and len(a.snapshot().get('project_order',[]))>=2,'Herdr projects did not import')
+            wait(lambda:a.snapshot().get('collection')==(PROGRAM+'-default') and len(a.snapshot().get('project_order',[]))>=2,(DISPLAY+' projects did not import'))
             a.action('agent-status:0')
             def source_diagnostic():
                 menu=a.snapshot().get('context_menu') or {}
                 return next((item for item in menu.get('items',[])
-                             if item['label'].startswith('Herdr pane ')),None)
-            identity=wait(source_diagnostic,'Herdr source process identity did not appear in Agent status')
-            assert identity['action']=='menu:panel' and any(identity['label'].endswith('PID '+str(pid)) for pid in herdr_pids),identity
+                             if item['label'].startswith((DISPLAY+' pane '))),None)
+            identity=wait(source_diagnostic,(DISPLAY+' source process identity did not appear in Agent status'))
+            assert identity['action']=='menu:panel' and any(identity['label'].endswith('PID '+str(pid)) for pid in agent_mux_pids),identity
             a.key('escape')
             wait(lambda:not a.snapshot().get('context_menu'),'Agent status did not close')
-            delete(a,'Herdr / default')
-            assert all(alive(pid) for pid in herdr_pids),'Deleting import killed original Herdr programs'
-            assert {p['pane_id'] for p in herdr_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in snapshot['panes']}
+            delete(a,(DISPLAY+' / default'))
+            assert all(alive(pid) for pid in agent_mux_pids),('Deleting import killed original '+DISPLAY+' programs')
+            assert {p['pane_id'] for p in agent_mux_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in snapshot['panes']}
         assert a.process.poll() is None and b.process.poll() is None and alive(original_pid)
         a.action('sessions:new');wait(lambda:a.snapshot().get('modal_open') and a.snapshot().get('session_manager') is None,'final session dialog missing')
         a.paste('Keep session');a.accept()
@@ -2693,7 +2694,7 @@ GLib.MainLoop().run()
         a=restart(a)
         assert a.snapshot()['active_project']==kept['active_project'] and a.snapshot()['panes'][0]['pid']==kept['panes'][0]['pid'],'Deleting the old launch session broke reattachment'
         assert alive(source_pid),'Deleting an owned session killed the tmux source'
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,list_select_create_delete=True,default_startup=True,explicit_workspace_overrides_default=True,drag_order_persists=True,closed_project_keeps_order=True,cancel_preserves_process=True,independent_views=True,cross_session_reattach=True,delete_launch_session=True,tmux_import_preserves_pids_and_topology=True,herdr_import_preserves_pids=args.herdr)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,list_select_create_delete=True,default_startup=True,explicit_workspace_overrides_default=True,drag_order_persists=True,closed_project_keeps_order=True,cancel_preserves_process=True,independent_views=True,cross_session_reattach=True,delete_launch_session=True,tmux_import_preserves_pids_and_topology=True,agent_mux_import_preserves_pids=args.agent_mux)))
     finally:
         if args.native_launch_race:(gate/'release').touch()
         for path in state.glob('v-*.state.json'):path.with_name(path.name.removesuffix('.state.json')+'.close').touch()
@@ -2765,9 +2766,9 @@ GLib.MainLoop().run()
         for path in (tmp/'data/starflux/projects').glob('*.model.json'):
             workspace=path.name.removesuffix('.model.json')
             subprocess.run(['tmux','-L','starflux-'+workspace,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        if herdr:
-            subprocess.run(['herdr','server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
-            if herdr.poll() is None:herdr.terminate();herdr.wait(timeout=3)
+        if agent_mux:
+            subprocess.run([(PROGRAM),'server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+            if agent_mux.poll() is None:agent_mux.terminate();agent_mux.wait(timeout=3)
         try:
             if args.native_sources:
                 stop_native_owner()

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Headless live transfer + rollback with a private Herdr server and fake shells.
+"""Headless live transfer + rollback with a private the agent multiplexer server and fake shells.
 
-No display, real workspace, agent prompt, or existing Herdr process is touched.
+No display, real workspace, agent prompt, or existing the agent multiplexer process is touched.
 """
+from agent_mux import DISPLAY, ENV, PROGRAM
 import copy
 import json
 import os
@@ -17,17 +18,17 @@ import time
 
 root=Path(__file__).resolve().parents[1];app=root/'scripts/run-local.sh'
 with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
-    tmp=Path(tmp);config=tmp/'config/herdr';config.mkdir(parents=True)
+    tmp=Path(tmp);config=tmp/('config/'+PROGRAM);config.mkdir(parents=True)
     runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
     config.joinpath('config.toml').write_text('onboarding = false\n')
     shell=tmp/'shell';shell.write_text("#!/usr/bin/python3\nimport os,sys,signal,fcntl,termios,struct\nprint('LIVE_ADOPTION_PID='+str(os.getpid()),flush=True)\ndef resize(*args):\n rows,cols=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,b'\\0'*8))[:2];print('SIZE='+str(rows)+'x'+str(cols),flush=True)\nsignal.signal(signal.SIGWINCH,resize)\nfor line in sys.stdin:print('REPLY='+line.strip(),flush=True)\n");shell.chmod(0o700)
-    env={k:v for k,v in os.environ.items() if not k.startswith('HERDR_')}
-    env.update(XDG_CONFIG_HOME=str(tmp/'config'),HERDR_CONFIG_PATH=str(config/'config.toml'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native')
+    env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_'))}
+    env.update(XDG_CONFIG_HOME=str(tmp/'config'),agent_mux_CONFIG_PATH=str(config/'config.toml'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native')
     log=(tmp/'source.log').open('w')
-    source=subprocess.Popen(['herdr','server'],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
+    source=subprocess.Popen([(PROGRAM),'server'],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
     broker_pid=None;plan=None;view_processes=[];peer=None
     def cli(*args,raw=False):
-        result=subprocess.run(['herdr','--session','default',*args],env=env,capture_output=True,timeout=10)
+        result=subprocess.run([(PROGRAM),'--session','default',*args],env=env,capture_output=True,timeout=10)
         assert result.returncode==0,(args,result.stderr.decode(errors='replace'),(tmp/'source.log').read_text()[-800:])
         return result.stdout if raw else json.loads(result.stdout)
     def wait(predicate,label,timeout=10):
@@ -41,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         try:return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[0]!='Z'
         except OSError:return False
     try:
-        wait(lambda:(config/'herdr.sock').exists(),'private Herdr socket')
+        wait(lambda:(config/(PROGRAM+'.sock')).exists(),('private '+DISPLAY+' socket'))
         one=cli('workspace','create','--cwd',str(tmp),'--label','Proof One','--no-focus')['result']
         two=cli('workspace','create','--cwd',str(tmp),'--label','Proof Two','--no-focus')['result']
         snapshot=cli('api','snapshot')['result']['snapshot']
@@ -50,9 +51,9 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
             info=cli('pane','process-info','--pane',pane['pane_id'])['result']['process_info'];pids.append(info['shell_pid'])
             wait(lambda p=pane:'LIVE_ADOPTION_PID=' in cli('pane','read',p['pane_id'],'--source','visible','--raw',raw=True).decode(errors='replace'),'fake shell output')
         wait(lambda:(config/'session.json').exists(),'saved private layout')
-        imported=subprocess.run([str(app),'--import-herdr'],env=env,capture_output=True)
+        imported=subprocess.run([str(app),'--import-agent-mux'],env=env,capture_output=True)
         assert imported.returncode==0,imported.stderr.decode(errors='replace')
-        prepared=subprocess.run([str(app),'--plan-herdr-migration'],env=env,check=True,capture_output=True,text=True)
+        prepared=subprocess.run([str(app),'--plan-agent-mux-migration'],env=env,check=True,capture_output=True,text=True)
         plan_path=Path(json.loads(prepared.stdout.strip().splitlines()[-1])['plan']);plan=json.loads(plan_path.read_text())
         assert not plan['source_clients'],'Private migration selected a real UI client'
         assert len(plan['panes'])==len(pids)
@@ -62,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         for p in bad['panes']:p['server']='invalid/server'
         bad_path=bad_run/'plan.json';bad_path.write_text(json.dumps(bad))
         wrapper=bad_run/'accept';wrapper.write_text('#!/bin/sh\nshift 2\nexec '+shlex.quote(str(app))+' --native-pty-import '+shlex.quote(str(bad_path))+' "$@"\n');wrapper.chmod(0o700)
-        failed=subprocess.run(['herdr','--session','default','server','live-handoff','--import-exe',str(wrapper)],env=env,capture_output=True,timeout=35)
+        failed=subprocess.run([(PROGRAM),'--session','default','server','live-handoff','--import-exe',str(wrapper)],env=env,capture_output=True,timeout=35)
         assert failed.returncode!=0,'Rejected importer unexpectedly committed'
         assert source.poll() is None and all(is_alive(pid) for pid in pids),'Rollback lost original processes'
         assert len(cli('api','snapshot')['result']['snapshot']['panes'])==len(pids)
@@ -85,10 +86,10 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         state=runtime/'starflux'/(first+'.state.json');wait(state.exists,'legacy state')
         subprocess.run([str(app),'--workspace',first,'--action','project:'+second],env=env,check=True,capture_output=True)
         wait(lambda:json.loads(state.read_text()).get('active_project')==second,'legacy project selection')
-        prepared=subprocess.run([str(app),'--plan-herdr-migration'],env=env,check=True,capture_output=True,text=True)
+        prepared=subprocess.run([str(app),'--plan-agent-mux-migration'],env=env,check=True,capture_output=True,text=True)
         plan_path=Path(json.loads(prepared.stdout.strip().splitlines()[-1])['plan']);plan=json.loads(plan_path.read_text())
         assert len(plan['views'])==1 and plan['views'][0]['project']==second
-        applied=subprocess.run(['python3',str(root/'scripts/migrate-herdr.py'),'apply',str(plan_path)],env=env,capture_output=True,text=True,timeout=45)
+        applied=subprocess.run(['python3',str(root/'scripts/migrate-agent-mux.py'),'apply',str(plan_path)],env=env,capture_output=True,text=True,timeout=45)
         if applied.returncode:
             raise AssertionError(applied.stderr+'\n'+(Path(plan['run'])/'broker.log').read_text()[-2000:])
         status=json.loads(applied.stdout.strip().splitlines()[-1]);broker_pid=status['broker_pid']
@@ -122,14 +123,14 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
             subprocess.run(['tmux','-L',p['server'],'send-keys','-t',p['target'],'Enter'],env=env,check=True)
             def captured():return subprocess.check_output(['tmux','-L',p['server'],'capture-pane','-p','-t',p['target']],env=env,text=True)
             wait(lambda:'REPLY='+token in captured(),'post-transfer interactive IO')
-            # Inspect through STAR/FLUX, not Herdr, and verify the original shell identity.
+            # Inspect through STAR/FLUX, not the agent multiplexer, and verify the original shell identity.
             with socket.socket(socket.AF_UNIX) as inspector:
                 inspector.connect(plan['broker']);inspector.sendall(json.dumps(dict(op='inspect',key=p['key'])).encode()+b'\n')
                 inspected=json.loads(inspector.makefile('rb').readline())
             assert inspected['pid']==p['pid'] and inspected['alive'] and inspected['source']=='starflux-adopted'
             project=json.loads(Path(plan['project_root'],p['workspace']+'.json').read_text())
-            assert project['herdr'] is None and str(p['slot']) in project['adopted']
-        assert not (config/'herdr.sock').exists(),'Old Herdr API is still running'
+            assert project[(PROGRAM)] is None and str(p['slot']) in project['adopted']
+        assert not (config/(PROGRAM+'.sock')).exists(),('Old '+DISPLAY+' API is still running')
         assert json.loads((config/'session.json').read_text())['workspaces']==[], 'Old restore could duplicate live agents'
         stopped=plan['panes'][0];surviving=plan['panes'][1]
         result=subprocess.run([str(app),'--workspace',stopped['workspace'],'--stop'],env=env,capture_output=True,timeout=15)

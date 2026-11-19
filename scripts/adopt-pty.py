@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""STAR/FLUX live PTY ownership receiver and tmux proxy (Herdr handoff v1).
+"""STAR/FLUX live PTY ownership receiver and tmux proxy (the agent multiplexer handoff v1).
 
 No agent process is relaunched. Before commit, failure closes only duplicated
-masters and staged proxies; Herdr still owns its original descriptors.
+masters and staged proxies; the agent multiplexer still owns its original descriptors.
 """
 import array
 import base64

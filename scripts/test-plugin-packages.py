@@ -127,7 +127,7 @@ def begin_fetch():
     operation=str(uuid.uuid4());parameters=dict(repository=repo_url,reference='clean',subdirectory='plugins/workflow',expected_revision=listed()['revision'])
     request=dict(version=1,id='interrupted-fetch',method='plugins.install',params=parameters,operation_id=operation,deadline_ms=90000)
     command=[str(app),'--api',json.dumps(request)]
-    if args.ssh:command=ssh+[shlex.join(['env',*[k+'='+fetch_scope[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','STARFLUX_SNAPSHOT_SERVICE','STARFLUX_PLUGIN_SERVICE','STARFLUX_HERDR','GIT_SSH_COMMAND','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM') if k in fetch_scope],*command])]
+    if args.ssh:command=ssh+[shlex.join(['env',*[k+'='+fetch_scope[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','PATH','STARFLUX_SNAPSHOT_SERVICE','STARFLUX_PLUGIN_SERVICE','STARFLUX_AGENT_MUX','GIT_SSH_COMMAND','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM') if k in fetch_scope],*command])]
     previous=set(package_root.glob('.stage-*'))
     proc=subprocess.Popen(command,env=fetch_scope,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     record=wait(lambda:json.loads(control.read_text()) if control.exists() else None,'Git wrapper did not start')

@@ -250,7 +250,7 @@ fn create_with_source(
         workspace: format!("work-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
         label: Some(name.into()),
         collection: Some(id.clone()),
-        herdr: None,
+        agent_mux: None,
         tmux,
         adopted: Default::default(),
         native_terminals: false,
@@ -338,8 +338,9 @@ pub fn external() -> Vec<Entry> {
             });
         }
     }
-    let herdr = std::env::var("STARFLUX_HERDR").unwrap_or_else(|_| "herdr".into());
-    let mut command = Command::new(herdr);
+    let agent_mux =
+        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
+    let mut command = Command::new(agent_mux);
     command.args(["session", "list", "--json"]);
     if let Ok(out) = crate::read_query::output(command)
         && let Ok(data) = serde_json::from_slice::<serde_json::Value>(&out)
@@ -348,10 +349,10 @@ pub fn external() -> Vec<Entry> {
         for session in sessions.iter().filter(|s| s["running"] == true) {
             if let Some(name) = session["name"].as_str() {
                 entries.push(Entry {
-                    id: format!("herdr-{name}"),
+                    id: format!("{}-{name}", crate::agent_mux::PROGRAM),
                     name: name.into(),
-                    detail: "Live Herdr projects and terminals".into(),
-                    source: "herdr".into(),
+                    detail: "Live multiplexer projects and terminals".into(),
+                    source: crate::agent_mux::PROGRAM.into(),
                     is_default: false,
                     project: None,
                     tmux: None,
@@ -368,14 +369,14 @@ pub(crate) fn import_prepared(
     entry: &Entry,
     snapshot: Option<serde_json::Value>,
 ) -> Result<Config> {
-    if entry.source == "herdr" {
+    if entry.source == crate::agent_mux::PROGRAM {
         let config = match snapshot {
-            Some(snapshot) => crate::herdr::import_snapshot(&entry.name, snapshot)?,
-            None => crate::herdr::import(&entry.name)?,
+            Some(snapshot) => crate::agent_mux::import_snapshot(&entry.name, snapshot)?,
+            None => crate::agent_mux::import(&entry.name)?,
         };
         save(&Session {
             id: group(&config),
-            name: format!("Herdr / {}", entry.name),
+            name: format!("Multiplexer / {}", entry.name),
             project: config.workspace.clone(),
         })?;
         return Ok(config);
@@ -383,7 +384,7 @@ pub(crate) fn import_prepared(
     let source = entry
         .tmux
         .clone()
-        .context("Select a live tmux or Herdr session")?;
+        .context("Select a live tmux or multiplexer session")?;
     source.inspect()?;
     if let Some(config) = projects().into_iter().find(|p| {
         p.tmux

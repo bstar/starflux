@@ -20,7 +20,7 @@ help, and **Ctrl+B** starts project, session, tab, pane and history commands.
 The pane menu exposes [agent health and registered conversation recovery](docs/agent-lifecycle.md).
 Terminals support [nested right/down splits, zoom, rearrangement and guarded termination](docs/panes.md).
 Use [history search and keyboard copy mode](docs/terminal-history.md) to review retained terminal output while the program continues running.
-The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/Herdr sessions and acknowledged per-window navigation.
+The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/agent-multiplexer sessions and acknowledged per-window navigation.
 
 The paused parity effort and remaining work are recorded in the [implementation checkpoint](docs/parity-progress.md).
 

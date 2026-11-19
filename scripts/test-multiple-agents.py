@@ -3,6 +3,7 @@
 
 Only disposable projects and a private authenticated loopback SSH server are used.
 """
+from agent_mux import DISPLAY, ENV, PROGRAM
 import getpass
 import json
 import os
@@ -224,7 +225,7 @@ finally:
             action('project:'+name);wait(lambda:state()['active_project']==name and len(agents())==2,'Retained agents missing')
             assert dict(agents())==identities[name],'Migration/reopen replaced a running agent'
             assert {e['pane']:e['health']['pid'] for e in state()['sessions']}==shells[name]
-        result={'passed':True,'new_project_starts_in_one_shell':True,'no_designated_agent_controls':True,'shell_launched_agents_detected_in_any_tab':True,'independent_codex_sessions_in_same_directory':True,'working_and_waiting_status':True,'agent_exit_clears_badge_and_shell_survives':True,'agent_restart_in_same_shell_detected':True,'uppercase_and_modifiers':True,'window_focus_and_split_input':True,'terminal_rename_and_close_pane':True,'legacy_layout_migration_preserves_live_pids':True,'local_and_authenticated_ssh':True,'original_herdr_sessions_touched':False}
+        result={'passed':True,'new_project_starts_in_one_shell':True,'no_designated_agent_controls':True,'shell_launched_agents_detected_in_any_tab':True,'independent_codex_sessions_in_same_directory':True,'working_and_waiting_status':True,'agent_exit_clears_badge_and_shell_survives':True,'agent_restart_in_same_shell_detected':True,'uppercase_and_modifiers':True,'window_focus_and_split_input':True,'terminal_rename_and_close_pane':True,'legacy_layout_migration_preserves_live_pids':True,'local_and_authenticated_ssh':True,('original_'+PROGRAM+'_sessions_touched'):False}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
     except BaseException:
         try:(out/'failure-state.json').write_text(json.dumps(state(),indent=2))

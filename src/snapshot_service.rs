@@ -257,7 +257,7 @@ pub fn endpoint(config: &Config) -> Result<String> {
         "host",
         "ssh_config",
         "project_host",
-        "herdr",
+        crate::agent_mux::PROGRAM,
         "tmux",
         "adopted",
     ]

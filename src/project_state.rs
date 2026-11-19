@@ -224,7 +224,7 @@ impl ProjectState {
         ids
     }
     fn migrate_terminals(&mut self, config: &Config) {
-        if let Some(source) = &config.herdr {
+        if let Some(source) = &config.agent_mux {
             self.reserved_slots = source
                 .panes
                 .keys()
@@ -243,7 +243,7 @@ impl ProjectState {
         if self.space == Space::Agent {
             self.space = Space::Terminals;
         }
-        // Herdr's legacy agent shortcut may alias an existing terminal slot.
+        // the multiplexer's legacy agent shortcut may alias an existing terminal slot.
         // Normalize only our metadata; preserve its original session/process.
         let imported: Vec<_> = self
             .agents
@@ -251,7 +251,7 @@ impl ProjectState {
             .copied()
             .filter(|id| {
                 config
-                    .herdr
+                    .agent_mux
                     .as_ref()
                     .is_some_and(|h| h.panes.contains_key(id))
             })
@@ -877,11 +877,11 @@ pub fn catalog(current: &Config) -> Vec<Config> {
         }
     }
     configs.sort_by(|a, b| {
-        a.herdr
+        a.agent_mux
             .as_ref()
             .map(|h| h.order)
             .unwrap_or(usize::MAX)
-            .cmp(&b.herdr.as_ref().map(|h| h.order).unwrap_or(usize::MAX))
+            .cmp(&b.agent_mux.as_ref().map(|h| h.order).unwrap_or(usize::MAX))
             .then_with(|| a.workspace.cmp(&b.workspace))
     });
     configs

@@ -75,11 +75,11 @@ struct Frame {
 }
 pub fn inspect(config: &Config, pane: usize) -> Result<Value> {
     if let Some(source) = config
-        .herdr
+        .agent_mux
         .as_ref()
         .filter(|s| s.panes.contains_key(&pane))
     {
-        return herdr(source, pane);
+        return agent_mux(source, pane);
     }
     let mut request = config.request(pane, "inspect");
     request["include_screen"] = json!(true);
@@ -167,7 +167,7 @@ pub fn take(
     }
     Ok(Some(saved))
 }
-fn herdr(source: &crate::herdr::Source, pane: usize) -> Result<Value> {
+fn agent_mux(source: &crate::agent_mux::Source, pane: usize) -> Result<Value> {
     let id = &source.panes[&pane].pane_id;
     let pane_info: Value = serde_json::from_slice(&output(source.command(&["pane", "get", id]))?)?;
     let info: Value = serde_json::from_slice(&output(source.command(&[
@@ -180,19 +180,19 @@ fn herdr(source: &crate::herdr::Source, pane: usize) -> Result<Value> {
     let pid = process["shell_pid"]
         .as_u64()
         .and_then(|p| u32::try_from(p).ok())
-        .context("Herdr terminal process identity unavailable")?;
-    let start =
-        crate::agent_state::process_start(pid).context("Herdr terminal process is unavailable")?;
+        .context("Multiplexer terminal process identity unavailable")?;
+    let start = crate::agent_state::process_start(pid)
+        .context("Multiplexer terminal process is unavailable")?;
     let device = fs::read_link(format!("/proc/{pid}/fd/0"))?;
     let tty = device
         .to_str()
-        .context("Herdr terminal device unavailable")?;
+        .context("Multiplexer terminal device unavailable")?;
     ensure!(
         tty.starts_with("/dev/pts/")
             && process["tty"]
                 .as_str()
                 .is_none_or(|reported| reported == tty),
-        "Herdr terminal device changed"
+        "Multiplexer terminal device changed"
     );
     let file = fs::OpenOptions::new()
         .read(true)
@@ -202,20 +202,20 @@ fn herdr(source: &crate::herdr::Source, pane: usize) -> Result<Value> {
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     ensure!(
         unsafe { libc::ioctl(file.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0,
-        "Could not read Herdr terminal size"
+        "Could not read multiplexer terminal size"
     );
     ensure!(
         size.ws_row > 0
             && size.ws_col > 0
             && u32::from(size.ws_row) * u32::from(size.ws_col) <= 500_000,
-        "Herdr screen exceeds its geometry limit"
+        "Multiplexer screen exceeds its geometry limit"
     );
     let bytes = output(source.command(&[
         "pane", "read", id, "--source", "visible", "--format", "ansi", "--raw",
     ]))?;
     ensure!(
         bytes.len() <= 1024 * 1024 && crate::agent_state::process_start(pid) == Some(start),
-        "Herdr terminal changed during capture"
+        "Multiplexer terminal changed during capture"
     );
     let p = &pane_info["result"]["pane"];
     let mut health = source.health_from_pane(pane, p);

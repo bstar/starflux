@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Headless domain automation against private tmux processes, optionally over SSH."""
+from agent_mux import DISPLAY, ENV, PROGRAM
 import argparse
 import getpass
 import json
@@ -16,12 +17,12 @@ import threading
 import time
 import uuid
 
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--herdr',action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
-if args.herdr and not args.session_imports:parser.error('--herdr requires --session-imports')
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument(('--'+PROGRAM),action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
+if args.agent_mux and not args.session_imports:parser.error(('--'+PROGRAM+' requires --session-imports'))
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
-    env={k:v for k,v in os.environ.items() if not k.startswith('HERDR_') and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
+    env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     shell=tmp/'agent'
     shell.write_text("""#!/usr/bin/python3
 import ctypes,os,sys,tty
@@ -45,16 +46,16 @@ while True:
   else:draft+=data[:1];data=data[1:]
 """);shell.chmod(0o700)
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell))
-    clients=[];daemon=None;ssh_args=[];herdr=None;herdr_named=None;source_socket=None
-    if args.herdr:
-        config=tmp/'config/herdr';config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env['HERDR_CONFIG_PATH']=str(config/'config.toml')
-    else:env['STARFLUX_HERDR']=str(tmp/'herdr-not-installed')
+    clients=[];daemon=None;ssh_args=[];agent_mux=None;agent_mux_named=None;source_socket=None
+    if args.agent_mux:
+        config=tmp/('config/'+PROGRAM);config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env[(ENV+'_CONFIG_PATH')]=str(config/'config.toml')
+    else:env['STARFLUX_AGENT_MUX']=str(tmp/(PROGRAM+'-not-installed'))
     class Client:
         def __init__(self,overrides=None):
             self.messages=queue.Queue();self.counter=0
             client_env={**env,**(overrides or {})}
             command=[str(app),'--api-stdio']
-            if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+client_env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','HERDR_CONFIG_PATH','STARFLUX_HERDR') if k in client_env],*command])]
+            if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+client_env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH',(ENV+'_CONFIG_PATH'),'STARFLUX_AGENT_MUX') if k in client_env],*command])]
             self.log=(tmp/('client-'+secrets.token_hex(3)+'.log')).open('w')
             self.process=subprocess.Popen(command,env=client_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log);clients.append(self)
             def read():
@@ -99,16 +100,16 @@ while True:
             config=tmp/'ssh-config';config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
             result=json.loads(subprocess.check_output([str(app),'--ssh','proof','--ssh-config',str(config),'--remote-executable',str(wrapper),'--api',json.dumps(dict(version=1,id='relay',method='capabilities'))],env=env))
             assert result['ok'] and result['id']=='relay',result
-        if args.herdr:
-            herdr=subprocess.Popen(['herdr','server'],env=env,stdout=(tmp/'herdr.log').open('w'),stderr=subprocess.STDOUT)
-            wait(lambda:(tmp/'config/herdr/herdr.sock').exists(),'private Herdr server missing')
-            def herdr_cli(*arguments):return json.loads(subprocess.check_output(['herdr',*arguments],env=env))
-            herdr_cli('workspace','create','--cwd',str(tmp),'--label','Native import café','--no-focus')
-            herdr_cli('workspace','create','--cwd',str(tmp),'--label','Other workspace','--no-focus')
-            wait(lambda:(tmp/'config/herdr/session.json').exists(),'Herdr layout missing')
-            herdr_named=subprocess.Popen(['herdr','--session','named','server'],env=env,stdout=(tmp/'herdr-named.log').open('w'),stderr=subprocess.STDOUT)
-            wait(lambda:(tmp/'config/herdr/sessions/named/herdr.sock').exists(),'named Herdr socket missing')
-            herdr_cli('--session','named','workspace','create','--cwd',str(tmp),'--label','Named source','--no-focus')
+        if args.agent_mux:
+            agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
+            wait(lambda:(tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),('private '+DISPLAY+' server missing'))
+            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([(PROGRAM),*arguments],env=env))
+            agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Native import café','--no-focus')
+            agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Other workspace','--no-focus')
+            wait(lambda:(tmp/('config/'+PROGRAM+'/session.json')).exists(),(DISPLAY+' layout missing'))
+            agent_mux_named=subprocess.Popen([(PROGRAM),'--session','named','server'],env=env,stdout=(tmp/(PROGRAM+'-named.log')).open('w'),stderr=subprocess.STDOUT)
+            wait(lambda:(tmp/('config/'+PROGRAM+'/sessions/named/'+PROGRAM+'.sock')).exists(),('named '+DISPLAY+' socket missing'))
+            agent_mux_cli('--session','named','workspace','create','--cwd',str(tmp),'--label','Named source','--no-focus')
         c=Client();assert c.call('projects.list')['projects']==[],'API created an implicit demo project'
         if args.session_events:
             fallback=c.write('sessions.create',dict(name='Event fallback',directory=str(tmp)))
@@ -236,46 +237,46 @@ while True:
             tmux('new-session','-d','-s','Original café','-c',str(tmp),str(shell))
             assert c.call('sessions.import',dict(reference=obsolete),str(uuid.uuid4()),ok=False)['code']=='stale_source','a replaced source server accepted an old reference'
             assert c.write('sessions.import',dict(reference=source()['reference']))['project']==imported['project']
-            if args.herdr:
-                original=herdr_cli('api','snapshot')['result']['snapshot'];panes=original['panes']
-                pids=[herdr_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in panes]
-                selected=next(s for s in c.call('sessions.external')['sources'] if s['source']=='herdr' and s['name']=='default')
+            if args.agent_mux:
+                original=agent_mux_cli('api','snapshot')['result']['snapshot'];panes=original['panes']
+                pids=[agent_mux_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in panes]
+                selected=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='default')
                 params=dict(reference=selected['reference']);op=str(uuid.uuid4())
                 result=c.write('sessions.import',params,op);assert result==c.write('sessions.import',params,op)
-                assert result['session']=='herdr-default' and len(result['projects'])>=2
+                assert result['session']==(PROGRAM+'-default') and len(result['projects'])>=2
                 assert c.write('sessions.import',params)['project']==result['project']
-                assert {p['pane_id'] for p in herdr_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in panes}
-                assert all(Path('/proc',str(pid)).exists() for pid in pids),'Herdr import restarted a terminal'
+                assert {p['pane_id'] for p in agent_mux_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in panes}
+                assert all(Path('/proc',str(pid)).exists() for pid in pids),(DISPLAY+' import restarted a terminal')
                 original_pids={pane['pane_id']:pid for pane,pid in zip(panes,pids)}
                 original_terminals={pane['pane_id']:pane['terminal_id'] for pane in panes}
-                herdr_project=result['project']
+                agent_mux_project=result['project']
                 for entry in result['projects']:
                     observed=c.call('panes.get',dict(project=entry['project'],pane=1))
                     health=observed['status'];source_pane=health['pane_id']
-                    assert health['source']=='herdr' and health['pid']==original_pids[source_pane],observed
+                    assert health['source']==(PROGRAM) and health['pid']==original_pids[source_pane],observed
                     assert health['terminal_id']==original_terminals[source_pane] and health['pid_start_ticks']>0,observed
                     assert observed['target'] is None and observed['capabilities']==dict(input=False,terminate=False),observed
-                herdr_cli('workspace','create','--cwd',str(tmp),'--label','Changed topology','--no-focus')
+                agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Changed topology','--no-focus')
                 assert c.call('sessions.import',params,str(uuid.uuid4()),ok=False)['code']=='stale_source'
-                named=next(s for s in c.call('sessions.external')['sources'] if s['source']=='herdr' and s['name']=='named')
-                result=c.write('sessions.import',dict(reference=named['reference']));assert result['session']=='herdr-named' and result['projects']
-                latest=next(s for s in c.call('sessions.external')['sources'] if s['source']=='herdr' and s['name']=='default')['reference']
-                herdr.terminate();herdr.wait(timeout=5)
-                unavailable=c.call('panes.get',dict(project=herdr_project,pane=1),ok=False)
+                named=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='named')
+                result=c.write('sessions.import',dict(reference=named['reference']));assert result['session']==(PROGRAM+'-named') and result['projects']
+                latest=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='default')['reference']
+                agent_mux.terminate();agent_mux.wait(timeout=5)
+                unavailable=c.call('panes.get',dict(project=agent_mux_project,pane=1),ok=False)
                 assert unavailable['code']=='operation_failed',unavailable
-                observation=c.call('panes.get',dict(project=herdr_project,pane=1,allow_unavailable=True))
+                observation=c.call('panes.get',dict(project=agent_mux_project,pane=1,allow_unavailable=True))
                 assert observation['status']['health']['transport']=='disconnected',observation
                 assert observation['status']['health']['source']=='transport' and observation['status']['error']
                 assert observation['target'] is None and observation['capabilities']==dict(input=False,terminate=False)
-                assert not (tmp/'config/herdr/herdr.sock').exists(),'diagnostics restarted the missing server'
-                assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='source_unavailable','import restarted a missing Herdr server'
-                assert not any(s['source']=='herdr' and s['name']=='default' for s in c.call('sessions.external')['sources'])
-                herdr=subprocess.Popen(['herdr','server'],env=env,stdout=(tmp/'herdr-restarted.log').open('w'),stderr=subprocess.STDOUT)
-                wait(lambda:any(s['source']=='herdr' and s['name']=='default' for s in c.call('sessions.external')['sources']),'restarted private Herdr server missing')
-                assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='stale_source','restarted Herdr server accepted an old reference'
+                assert not (tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),'diagnostics restarted the missing server'
+                assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='source_unavailable',('import restarted a missing '+DISPLAY+' server')
+                assert not any(s['source']==(PROGRAM) and s['name']=='default' for s in c.call('sessions.external')['sources'])
+                agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'-restarted.log')).open('w'),stderr=subprocess.STDOUT)
+                wait(lambda:any(s['source']==(PROGRAM) and s['name']=='default' for s in c.call('sessions.external')['sources']),('restarted private '+DISPLAY+' server missing'))
+                assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='stale_source',('restarted '+DISPLAY+' server accepted an old reference')
             slow=tmp/'slow-discovery';record=tmp/'query-processes'
             slow.write_text('#!/usr/bin/python3\nimport os,subprocess,time,json\nfrom pathlib import Path\nchild=subprocess.Popen(["sleep","6"])\nPath('+repr(str(record))+').write_text(json.dumps([os.getpid(),child.pid]))\nchild.wait()\nprint("{\\\"sessions\\\":[]}")\n');slow.chmod(0o700)
-            delayed=Client(dict(STARFLUX_HERDR=str(slow)))
+            delayed=Client(dict(STARFLUX_agent_mux=str(slow)))
             failure=delayed.call('sessions.external',ok=False,deadline_ms=500)
             assert failure['code']=='deadline_exceeded' and record.exists(),failure
             query_pids=json.loads(record.read_text())
@@ -289,7 +290,7 @@ while True:
             assert time.monotonic()-began<5.8,'source watchdog did not bound a slow CLI'
             query_pids=json.loads(record.read_text());wait(lambda:all(not query_alive(pid) for pid in query_pids),'source timeout left read helpers running',timeout=.6)
             assert topology()==retained,'query cleanup changed the original source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,herdr=args.herdr,herdr_read_only_identity=args.herdr,headless_import=True,guarded_tmux_input=True,stable_discovery=True,guarded_source_identity=True,stale_topology_rejected=True,replaced_server_rejected=True,idempotent_import=True,source_processes_and_topology_preserved=True,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,agent_mux=args.agent_mux,agent_mux_read_only_identity=args.agent_mux,headless_import=True,guarded_tmux_input=True,stable_discovery=True,guarded_source_identity=True,stale_topology_rejected=True,replaced_server_rejected=True,idempotent_import=True,source_processes_and_topology_preserved=True,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
             raise SystemExit(0)
         caps=c.call('capabilities');assert caps['version']==1 and caps['operation_replay']
         c.process.stdin.write(b'{invalid\n');c.process.stdin.flush();assert c.take()['error']['code']=='invalid_request'
@@ -362,7 +363,7 @@ while True:
         assert c.call('panes.get',dict(project=project,pane=1))['target']['pid']==original['pid'],'unrelated agent was replaced'
         data=tmp/'data/starflux/projects';slow='slow-proof';slow_source=tmp/'slow-source'
         slow_source.write_text('#!/bin/sh\nsleep 10\n');slow_source.chmod(0o700)
-        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,herdr=dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)}))
+        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,agent_mux=dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)}))
         (data/(slow+'.json')).write_text(json.dumps(config));(data/(slow+'.model.json')).write_text((data/(project+'.model.json')).read_text())
         interrupted=str(uuid.uuid4());slow_report={**report,'run_id':str(uuid.uuid4()),'sequence':1}
         started=time.monotonic();result=c.call('agents.report',dict(project=slow,pane=1,report=slow_report),interrupted,ok=False,deadline_ms=400)
@@ -380,8 +381,8 @@ while True:
                 try:client.process.wait(timeout=3)
                 except subprocess.TimeoutExpired:client.process.kill();client.process.wait()
         if source_socket:subprocess.run(['tmux','-S',str(source_socket),'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        if herdr:herdr.terminate();herdr.wait(timeout=5)
-        if herdr_named:herdr_named.terminate();herdr_named.wait(timeout=5)
+        if agent_mux:agent_mux.terminate();agent_mux.wait(timeout=5)
+        if agent_mux_named:agent_mux_named.terminate();agent_mux_named.wait(timeout=5)
         for model in (tmp/'data/starflux/projects').glob('*.model.json'):
             project=model.name.removesuffix('.model.json')
             subprocess.run(['tmux','-L','starflux-'+project,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

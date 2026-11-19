@@ -828,7 +828,7 @@ impl Workspace {
                 Prompt::NewSession => "Create session",
                 Prompt::RenameSession(_, _) => "Rename session",
                 Prompt::DeleteSession(_) => {
-                    "Delete session (external tmux/Herdr sessions are preserved)"
+                    "Delete session (external tmux/agent-multiplexer sessions are preserved)"
                 }
                 Prompt::Deliver => "Deliver a file (path on workspace host)",
                 Prompt::Project => "Add / reopen project",

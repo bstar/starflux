@@ -17,33 +17,33 @@ pub(crate) fn allowed(path: &Path) -> Result<()> {
         };
         let name = name.to_string_lossy().to_lowercase();
         ensure!(
-            !matches!(
-                name.as_str(),
-                ".git"
-                    | ".local"
-                    | ".config"
-                    | ".cache"
-                    | ".claude"
-                    | ".herdr"
-                    | ".starflux"
-                    | "target"
-                    | "node_modules"
-                    | ".ssh"
-                    | ".codex"
-                    | ".aws"
-                    | ".gnupg"
-                    | "auth.json"
-                    | "credentials.toml"
-                    | "credentials.json"
-                    | ".netrc"
-                    | ".npmrc"
-                    | ".pypirc"
-                    | ".mcp.json"
-                    | "mcp.json"
-                    | ".claude.json"
-                    | ".docker"
-                    | ".kube"
-            ) && !name.starts_with(".env")
+            name.strip_prefix('.') != Some(crate::agent_mux::PROGRAM)
+                && !matches!(
+                    name.as_str(),
+                    ".git"
+                        | ".local"
+                        | ".config"
+                        | ".cache"
+                        | ".agents"
+                        | ".starflux"
+                        | "target"
+                        | "node_modules"
+                        | ".ssh"
+                        | ".codex"
+                        | ".aws"
+                        | ".gnupg"
+                        | "auth.json"
+                        | "credentials.toml"
+                        | "credentials.json"
+                        | ".netrc"
+                        | ".npmrc"
+                        | ".pypirc"
+                        | ".mcp.json"
+                        | "mcp.json"
+                        | ".docker"
+                        | ".kube"
+                )
+                && !name.starts_with(".env")
                 && !name.ends_with(".pem")
                 && !name.ends_with(".key")
                 && !name.ends_with(".p12")

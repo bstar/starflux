@@ -14,11 +14,11 @@ The searchable list lets you select and open a session, create a named session
 with its first project, or delete one after typing `DELETE`. Switching retains
 the other session's programs and affects only the current view. Deletion stops
 STAR/FLUX-owned terminals and apps and closes other views of the deleted session.
-The original tmux and Herdr sessions stay running when their imports are deleted.
+The original tmux and the agent multiplexer sessions stay running when their imports are deleted.
 
 **Import…** lists tmux sessions from the standard socket directory (including
-named servers and the current `$TMUX` socket) and running Herdr sessions. A tmux
-import retains its existing windows and panes inside a live terminal tab. A Herdr
+named servers and the current `$TMUX` socket) and running agent-multiplexer sessions. A tmux
+import retains its existing windows and panes inside a live terminal tab. An agent multiplexer
 import retains its projects and terminal tabs. Importing attaches to the existing
 programs without restarting them. Saved sessions remain available across launches.
 
@@ -62,17 +62,17 @@ Dialogs support mouse field selection, Tab/Shift+Tab, ordinary editing, pasted t
 
 Activity mode groups working projects first, then pending requests, live idle agents and other projects. Recent activity sorts each group. **High ↓** uses that order; **Low ↑** reverses the entire list, including ties and unknown activity, putting the busiest projects at the bottom. The text control has a border only on hover. Sorting retains the active project, sessions and split selection, and persists across restarts.
 
-Recency updates from terminal output changes, state changes and typing/pasting. Native helpers return output fingerprints; imported Herdr panes use bounded current-footer fingerprints and backend state-change sequences to seed historical order. The first fingerprint sample for each pane establishes a baseline. Opening a project can resize or redraw its terminal; the initial presentation changes establish a new baseline without updating recency. Selecting a project, dragging rows and changing sort modes do not count as work. Terminal contents are not saved with navigation preferences.
+Recency updates from terminal output changes, state changes and typing/pasting. Native helpers return output fingerprints; imported agent-multiplexer panes use bounded current-footer fingerprints and backend state-change sequences to seed historical order. The first fingerprint sample for each pane establishes a baseline. Opening a project can resize or redraw its terminal; the initial presentation changes establish a new baseline without updating recency. Selecting a project, dragging rows and changing sort modes do not count as work. Terminal contents are not saved with navigation preferences.
 
 Working project names use bold accent text with a broad, brighter wave that sweeps back and forth across the letters. The working count also uses the accent color, so activity remains recognizable between wave peaks. Idle, completed and disconnected agents do not animate; a confirmed pending question shows a static amber **?**, and an approval request shows **!**. Idle or completed agents have no icon. Generic blocked lifecycle flags do not request attention. The grid remains visible behind every row.
 
 A small orbiting star appears beside each working project: a steady central spark with a bright point and fading trail moving around it. It uses the current theme and the same animation clock as the text. Reduced motion keeps the icon static; it disappears when the project is no longer working.
 
-Imported Herdr metadata is queried in read-only batches per session, including projects that have not been selected. Known Codex/Claude panes also use a bounded 32-line current detection footer to override stale lifecycle flags. Native agents use explicit terminal state when available; Codex/Claude activity can also be read from their status footer on the project host. Native helpers return state metadata and a fingerprint; imported footer text is discarded after classification and hashing. Footer recognition depends on the harness keeping its current status wording; unrecognized agents stay static rather than being marked busy just because their process is alive. Summaries refresh in the background, roughly every two seconds.
+Imported the agent multiplexer metadata is queried in read-only batches per session, including projects that have not been selected. Known Codex/Claude panes also use a bounded 32-line current detection footer to override stale lifecycle flags. Native agents use explicit terminal state when available; Codex/Claude activity can also be read from their status footer on the project host. Native helpers return state metadata and a fingerprint; imported footer text is discarded after classification and hashing. Footer recognition depends on the harness keeping its current status wording; unrecognized agents stay static rather than being marked busy just because their process is alive. Summaries refresh in the background, roughly every two seconds.
 
 The wave completes a back-and-forth cycle in about 5.3 seconds only while a project is working. Decorative updates pause for 150 ms after typing, and stop entirely when no projects are busy. `STARFLUX_REDUCED_MOTION=1` keeps the working count and a static text tint without animation. Unicode names retain their full text shaping and use a whole-name color pulse.
 
-`python3 scripts/test-activity-wave.py` verifies changing working-name pixels, static idle/waiting rows, activity transitions, idle timer suspension, and reduced motion using a disposable Herdr API fixture. It does not attach to original Herdr sessions. `python3 scripts/test-agent-activity.py` checks native working/idle/approval detection against a disposable terminal fixture and verifies that only metadata leaves the helper. Evidence is in `target/activity-wave-proof`.
+`python3 scripts/test-activity-wave.py` verifies changing working-name pixels, static idle/waiting rows, activity transitions, idle timer suspension, and reduced motion using a disposable the agent multiplexer API fixture. It does not attach to original agent-multiplexer sessions. `python3 scripts/test-agent-activity.py` checks native working/idle/approval detection against a disposable terminal fixture and verifies that only metadata leaves the helper. Evidence is in `target/activity-wave-proof`.
 
 ## Terminal response time
 
@@ -86,19 +86,19 @@ The older offscreen path is available only with `STAR_TERMINAL_RENDERER=kitty-pi
 
 The **Agent** space has its own agent tabs and a **+ Agent** button. Each additional agent owns a separate persistent terminal session, starts in the same project directory on the same local or SSH host, and keeps running when another agent or project is selected. New Codex agents start with a fresh conversation; the original agent keeps its existing conversation and launch command. They share the project files, terminal tabs, Git view and app desktop.
 
-Click an agent tab to switch; status dots show its health. Right-click to rename or focus the agent, or create another. When the strip fills, the arrow controls cycle through all agents. Names, selected agent and session identities survive closing/reopening the workspace. Additional agents and shell tabs use separate session IDs. **Attach agent** operates on the selected agent, and `--stop` cleans up every native agent in that project while preserving imported Herdr terminals.
+Click an agent tab to switch; status dots show its health. Right-click to rename or focus the agent, or create another. When the strip fills, the arrow controls cycle through all agents. Names, selected agent and session identities survive closing/reopening the workspace. Additional agents and shell tabs use separate session IDs. **Attach agent** operates on the selected agent, and `--stop` cleans up every native agent in that project while preserving imported agent-multiplexer terminals.
 
 Keyboard forwarding preserves uppercase letters and shifted punctuation in Kitty panes, including events where the terminal has already translated the character without a Shift modifier. Synthetic Shift is released after key-up. The experimental direct renderer uses the same Control/Alt modifier contract as the frontend.
 
 Returning to the workspace from another desktop window automatically restores keyboard capture and native focus to the selected agent or terminal. Split panes retain the selected half. Resizes during window switching defer focus until the new scene is available. Rename and launch dialogs keep their text-field focus; a context menu dismisses on window blur before terminal focus is restored. Ctrl+Esc still releases input until you click the pane or activate the workspace again. The installed CORE candidate supports the explicit local `focus-canvas:terminals` activation notice; the portable baseline remains compatible with click-to-focus frontends.
 
-`python3 scripts/test-multiple-agents.py` checks real GPU panes with two disposable agents per project, uppercase/Shift/punctuation and Control/Alt bytes, separate input, matching working directories, rename controls and persistent process IDs after controller restart. It covers local and authenticated loopback SSH projects without touching original Herdr sessions. Evidence is in `target/multi-agent-proof`.
+`python3 scripts/test-multiple-agents.py` checks real GPU panes with two disposable agents per project, uppercase/Shift/punctuation and Control/Alt bytes, separate input, matching working directories, rename controls and persistent process IDs after controller restart. It covers local and authenticated loopback SSH projects without touching original agent-multiplexer sessions. Evidence is in `target/multi-agent-proof`.
 
 ## Project menus and repository state
 
 The wordmark is **S T A R / F L U X**. Right-click a project in the sidebar or its header to rename it, open its agent, terminals or app space, or create another project. Right-click a terminal tab to rename it, focus it, split/unsplit, or add a tab. Menus use the active theme, single borders and inset selection. Use arrows and Enter, or the mouse; Escape and outside clicks dismiss without passing input through to a session.
 
-Project and terminal names are durable display labels. Renaming retains workspace/session IDs and running processes; imported Herdr names remain unchanged. Names accept up to 64 characters, including Unicode.
+Project and terminal names are durable display labels. Renaming retains workspace/session IDs and running processes; imported agent-multiplexer names remain unchanged. Names accept up to 64 characters, including Unicode.
 
 The active project header shows its Git branch, staged/unstaged/untracked file counts, tracked additions/deletions and ahead/behind counts. Click that status line to open the working-tree inspector: separate staged and unstaged line totals, file-by-file index/worktree status, rename paths, conflicts, merge/rebase state, stashes, upstream and the latest commit. Scroll the file list; **r** refreshes and **Escape** closes. Untracked contents are counted as files and excluded from line totals. Binary changes are included in changed-file counts.
 
@@ -141,7 +141,7 @@ The selected project's app host is audible even while its terminal view is selec
 For a workspace on another machine, run the frontend on the machine whose speakers you want to use:
 
 ```sh
-starflux --ssh HOST --workspace herdr-default-wV
+starflux --ssh HOST --workspace <multiplexer>-default-wV
 # A custom server installation:
 starflux --ssh HOST --remote-executable /path/to/starflux --workspace NAME
 ```
@@ -165,7 +165,7 @@ starflux --app-list my-app
 
 The identity must match the viewer's project workspace. This uses a separate local control socket, waits for a new window and reports it as JSON. A viewer may remain attached throughout. The worker injects its private display and D-Bus environment. Run this command through SSH on a remote app host; configure the project's app host/helper in **Launch app** so the local viewer connects to that same desktop. The helper must be installed on that host. `--app-list` starts an empty desktop if none exists.
 
-The Zendocon checkout includes `python3 tools/run_in_starflux.py` (default desktop `herdr-default-w8`) and `docs/starflux-app-space.md`. It launches the existing cartridge, without rebuilding or replacing the game.
+The Zendocon checkout includes `python3 tools/run_in_starflux.py` (default desktop `<multiplexer>-default-w8`) and `docs/starflux-app-space.md`. It launches the existing cartridge, without rebuilding or replacing the game.
 
 STAR/CORE's GPU frontend is opt-in with `STAR_GRAPHICS_RENDERER=gpu starflux ...`. The installed candidate includes GPU support. Kitty and the private app compositor have independent renderers; enabling the frontend does not enable hardware video encoding or make emulator logic run on the GPU.
 
@@ -196,11 +196,11 @@ Already-running controllers keep the executable they started with. To adopt App 
 
 The transport has been checked with loopback SSH; this does not establish latency or graphics-device compatibility on a separate remote host. Broader lifecycle and release hardening stay in `TASKS.md`.
 
-## Import an existing Herdr session for testing
+## Import an existing agent-multiplexer session for testing
 
-`starflux --import-herdr` imports the default Herdr session into a separate `herdr-default` collection. It preserves workspace labels/order, directories, tab labels and terminal identities. The import prints the workspace to open. Native test/proof projects are excluded from this collection.
+`starflux --import-agent-mux` imports the default agent-multiplexer session into a separate `<multiplexer>-default` collection. It preserves workspace labels/order, directories, tab labels and terminal identities. The import prints the workspace to open. Native test/proof projects are excluded from this collection.
 
-Imported panes use `herdr terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. Herdr must remain running. No `--takeover` flag is used. Legacy Agent shortcuts migrate to their matching terminal tab, sharing one attachment. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/FLUX project never stops its original Herdr terminals.
+Imported panes use `<multiplexer> terminal attach` against the existing terminal ID through Kitty by default, or a direct PTY when explicitly selected. They are interactive links to the same running shells and agents, not restarted or copied conversations. The agent multiplexer must remain running. No `--takeover` flag is used. Legacy Agent shortcuts migrate to their matching terminal tab, sharing one attachment. Pasted text uses the attached Kitty, or the direct PTY paste socket in experimental direct mode, with bracketed paste and no automatic Enter. Stopping the STAR/FLUX project never stops its original agent-multiplexer terminals.
 
 The project sidebar follows the saved activity direction and keeps the collection visible. Wheel scrolling in a shorter list does not change the active project. The test import contains 20 workspaces, 24 original tabs/panes and 16 detected agents. The initial read-only mirrors were replaced after input testing; those mirrors are no longer the normal imported-terminal path.
 
@@ -208,7 +208,7 @@ The project sidebar follows the saved activity direction and keeps the collectio
 
 `python3 scripts/test-font-inheritance.py` records real Kitty font/DPI queries and compares them with the negotiated terminal sizes/cells for both the normal user configuration and a Liberation Mono override. Native Kitty and STAR/FLUX screenshots are saved in `target/font-inheritance-proof`.
 
-`python3 scripts/test-project-sidebar.py` uses 20 disposable projects with imported labels to verify that all project rows remain visible, the final row can be selected directly, and switching preserves order. Screenshots and results are in `target/sidebar-proof`. It does not attach to or type into original Herdr sessions.
+`python3 scripts/test-project-sidebar.py` uses 20 disposable projects with imported labels to verify that all project rows remain visible, the final row can be selected directly, and switching preserves order. Screenshots and results are in `target/sidebar-proof`. It does not attach to or type into original agent-multiplexer sessions.
 
 Image drops accept local file lists and PNG/JPEG/WebP/GIF image data. When Kitty reports files from a different machine, STAR/CORE requests their bytes and stages private copies on the workspace host before delivery to the selected terminal or app. Original files are retained; the application sends no Enter. Browser image drags can fall back from their web URL to offered image bytes. Remote folders and symlinks are rejected explicitly. URI metadata is limited to 1 MiB, direct image data to 32 MiB, and remote staging to 64 files / 256 MiB total; destination uploads retain their existing 64 MiB per-file limit.
 
@@ -222,7 +222,7 @@ The Linux compositor advertises DMA-BUF v4 render-device feedback so embedded Ki
 
 ## Native terminal rendering
 
-Terminals now follow the PTY/cell model used by Herdr: the backend tracks the terminal screen, sends styled row updates, and the host Kitty renders the actual text with its native font engine. A cell-aligned transparent opening in the graphical chrome exposes Kitty's text. There is no offscreen Kitty, Wayland compositor, screenshot readback, PNG delta encoder, or video decoder in the default terminal path. App space retains its separate virtual desktop, GPU renderer, SSH video and audio transport.
+Terminals now follow the PTY/cell model used by the agent multiplexer: the backend tracks the terminal screen, sends styled row updates, and the host Kitty renders the actual text with its native font engine. A cell-aligned transparent opening in the graphical chrome exposes Kitty's text. There is no offscreen Kitty, Wayland compositor, screenshot readback, PNG delta encoder, or video decoder in the default terminal path. App space retains its separate virtual desktop, GPU renderer, SSH video and audio transport.
 
 Selection, wide/combining characters, ANSI colors, bold, dim, italic, underline, cursor position, bracketed paste, menu keys, splits and file staging use the PTY state. Only changed rows cross the connection. Producer polling is independent of periodic chrome redraws. The terminal header shows the current font family and opens a system monospace picker on the display computer. Its minus/plus controls adjust the current Kitty OS window's native font size, with reset in the picker. The local STAR/FLUX helper and font watcher acknowledge applied changes after resize presentation; an outdated helper must be updated on the listening machine, including SSH clients. Kitty font families apply to all windows in its process, as stated in the picker; size changes stay window-local. The installer versions watcher paths so a configuration reload loads the upgrade. Font choices are runtime-only and do not rewrite Kitty's configured fonts.
 
@@ -283,28 +283,28 @@ server. The synthetic app-transport unit test verifies local/shared and remote/i
 viewers, independent frame acknowledgments and disconnects without starting a
 compositor, audio device, GUI window or real agent.
 
-## Live migration out of Herdr
+## Live migration out of the agent multiplexer
 
-`--import-herdr` keeps Herdr as the terminal owner. To remove that dependency on a
+`--import-agent-mux` keeps the agent multiplexer as the terminal owner. To remove that dependency on a
 Linux host, build the small helper with `scripts/build-pty-proxy`, then use
-`starflux --plan-herdr-migration` to validate and back up the default session, or
-`starflux --migrate-herdr` to prepare and apply the transfer.
+`starflux --plan-agent-mux-migration` to validate and back up the default session, or
+`starflux --migrate-agent-mux` to prepare and apply the transfer.
 
-The migration uses Herdr 0.9.1's Unix handoff version 1, protocol 22. It receives
+The migration uses the agent multiplexer 0.9.1's Unix handoff version 1, protocol 22. It receives
 the original PTY masters before the source releases them, stages native proxies
 inside STAR-owned tmux sessions, and commits only after every proxy is connected.
 The original shell and agent processes keep their PIDs, working state and native
 conversations. tmux handles terminal parsing, history and multiple viewers; the
-PTY owner waits on descriptor readiness and does not render or poll Herdr. The
+PTY owner waits on descriptor readiness and does not render or poll the agent multiplexer. The
 proxy is a libc-only C executable with no periodic wakeup timer. Agent status
-queries go directly to the native owner instead of launching Herdr CLI processes.
+queries go directly to the native owner instead of launching the agent multiplexer CLI processes.
 
 STAR/FLUX frontends refresh behind a migration gate while terminal ownership
 changes. Legacy frontends receive a private view identity and restore their
-selected project. Herdr UI-only clients for that session are retired; the server
+selected project. The agent multiplexer UI-only clients for that session are retired; the server
 exits through its handoff protocol. Its saved default layout is archived and
-replaced by an empty layout only after commit, preventing an accidental Herdr
-launch from restarting duplicate agents. Other Herdr sessions are untouched.
+replaced by an empty layout only after commit, preventing an accidental the agent multiplexer
+launch from restarting duplicate agents. Other agent-multiplexer sessions are untouched.
 
 Backups, the live handoff manifest (including agent session references), screens,
 original PIDs and ownership status are stored privately under
@@ -315,7 +315,7 @@ Existing agent memory remains allocated because those agents remain alive.
 Recent visible screens are carried into tmux; the agent's own conversation and
 history remain in its existing process.
 
-`scripts/test-herdr-adoption.py` uses an isolated Herdr server and fake shells,
+`scripts/test-agent-mux-adoption.py` uses an isolated the agent multiplexer server and fake shells,
 without windows or real agent input. It verifies rollback after descriptor
 receipt, original-PID preservation, old-server exit, post-transfer input/native
 inspection, frontend restoration and retirement of the old restore snapshot.

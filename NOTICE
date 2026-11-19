@@ -10,4 +10,4 @@ Copyright (c) 2019 Timon, under the MIT License.
 See vendor/crossterm/LICENSE.
 
 STAR/CORE and other dependencies retain their own licenses.
-No Herdr implementation source is included in this demo.
+No third-party agent multiplexer implementation source is included in this demo.

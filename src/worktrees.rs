@@ -298,7 +298,7 @@ fn repository_origin(config: &Config) -> Result<String> {
             .collect(),
     );
     root.agent = None;
-    root.herdr = None;
+    root.agent_mux = None;
     root.tmux = None;
     root.adopted.clear();
     root.project_host = true;
@@ -369,7 +369,7 @@ pub fn open(config: &Config, target: &Value) -> Result<Config> {
                 .into(),
         );
         destination.agent = None;
-        destination.herdr = None;
+        destination.agent_mux = None;
         destination.tmux = None;
         destination.adopted.clear();
         destination.project_host = true;

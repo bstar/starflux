@@ -171,10 +171,10 @@ pub fn screen_observation(command: Command) -> Option<(String, String)> {
 pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
     let mut activity = BTreeMap::new();
     let mut sources = BTreeMap::new();
-    // Imported agents are read in one batch for the whole Herdr session.
+    // Imported agents are read in one batch for the whole multiplexer session.
     for project in projects {
         activity.insert(project.workspace.clone(), Activity::default());
-        if let Some(source) = &project.herdr {
+        if let Some(source) = &project.agent_mux {
             sources
                 .entry((source.executable.clone(), source.session.clone()))
                 .or_insert(source);
@@ -199,13 +199,13 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
             && let Some(agents) = data["result"]["snapshot"]["panes"].as_array()
         {
             for project in projects.iter().filter(|p| {
-                p.herdr.as_ref().is_some_and(|h| {
+                p.agent_mux.as_ref().is_some_and(|h| {
                     h.session == source.session && h.executable == source.executable
                 })
             }) {
                 let state = activity.get_mut(&project.workspace).unwrap();
                 state.source_sequence = project
-                    .herdr
+                    .agent_mux
                     .as_ref()
                     .and_then(|h| sequences.get(&h.workspace_id))
                     .copied()
@@ -213,7 +213,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                 state.available = true;
                 for agent in agents.iter().filter(|a| {
                     Some(a["workspace_id"].as_str().unwrap_or(""))
-                        == project.herdr.as_ref().map(|h| h.workspace_id.as_str())
+                        == project.agent_mux.as_ref().map(|h| h.workspace_id.as_str())
                 }) {
                     let profile = agent["agent"].as_str();
                     let observed = agent["pane_id"]
@@ -234,7 +234,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                         .or_else(|| agent["pane_id"].as_str())
                         .unwrap_or("agent");
                     state.signals.insert(
-                        format!("herdr:{id}"),
+                        format!("{}:{id}", crate::agent_mux::PROGRAM),
                         format!(
                             "{}:{}",
                             observed
@@ -261,7 +261,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
             .chain(state.terminals.iter().copied())
             .filter(|id| {
                 !project
-                    .herdr
+                    .agent_mux
                     .as_ref()
                     .is_some_and(|h| h.panes.contains_key(id))
             })

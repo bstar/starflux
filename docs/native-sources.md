@@ -2,7 +2,7 @@
 
 The retained native PTY owner and its streaming connector are implemented as an
 internal component. The normal workspace still uses its existing terminal
-backends. These entry points do not migrate existing tmux/Herdr/transferred
+backends. These entry points do not migrate existing tmux/agent-multiplexer/transferred
 terminals or enable inline graphics in the installed UI.
 
 ## Candidate recovery and compatibility (November 6)
@@ -215,7 +215,7 @@ refusal, not completed broker/owner-loss recovery.
 Private local/SSH automation and real graphical/cells confirmation dialogs pass,
 including independent views, replay guards and empty-project reopening. Real Bash
 job control and foreground command/directory checks also pass. Source and evidence
-identities are saved in `checkpoints/native-process-supervision/receipt.json`.
+identities are saved in the `native-process-supervision` checkpoint (merged on 2026-11-19; kept in git history).
 This is still uninstalled: the candidate must be rebased onto current application
 settings/presentation and complete the remaining native ownership, metadata,
 graphics and release gates before activation.
@@ -238,7 +238,7 @@ both views. This is link forwarding, not general clipboard/title/notification
 forwarding or completed native source migration.
 
 Source patches and reproducible validation identities are saved separately in
-`checkpoints/native-hyperlinks/`. Apply it after the supervision stage; that
+the `native-hyperlinks` checkpoint (merged on 2026-11-19; kept in git history). Apply it after the supervision stage; that
 earlier stage's historical evidence is not reused as proof of the new metadata.
 The installed backend remains unchanged, and the candidate still requires current
 application/UI rebasing and the remaining ownership, graphics and release gates.
@@ -272,7 +272,7 @@ using a deleted path or accidentally executing its replacement. Private local
 and SSH tests unlink an owner copy before opening supervised sources.
 
 This stage's source and validation identities are in
-`checkpoints/native-metadata/`. It remains uninstalled; broader owner-loss/adoption,
+the `native-metadata` checkpoint (merged on 2026-11-19; kept in git history). It remains uninstalled; broader owner-loss/adoption,
 attention forwarding, graphics compatibility, current application/UI rebasing and
 canonical release/Nix gates remain before activation.
 
@@ -294,7 +294,7 @@ Ordinary startup failure for a saved native reference now retains a read-only
 health monitor, exposing the existing recovery menu/confirmation without another
 attempt to run its command. Termination retains its separate retirement gate.
 
-Source and validation identities are saved in `checkpoints/native-launch-fence/`.
+Source and validation identities are saved in the `native-launch-fence` checkpoint (merged on 2026-11-19; kept in git history).
 This remains an uninstalled stage. General owner-loss recovery still needs
 verified process-tree retirement/adoption evidence; absence of a broker or PID
 is not sufficient proof. Remaining migration, presentation rebasing and release
@@ -324,7 +324,7 @@ unsupported owners refuse replacement. Supervisor loss does not become safe
 merely because the broker and PTY also disappeared. Verification sends no signals;
 existing live owners are never killed or upgraded to satisfy a new client.
 
-Source/evidence identities are in `checkpoints/native-owner-loss/`. The stage is
+Source/evidence identities are in the `native-owner-loss` checkpoint (merged on 2026-11-19; kept in git history). The stage is
 still uninstalled. Missing-certificate and pre-supervisor startup uncertainty,
 broader adoption, remaining attention/graphics/history/network cases, current
 UI/core configuration rebasing and canonical release/Nix acceptance remain gates.
@@ -344,7 +344,7 @@ with native sources pass; the private Gruvbox Dark reference PNG is byte-identic
 to the installed build's rendering. Native lifecycle/link/metadata and portfolio
 regressions pass on the rebase. The immutable shared pin and Cargo.lock are unchanged.
 
-`checkpoints/native-rebased/` reconstructs this candidate directly from the current
+the `native-rebased` checkpoint (merged on 2026-11-19; kept in git history) reconstructs this candidate directly from the current
 canonical commit plus its saved UI patch; do not apply earlier native patches on
 top of it. It is still uninstalled. Remaining recovery/adoption, attention,
 graphics/history/network/media and canonical release/Nix gates remain before
@@ -363,7 +363,7 @@ precedence. The user can explicitly resume the saved conversation in a new tab.
 Native-enabled cold-runtime acceptance verifies real recovery confirmations,
 split restoration, historical screens, exact resume and saved-command non-replay
 locally and over SSH in cells mode. Legacy lifecycle acceptance also passes.
-`checkpoints/native-conversation-recovery/` archives the incremental source and
+the `native-conversation-recovery` checkpoint (merged on 2026-11-19; kept in git history) archives the incremental source and
 fixtures separately from the rebased stage. The complete release gate and the
 new increment's Nix checks have separate logs; the earlier Nix pass applies only
 to the preceding source. Production integration and the broader unfinished goal

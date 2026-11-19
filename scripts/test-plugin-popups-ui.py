@@ -5,7 +5,7 @@ def api(method,params=None,write=False,ok=True,operation=None):
     request=dict(version=1,id='plugin-popup-ui',method=method,params=params or {})
     if write:request['operation_id']=operation or str(uuid.uuid4())
     command=[str(app),'--api',json.dumps(request)]
-    if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STARFLUX_HERDR') if k in env],*command])]
+    if args.ssh:command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','PATH','STARFLUX_AGENT_MUX') if k in env],*command])]
     result=json.loads(subprocess.check_output(command,env=env,timeout=20));assert result['ok']==ok,result
     return result.get('result',result.get('error'))
 def menu(client=None):return (client or a).snapshot().get('context_menu') or {}

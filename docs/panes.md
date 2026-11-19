@@ -51,7 +51,7 @@ Choose **Terminate terminal…** in the tab menu and type **TERMINATE**. The con
 
 Termination verifies the terminal generation and the process identity, including its process start time. If the target was replaced while confirmation was open, the operation is rejected. Ordinary backend termination runs outside the UI's model lock and the host verifies identity again before stopping its session. Completion cannot remove a newly reused slot or stop its new monitor.
 
-Imported tmux/Herdr terminals retain their source ownership and do not expose this action. Transferred terminals owned by STAR/FLUX can be terminated individually; the PTY broker and sibling terminal owners are retained.
+Imported tmux/agent-multiplexer terminals retain their source ownership and do not expose this action. Transferred terminals owned by STAR/FLUX can be terminated individually; the PTY broker and sibling terminal owners are retained.
 
 Movement between projects or separate tab groups remains on the parity roadmap. Directional moves exchange terminal positions. Edge placement changes the split tree within the current project.
 

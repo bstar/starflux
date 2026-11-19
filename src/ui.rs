@@ -70,7 +70,7 @@ enum Event {
         crate::refresh::MachineSwitch,
         std::result::Result<(), String>,
     ),
-    HerdrIdentity(Instant, String, std::result::Result<Value, String>),
+    AgentMuxIdentity(Instant, String, std::result::Result<Value, String>),
     CategoryAgentBadges(BTreeMap<String, String>),
     CategoryAgent(Instant, String, std::result::Result<Value, String>),
     Plugins(Instant, String, std::result::Result<Value, String>),
@@ -304,7 +304,7 @@ pub struct Workspace {
     rx: Receiver<Event>,
     tx: Sender<Event>,
     health: BTreeMap<(String, usize), Value>,
-    herdr_identity_request: Option<Instant>,
+    agent_mux_identity_request: Option<Instant>,
     registered: BTreeSet<(String, usize)>,
     session_monitors: BTreeMap<(String, usize), Arc<AtomicBool>>,
     session_capture: BTreeMap<(String, usize), Arc<AtomicBool>>,
@@ -561,7 +561,7 @@ impl Workspace {
             rx,
             tx: controller_tx,
             health: BTreeMap::new(),
-            herdr_identity_request: None,
+            agent_mux_identity_request: None,
             registered: BTreeSet::new(),
             session_monitors: BTreeMap::new(),
             session_capture: BTreeMap::new(),
@@ -1031,7 +1031,7 @@ impl Workspace {
             let mut any = false;
             for pane in state.terminal_ids().into_iter().filter(|id| {
                 !project
-                    .herdr
+                    .agent_mux
                     .as_ref()
                     .is_some_and(|h| h.panes.contains_key(id))
             }) {
@@ -1048,7 +1048,7 @@ impl Workspace {
                     }
                 }
             }
-            if any && project.herdr.is_none() {
+            if any && project.agent_mux.is_none() {
                 result = native;
             }
         }
@@ -1100,7 +1100,7 @@ impl Workspace {
             return Ok(());
         }
         let aliases = config
-            .herdr
+            .agent_mux
             .as_ref()
             .map(|source| {
                 source
@@ -1111,7 +1111,7 @@ impl Workspace {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if let Some(source) = &mut config.herdr {
+        if let Some(source) = &mut config.agent_mux {
             source.panes.retain(|id, _| !aliases.contains(id));
         }
         state.reserved_slots.retain(|id| !aliases.contains(id));
@@ -1333,7 +1333,7 @@ impl Workspace {
                             closed = true;
                         }
                     }
-                    if config.herdr.is_some() && value["alive"] == true {
+                    if config.agent_mux.is_some() && value["alive"] == true {
                         if let (Some(id), Some(pid), Some(start)) = (
                             value["terminal_id"].as_str(),
                             value["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
@@ -1494,7 +1494,7 @@ impl Workspace {
             self.app_view_available,
             "App view is unavailable in this presentation"
         );
-        config.herdr = None;
+        config.agent_mux = None;
         let key = app_key(&config);
         if !self.app_hosts.contains_key(&key) {
             let client = AppClient::connect(&config)?;
@@ -1675,7 +1675,7 @@ impl Workspace {
         } else {
             space
         };
-        if self.config.herdr.is_some() {
+        if self.config.agent_mux.is_some() {
             self.ensure_sessions();
         }
         if self.state.space == Space::Apps {
@@ -2705,7 +2705,7 @@ impl Workspace {
             ],
             Prompt::RenameSession(_, name) => vec![field("Session name", name.clone())],
             Prompt::DeleteSession(_) => vec![field(
-                "Stops owned terminals/apps; preserves tmux/Herdr sources. Type DELETE",
+                "Stops owned terminals/apps; preserves tmux/agent-multiplexer sources. Type DELETE",
                 String::new(),
             )],
             Prompt::RecoverTerminal(_, pane, _) => vec![field(
@@ -3277,7 +3277,7 @@ impl Workspace {
                         workspace: values[0].clone(),
                         label: None,
                         collection: self.config.collection.clone(),
-                        herdr: None,
+                        agent_mux: None,
                         tmux: None,
                         adopted: Default::default(),
                         native_terminals: false,
@@ -3516,7 +3516,7 @@ impl Workspace {
             .filter(|cwd| !cwd.is_empty())
             .or_else(|| {
                 config
-                    .herdr
+                    .agent_mux
                     .as_ref()?
                     .panes
                     .get(&pane)
@@ -3566,7 +3566,7 @@ impl Workspace {
             .or_else(|| self.state.agent_labels.get(&id).cloned())
             .or_else(|| {
                 self.config
-                    .herdr
+                    .agent_mux
                     .as_ref()
                     .and_then(|h| h.panes.get(&id))
                     .map(|p| p.label.clone())
@@ -3818,7 +3818,7 @@ impl Workspace {
                         .filter(|_| {
                             !self
                                 .config
-                                .herdr
+                                .agent_mux
                                 .as_ref()
                                 .is_some_and(|h| h.panes.contains_key(&id))
                         })
@@ -4183,18 +4183,18 @@ impl Workspace {
                     action: "menu:panel".into(),
                 });
             }
-            self.herdr_identity_request = None;
+            self.agent_mux_identity_request = None;
             let canonical = self.config.canonical_pane(pane);
             if let Some(source) = self
                 .config
-                .herdr
+                .agent_mux
                 .as_ref()
                 .filter(|s| s.panes.contains_key(&canonical))
             {
                 let token = Instant::now();
-                self.herdr_identity_request = Some(token);
+                self.agent_mux_identity_request = Some(token);
                 items.push(crate::shelf::MenuItem {
-                    label: "Checking Herdr process identity…".into(),
+                    label: "Checking multiplexer process identity…".into(),
                     hint: String::new(),
                     action: "menu:panel".into(),
                 });
@@ -4205,7 +4205,7 @@ impl Workspace {
                     let result = source
                         .inspect_identity(canonical)
                         .map_err(|e| format!("{e:#}"));
-                    let _ = tx.send(Event::HerdrIdentity(token, project, result));
+                    let _ = tx.send(Event::AgentMuxIdentity(token, project, result));
                 });
             }
             self.release();
@@ -4674,10 +4674,10 @@ impl Workspace {
                 ensure!(
                     !self
                         .config
-                        .herdr
+                        .agent_mux
                         .as_ref()
                         .is_some_and(|h| h.panes.contains_key(&pane)),
-                    "Imported terminals remain managed by Herdr"
+                    "Imported terminals remain managed by multiplexer"
                 );
                 let config = self.config.clone();
                 let tx = self.tx.clone();
@@ -5702,7 +5702,8 @@ impl Controller for Workspace {
                         }
                     } else {
                         self.note(
-                            "Session deleted / external tmux and Herdr sessions preserved".into(),
+                            "Session deleted / external tmux and multiplexer sessions preserved"
+                                .into(),
                         );
                     }
                 }
@@ -5841,7 +5842,7 @@ impl Controller for Workspace {
                     if self.navigation.closed_projects.contains(&config.workspace) {
                         continue;
                     }
-                    if config.herdr.is_none()
+                    if config.agent_mux.is_none()
                         || (config.workspace == self.config.workspace
                             && self.visible_panes().iter().any(|(id, _)| *id == pane))
                     {
@@ -5917,28 +5918,28 @@ impl Controller for Workspace {
                     }
                     self.note("Terminal terminated / other sessions retained".into());
                 }
-                Event::HerdrIdentity(token, project, result) => {
-                    if self.herdr_identity_request == Some(token)
+                Event::AgentMuxIdentity(token, project, result) => {
+                    if self.agent_mux_identity_request == Some(token)
                         && self.config.workspace == project
                         && let Some(menu) = self
                             .context_menu
                             .as_mut()
                             .filter(|m| m.title == "Agent status")
                     {
-                        self.herdr_identity_request = None;
+                        self.agent_mux_identity_request = None;
                         if let Some(item) = menu.items.last_mut() {
                             item.label = match result {
                                 Ok(health) if health["pid"].is_number() => format!(
-                                    "Herdr pane {} · shell PID {}",
+                                    "Multiplexer pane {} · shell PID {}",
                                     health["pane_id"].as_str().unwrap_or("unknown"),
                                     health["pid"]
                                 ),
                                 Ok(health) => health["identity_error"]
                                     .as_str()
-                                    .unwrap_or("Herdr process identity unavailable")
+                                    .unwrap_or("Multiplexer process identity unavailable")
                                     .into(),
                                 Err(error) => {
-                                    format!("Herdr process identity unavailable · {error}")
+                                    format!("Multiplexer process identity unavailable · {error}")
                                 }
                             };
                             item.hint = "Read only".into();
@@ -6093,7 +6094,7 @@ impl Controller for Workspace {
                         .projects
                         .iter()
                         .find(|config| &config.workspace == project)
-                        .and_then(|config| config.herdr.as_ref())
+                        .and_then(|config| config.agent_mux.as_ref())
                         .is_some_and(|source| source.panes.contains_key(pane))
             })
             .map(|(key, _)| key.clone())
@@ -6384,7 +6385,7 @@ impl Controller for Workspace {
                     .collect::<Vec<_>>();
                 let apps=self.app_hosts.iter().filter(|(_,h)|h.config.workspace==self.config.workspace).map(|(key,h)|json!({"key":key,"host":h.config.host,"connected":h.client.connected.load(Ordering::Acquire),"transport_pid":h.client.transport_pid(),"worker_pid":*h.client.pid.lock().unwrap(),"windows":h.windows,"layout":h.layout,"selected":h.selected,"focus_known":h.focus_known})).collect::<Vec<_>>();
                 let sessions=self.state.terminal_ids().into_iter().map(|i| { let health=self.health.get(&(self.config.workspace.clone(),self.config.canonical_pane(i))); json!({"pane":i,"agent":health.is_some_and(|h| h["agent"].as_str().is_some() && h["alive"]==true),"health":health}) }).collect::<Vec<_>>();
-                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"herdr_read_only":false,"herdr_live_attachment":self.config.herdr.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text(),"terminal_metadata":t.metadata_diagnostics()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
+                let mut snapshot = json!({"workspace":self.workspace_id,"active_project":self.config.workspace,"project_label":self.config.label,"project_activity":self.projects.iter().map(|p|(&p.workspace,self.project_activity(p))).collect::<BTreeMap<_,_>>(),"wave_phase":self.wave_phase,"reduced_motion":self.reduced_motion,"collection":self.config.collection,"project_order":self.projects.iter().map(|p|&p.workspace).collect::<Vec<_>>(),"project_page":self.project_offset,"project_navigation":{"kind":"sidebar","sort":if self.navigation.recent{"recent"}else{"manual"},"high_first":self.navigation.high_first,"hover":self.sort_hover,"mode_hover":self.sort_mode_hover,"manual_order":self.navigation.manual_order,"dragging":self.project_drag.as_ref().filter(|d|d.moved).map(|d|&d.id),"last_activity":self.projects.iter().map(|p|(&p.workspace,self.navigation.last_activity(&p.workspace))).collect::<BTreeMap<_,_>>(),"scroll":self.project_offset,"visible":self.projects.iter().skip(self.project_offset).take(self.project_page_size).map(|p|&p.workspace).collect::<Vec<_>>(),"sidebar_width":crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).sidebar.width},"agent_mux_read_only":false,"agent_mux_live_attachment":self.config.agent_mux.is_some(),"controller_pid":std::process::id(),"panes":panes,"active":self.state.selected(),"status":self.status,"terminal_presentation":{"fps":self.settings.fps,"transport":self.terminal_transport,"app_video":if self.video_capable && !self.video_failed{"h264-60fps"}else{"frames"},"app_video_packets":self.video.counters().0,"app_video_credits":self.video.counters().1,"app_shared_frames":self.active_app.as_ref().and_then(|k|self.app_hosts.get(k)).is_some_and(|h|h.client.shared_frames.load(Ordering::Acquire)),"burst_fps":if self.settings.fps>=60{125}else{30},"canvas":[crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.width,crate::shelf::Layout::new(self.viewport.width as u16,self.viewport.height as u16,self.state.space).canvas.height],"frame":self.desktop.as_ref().and_then(|d|d.latest.lock().unwrap().as_ref().map(|f|[f.width,f.height])),"kitty_configuration":"user"},"audio":{"capable":self.audio_capable,"muted":self.navigation.audio_muted,"active":self.audio_route.as_ref().map(|r|&r.key),"epoch":self.audio_epoch,"blocks_sent":self.audio_route.as_ref().map(|r|r.sent),"credits":self.audio_route.as_ref().map(|r|r.credits),"failed":self.audio_failed},"terminal_typography":self.typography,"terminal_renderer":if self.desktop.is_none(){"native-kitty"}else{"kitty-pixels-legacy"},"direct_terminals":self.terminals.iter().filter(|((p,_),_)|p==&self.config.workspace).map(|((_,pane),t)|json!({"pane":pane,"attachment_pid":t.pid,"exited":t.exited,"text":t.text(),"terminal_metadata":t.metadata_diagnostics()})).collect::<Vec<_>>(),"desktop":{"width":self.settings.width,"height":self.settings.height,"windows":self.windows.len(),"project_windows":self.windows.iter().filter(|w|w.app_id.starts_with(&format!("starflux-{}-p",self.config.workspace))).collect::<Vec<_>>()},"sessions":sessions,"project_state":self.state,"apps":apps,"drop_enabled":self.drop_enabled,"history":self.history,"git":self.git_status(),"git_open":self.git_open,"git_scroll":self.git_scroll,"context_menu":self.context_menu.as_ref().map(|m|json!({"title":m.title,"bounds":m.bounds(self.viewport.width as u16,self.viewport.height as u16),"selected":m.selected,"items":m.items.iter().map(|i|json!({"label":i.label,"action":i.action})).collect::<Vec<_>>()})),"modal_open":self.modal.is_some(),"modal_field":self.modal.as_ref().map(|m|m.selected),"application_picker":self.modal.as_ref().and_then(|m|m.catalog.as_ref()).map(|c|json!({"source":c.source,"status":c.status,"query":c.query.text(),"count":c.apps.len(),"selected":c.selected,"matches":c.matches().into_iter().map(|i|&c.apps[i]).collect::<Vec<_>>()})),"appearance":{"treatment":"app-shelf","borders":"single","theme":self.config.theme,"tokens":self.appearance},"viewport":self.viewport});
                 snapshot["appearance"] = json!(self.appearance);
                 snapshot["terminal_font"] = json!({"family":self.fonts.family,"millipoints":self.native_font_points,"controls_available":self.fonts.available});
                 snapshot["modal_error"] = json!(self.modal.as_ref().map(|m| &m.error));
