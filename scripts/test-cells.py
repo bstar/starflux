@@ -191,7 +191,8 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         assert initial['project_state']['app_targets'] == legacy['app_targets']
         assert not initial['apps'] and not initial['app_view_available']
         assert initial['desktop']['windows'] == 0
-        backend_pid = initial['panes'][0]['pid']
+        # The pid arrives with the first health report, which can follow the first frame.
+        backend_pid = wait(lambda: (snapshot().get('panes') or [{}])[0].get('pid'), 'terminal pid was not reported')
         assert 'café 世界'.encode() in tty_bytes
         if args.plugin_popup:
             exec(compile((root/'scripts/test-plugin-popup-cells.py').read_text(),str(root/'scripts/test-plugin-popup-cells.py'),'exec'),globals())
