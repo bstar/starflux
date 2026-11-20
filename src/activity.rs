@@ -131,10 +131,10 @@ pub fn screen_state(text: &str) -> &'static str {
         return "waiting_for_approval";
     }
     for line in footer.lines().rev() {
-        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•■".contains(c));
-        if claude_working(line) {
+        if claude_working(line, &footer) {
             return "working";
         }
+        let line = line.trim_start_matches(|c: char| c.is_whitespace() || "│┃|●*•■".contains(c));
         if line.starts_with("automatic reconnect could not restore this session")
             || line.starts_with("server connection could not be restored")
         {
@@ -165,10 +165,17 @@ pub fn screen_state(text: &str) -> &'static str {
     "idle"
 }
 /// Claude Code's busy line: a spinner glyph, one changing verb ending in an
-/// ellipsis, then a parenthesis that offers interruption, e.g.
-/// `✻ cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)`.
-fn claude_working(line: &str) -> bool {
-    let line = line.trim_start_matches(|c: char| c.is_whitespace() || "✻✶✳✢✽·*●•+".contains(c));
+/// ellipsis, then a parenthesis, e.g.
+/// `✻ cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)`. Newer versions
+/// may show "esc to interrupt" on the hint line instead, so it may appear in
+/// the parenthesis or anywhere in the footer.
+fn claude_working(line: &str, footer: &str) -> bool {
+    const GLYPHS: &str = "✻✶✳✢✽·*●•+";
+    let line = line.trim_start();
+    if !line.starts_with(|c: char| GLYPHS.contains(c)) {
+        return false;
+    }
+    let line = line.trim_start_matches(|c: char| c.is_whitespace() || GLYPHS.contains(c));
     let Some((label, tail)) = line.split_once('(') else {
         return false;
     };
@@ -182,9 +189,8 @@ fn claude_working(line: &str) -> bool {
     !word.is_empty()
         && word.len() <= 40
         && word.chars().all(|c| c.is_alphabetic() || c == '-')
-        && tail
-            .split_once(')')
-            .is_some_and(|(inside, _)| inside.contains("esc to interrupt"))
+        && tail.contains(')')
+        && footer.contains("esc to interrupt")
 }
 pub fn screen_observation(command: Command) -> Option<(String, String)> {
     let bytes = read_output(command)?;
@@ -350,6 +356,15 @@ mod tests {
                 "{line}"
             );
         }
+        // Interruption offered on the hint line below the input box.
+        assert_eq!(
+            screen_state(
+                "✻ Clauding… (8s · ↓ 300 tokens)\n╭───╮\n│ > │\n╰───╯\n  ⏵⏵ auto mode · esc to interrupt"
+            ),
+            "working"
+        );
+        // Without a spinner glyph, an ellipsis line is ordinary output.
+        assert_eq!(screen_state("Loading… (step 2)\nesc to interrupt"), "idle");
         // A finished turn, prose that mentions interruption and a bare ellipsis are idle.
         for screen in [
             "✻ Worked for 2m 10s",
