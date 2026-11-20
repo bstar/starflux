@@ -169,7 +169,7 @@ struct Args {
     /// Project working directory on its host
     #[arg(long)]
     directory: Option<String>,
-    /// Use the retained native owner for new terminal sources (integration preview)
+    /// Accepted for older scripts; every terminal is native
     #[arg(long)]
     native_terminals: bool,
     /// Optional command to start in an initial terminal (compatibility shortcut)
@@ -339,6 +339,15 @@ fn run() -> Result<()> {
         }
         return Err(hook.args(options).exec())
             .context("Could not run the STAR/FLUX provider hook with python3");
+    }
+    if raw.get(1).is_some_and(|arg| arg == "--migrate-terminals") {
+        // Move idle terminals off the retired tmux backend; see docs/native-sources.md.
+        let dry_run = raw[2..].iter().any(|arg| arg == "--dry-run");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&native_backend::migrate_all(dry_run)?)?
+        );
+        return Ok(());
     }
     if raw.get(1).is_some_and(|arg| arg == "--prepare-pane-launch") {
         ensure!(

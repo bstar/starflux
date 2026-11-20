@@ -775,6 +775,147 @@ fn launch_spec(
     Ok(launch)
 }
 
+/// Stop an idle terminal on the retired tmux backend and return the native
+/// launch that continues it: the same shell and directory with its scrollback
+/// replayed, or the same Claude conversation resumed.
+#[cfg(target_os = "linux")]
+fn migrate_legacy(
+    config: &crate::runtime::Config,
+    pane: usize,
+    detached_only: bool,
+) -> Result<Result<(Vec<String>, PathBuf), String>> {
+    let mut request = config.request(pane, "migrate");
+    request["detached_only"] = json!(detached_only);
+    let reply = config.host_call(pane, &request)?;
+    if reply["migrated"] != true {
+        return Ok(Err(reply["reason"].as_str().unwrap_or("kept").into()));
+    }
+    let shell: Vec<String> = serde_json::from_value(reply["shell"].clone())
+        .ok()
+        .filter(|argv: &Vec<String>| !argv.is_empty() && !argv.iter().any(|arg| arg == "-c"))
+        .unwrap_or_else(|| {
+            vec![
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()),
+                "-l".into(),
+            ]
+        });
+    let continue_shell = format!("exec {}", shell_words::join(&shell));
+    let script = if let Ok(claude) = serde_json::from_value::<Vec<String>>(reply["claude"].clone())
+    {
+        let claude = if config.remote(pane) {
+            claude
+        } else {
+            crate::agent_hooks::with_session_hook(
+                claude,
+                &std::env::current_exe()?.to_string_lossy(),
+            )
+        };
+        format!("{}; {continue_shell}", shell_words::join(&claude))
+    } else {
+        let history = reply["history"]
+            .as_str()
+            .context("Migrated history missing")?;
+        let history = shell_words::quote(history);
+        format!("cat -- {history}; rm -f -- {history}; {continue_shell}")
+    };
+    let directory = PathBuf::from(
+        reply["cwd"]
+            .as_str()
+            .context("Migrated directory missing")?,
+    );
+    Ok(Ok((vec![shell[0].clone(), "-c".into(), script], directory)))
+}
+/// Move every idle terminal still on a project's retired tmux server to a
+/// native terminal. Busy terminals stay on tmux and are reported.
+#[cfg(target_os = "linux")]
+pub fn migrate_all(dry_run: bool) -> Result<Value> {
+    let sockets = PathBuf::from(std::env::var_os("TMUX_TMPDIR").unwrap_or_else(|| "/tmp".into()))
+        .join(format!("tmux-{}", unsafe { libc::getuid() }));
+    let mut report = Vec::new();
+    for config in crate::session_catalog::projects() {
+        if config.remote(0)
+            || !sockets
+                .join(format!("starflux-{}", config.workspace))
+                .exists()
+        {
+            continue;
+        }
+        let state = match crate::project_state::ProjectState::load(&config) {
+            Ok(state) => state,
+            Err(error) => {
+                report.push(json!({"project":config.workspace,"label":config.label,"result":format!("error: {error:#}")}));
+                continue;
+            }
+        };
+        for pane in state.terminal_ids() {
+            let mut entry =
+                json!({"project":config.workspace,"label":config.label,"pane":pane + 1});
+            let outcome = (|| -> Result<String> {
+                if reference(&config, pane)?.is_some()
+                    || config.externally_owned(pane)
+                    || config.adopted_terminal(pane).is_some()
+                    || crate::plugin_panes::owner(&config, pane)?.is_some()
+                {
+                    return Ok("not on tmux".into());
+                }
+                Ok(match ensure_migration(&config, pane, dry_run)? {
+                    Ok(()) if dry_run => "would migrate".into(),
+                    Ok(()) => "migrated".into(),
+                    Err(reason) => format!("stays on tmux: {reason}"),
+                })
+            })();
+            entry["result"] = match outcome {
+                Ok(result) => json!(result),
+                Err(error) => json!(format!("error: {error:#}")),
+            };
+            report.push(entry);
+        }
+    }
+    Ok(json!({"dry_run":dry_run,"terminals":report}))
+}
+#[cfg(target_os = "linux")]
+fn ensure_migration(
+    config: &crate::runtime::Config,
+    pane: usize,
+    dry_run: bool,
+) -> Result<Result<(), String>> {
+    let probe = config
+        .command(pane, &config.request(pane, "inspect"), false)
+        .output()?;
+    ensure!(
+        probe.status.success(),
+        "Could not inspect the tmux terminal"
+    );
+    let info: Value = serde_json::from_slice(&probe.stdout)?;
+    if info["state"] == "missing" {
+        return Ok(Err("no tmux terminal".into()));
+    }
+    if dry_run {
+        let mut request = config.request(pane, "migrate");
+        request["dry_run"] = json!(true);
+        request["detached_only"] = json!(true);
+        let reply = config.host_call(pane, &request)?;
+        return Ok(if reply["ready"] == true {
+            Ok(())
+        } else {
+            Err(reply["reason"].as_str().unwrap_or("kept").into())
+        });
+    }
+    match migrate_legacy(config, pane, true)? {
+        Ok(launch) => {
+            ensure!(
+                ensure_with(config, pane, Some(launch))?,
+                "Native terminal did not open"
+            );
+            Ok(Ok(()))
+        }
+        Err(reason) => Ok(Err(reason)),
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub fn migrate_all(_: bool) -> Result<Value> {
+    anyhow::bail!("Native terminals need Linux")
+}
 #[cfg(target_os = "linux")]
 fn pending_command(
     config: &crate::runtime::Config,
@@ -803,16 +944,47 @@ pub fn ensure_source(
     pane: usize,
     _agent: Option<&str>,
 ) -> Result<bool> {
+    ensure_with(config, pane, None)
+}
+/// Open a plugin's terminal as a native source running exactly `argv`.
+#[cfg(target_os = "linux")]
+pub fn open_command(
+    config: &crate::runtime::Config,
+    pane: usize,
+    argv: Vec<String>,
+    directory: PathBuf,
+) -> Result<()> {
+    ensure!(
+        ensure_with(config, pane, Some((argv, directory)))?,
+        "A backend already occupies this terminal slot; it was left unchanged"
+    );
+    Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+pub fn open_command(
+    _: &crate::runtime::Config,
+    _: usize,
+    _: Vec<String>,
+    _: PathBuf,
+) -> Result<()> {
+    anyhow::bail!("Native terminals need Linux")
+}
+/// Every STAR/FLUX terminal is a native source. A terminal that predates this
+/// and still runs in tmux keeps that session until it ends.
+#[cfg(target_os = "linux")]
+fn ensure_with(
+    config: &crate::runtime::Config,
+    pane: usize,
+    explicit: Option<(Vec<String>, PathBuf)>,
+) -> Result<bool> {
     use crate::{
         native_protocol::{Binding, Identity},
         project_state::ProjectState,
     };
-    if config.externally_owned(pane)
-        || config.adopted_terminal(pane).is_some()
-        || crate::plugin_panes::owner(config, pane)?.is_some()
-    {
+    if config.externally_owned(pane) || config.adopted_terminal(pane).is_some() {
         return Ok(false);
     }
+    let plugin = crate::plugin_panes::owner(config, pane)?.is_some();
     if let Some(target) = reference(config, pane)? {
         let ready: Pane =
             serde_json::from_value(rpc(config, pane, json!({"op":"reattach","target":target}))?)?;
@@ -826,11 +998,13 @@ pub fn ensure_source(
         state.save(config)?;
         return Ok(true);
     }
-    if !config.native_for_new_terminals(pane) {
+    // Restoring a plugin's view never reruns its command.
+    if plugin && explicit.is_none() {
         return Ok(false);
     }
-    // A pre-existing tmux session remains on its original backend, including
-    // an exited retained screen. New tabs can opt into the native owner.
+    // A terminal from the retired tmux backend moves to a native terminal
+    // once it is idle; until then (or once exited) it keeps its tmux session.
+    let mut explicit = explicit;
     let mut probe = config.command(pane, &config.request(pane, "inspect"), false);
     let out = probe.output()?;
     ensure!(
@@ -839,14 +1013,28 @@ pub fn ensure_source(
     );
     let info: Value = serde_json::from_slice(&out.stdout)?;
     if info["state"] != "missing" {
-        return Ok(false);
+        if explicit.is_some() {
+            return Ok(false);
+        }
+        match migrate_legacy(config, pane, false)? {
+            Ok(launch) => explicit = Some(launch),
+            Err(_) => return Ok(false),
+        }
     }
     // Select from shared pending metadata, not this frontend's launch hint.
     // Network/default-shell discovery stays outside the project transaction.
     let snapshot = ProjectState::load(config)?;
     let expected_epoch = snapshot.terminal_epochs.get(&pane).cloned();
-    let requested = pending_command(config, &snapshot, pane);
-    let wanted = launch_spec(config, pane, requested.as_deref())?;
+    let requested = if explicit.is_none() {
+        pending_command(config, &snapshot, pane)
+    } else {
+        None
+    };
+    let mut wanted = launch_spec(config, pane, requested.as_deref())?;
+    if let Some((argv, directory)) = explicit {
+        wanted.argv = argv;
+        wanted.directory = directory;
+    }
     let fallback = requested
         .as_ref()
         .map(|_| launch_spec(config, pane, None))

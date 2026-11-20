@@ -127,7 +127,7 @@ def main():
     if action=='capabilities':
         print(json.dumps({'tmux':has_tmux}));return
     lifecycle_lock=None
-    if action in ['ensure','restart','recover','reap','stop','terminate','input'] or (action=='attach' and req.get('ensure_shell')):
+    if action in ['ensure','restart','recover','reap','stop','terminate','input','migrate'] or (action=='attach' and req.get('ensure_shell')):
         lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))
         lock_root.mkdir(mode=0o700,exist_ok=True)
         lifecycle_lock=(lock_root/(workspace+'-'+pane+'.lock')).open('a')
@@ -275,6 +275,69 @@ def main():
                 result['saved_screen']={'rows':rows,'columns':columns,'cursor':[min(int(current[5]),rows-1),min(int(current[4]),columns-1)],'alternate':current[6]=='1','cursor_visible':current[7]=='1','ansi_base64':base64.b64encode(formatted).decode()}
             except Exception as exc:result['screen_error']=str(exc)
         print(json.dumps(result))
+    elif action=='migrate':
+        # Retire a terminal from the legacy tmux backend so it reopens as a
+        # native terminal. Only an idle shell, or an idle Claude conversation
+        # that can resume, qualifies; anything busy stays on tmux.
+        def no(reason):print(json.dumps({'migrated':False,'reason':reason}))
+        if not exists():return no('missing')
+        # A window still attached to this project's server could respawn the
+        # session; the pane migrates when that window reopens it instead.
+        if req.get('detached_only') and run('list-clients','-F','#{client_pid}').strip():return no('open in a window')
+        fields=run('display-message','-p','-t',target,'#{pane_pid}\t#{pane_dead}').decode().rstrip('\n').split('\t')
+        if fields[1]!='0' or not fields[0].isdigit():return no('exited')
+        pid=int(fields[0])
+        def children(process):
+            try:return [int(c) for t in (pathlib.Path('/proc')/str(process)/'task').iterdir() for c in (t/'children').read_text().split()]
+            except OSError:return []
+        def argv_of(process):return [a.decode(errors='replace') for a in (pathlib.Path('/proc')/str(process)/'cmdline').read_bytes().split(b'\0') if a]
+        def ticks(process):return int((pathlib.Path('/proc')/str(process)/'stat').read_text().rsplit(')',1)[1].split()[19])
+        shell=argv_of(pid);kids=children(pid);claude=None;stop=[pid]
+        if len(kids)>1:return no('busy')
+        if kids:
+            kid=kids[0];args=argv_of(kid)
+            # Claude records each running conversation by process ID; a script
+            # or Node launcher has an interpreter as argv[0].
+            try:session=json.loads((pathlib.Path.home()/'.claude/sessions'/(str(kid)+'.json')).read_text())
+            except (OSError,ValueError):return no('busy')
+            named=[i for i,arg in enumerate(args) if os.path.basename(arg)=='claude']
+            args=args[named[0]:] if named else ['claude']
+            if session.get('pid')!=kid or str(session.get('procStart'))!=str(ticks(kid)) or not re.fullmatch(r'[0-9a-f-]{36}',str(session.get('sessionId',''))):
+                return no('agent conversation unknown')
+            if session.get('status')!='idle':return no('agent busy')
+            # Keep launch choices, never a prompt or an earlier resume target.
+            keep=[];rest=iter(args[1:])
+            for arg in rest:
+                if arg in ('--dangerously-skip-permissions','--verbose'):keep.append(arg)
+                elif arg in ('--model','--permission-mode','--agent','--fallback-model','--add-dir'):
+                    value=next(rest,None)
+                    if value is not None:keep+=[arg,value]
+                elif arg.split('=',1)[0] in ('--model','--permission-mode','--agent','--fallback-model','--add-dir'):keep.append(arg)
+            claude=[args[0]]+keep+['--resume',session['sessionId']];stop=[kid,pid]
+        if req.get('dry_run'):print(json.dumps({'migrated':False,'ready':True,'claude':claude is not None}));return
+        cwd=os.readlink('/proc/'+str(stop[0])+'/cwd')
+        history=None
+        if not claude:
+            folder=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))
+            folder.mkdir(mode=0o700,exist_ok=True)
+            history=folder/('migrated-'+workspace+'-'+pane+'.ansi')
+            history.write_bytes(run('capture-pane','-p','-e','-J','-t',target,'-S','-2000').rstrip(b'\n')+b'\n')
+            history.chmod(0o600)
+        expected={process:ticks(process) for process in stop}
+        def alive(process):
+            try:return ticks(process)==expected[process]
+            except (OSError,ValueError,IndexError):return False
+        if claude:
+            os.kill(stop[0],signal.SIGTERM)
+            deadline=time.monotonic()+10
+            while alive(stop[0]) and time.monotonic()<deadline:time.sleep(.05)
+            if alive(stop[0]):return no('agent did not stop')
+        run('kill-session','-t',target)
+        deadline=time.monotonic()+5
+        while any(alive(process) for process in stop) and time.monotonic()<deadline:time.sleep(.05)
+        for process in stop:
+            if alive(process):os.kill(process,signal.SIGKILL)
+        print(json.dumps({'migrated':True,'cwd':cwd,'shell':shell,'claude':claude,'history':str(history) if history else None}))
     elif action=='reap':
         # Reclaim only a terminal whose process has already exited. A live
         # session is never killed, including if another client revived it.

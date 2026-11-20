@@ -273,15 +273,15 @@ pub fn open(
         &serde_json::to_vec(&json!({"version":1,"id":record.id,"epoch":record.epoch}))?,
     )?;
     state.save(&config)?;
-    let mut request = config.request(pane, "ensure");
-    request["directory"] = json!(record.source);
-    request["argv"] = json!([
-        launcher.to_string_lossy(),
-        "--plugin-pane",
-        &store.path.to_string_lossy(),
-        &record.id
-    ]);
-    if let Err(error) = config.call(pane, &request) {
+    let argv = vec![
+        launcher.to_string_lossy().into_owned(),
+        "--plugin-pane".into(),
+        store.path.to_string_lossy().into_owned(),
+        record.id.clone(),
+    ];
+    if let Err(error) =
+        crate::native_backend::open_command(&config, pane, argv, record.source.clone())
+    {
         record.status = "indeterminate".into();
         record.error = Some(format!("{error:#}"));
         save(&store, &record)?;

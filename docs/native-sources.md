@@ -2,17 +2,26 @@
 
 ## Terminal backends
 
-tmux is optional. STAR/FLUX asks each project host whether tmux is installed:
+Every STAR/FLUX terminal is a native terminal owned by the retained PTY owner.
+Native terminals survive closing STAR/FLUX, show inline graphics and can move
+between projects. tmux is used only to import existing tmux sessions.
 
-- Without tmux, new terminals are native terminals owned by STAR/FLUX's
-  retained PTY owner. They survive closing STAR/FLUX, show inline graphics
-  and can move between projects.
-- With tmux, new terminals use the tmux backend unless the project was opened
-  with `--native-terminals`. Existing tmux terminals stay on tmux either way.
+Terminals opened by older builds ran on a per-project tmux server. They migrate
+to native terminals when they are idle:
 
-Importing tmux sessions needs tmux, and so does the tmux backend's test suite.
+- an idle shell reopens natively in the same directory, with its last 2000
+  lines of scrollback replayed;
+- an idle Claude Code conversation is stopped gracefully and resumed with
+  `--resume` and its original launch options (never its original prompt).
+
+Anything else, including a busy agent or a running command, keeps its tmux
+session and migrates the next time it is opened while idle. Opening a pane in a
+window migrates it automatically. `starflux --migrate-terminals` migrates every
+idle terminal of projects that have no open window; add `--dry-run` to only
+report what would happen. `scripts/test-tmux-migration.py` is the headless proof.
+
 The Arch package lists tmux under optional dependencies; the AppImage and the
-Nix wrapper no longer carry it.
+Nix wrapper do not carry it.
 
 The retained native PTY owner and its streaming connector are described below.
 These entry points do not migrate existing tmux/agent-multiplexer/transferred

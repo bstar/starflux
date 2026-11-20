@@ -442,29 +442,7 @@ impl Config {
 
         self.host_call(pane, request)
     }
-    /// New terminals use the native owner when the project asks for it, or
-    /// when the project host has no tmux: tmux is optional, never required.
-    pub fn native_for_new_terminals(&self, pane: usize) -> bool {
-        self.native_terminals || !self.host_has_tmux(pane)
-    }
-    fn host_has_tmux(&self, pane: usize) -> bool {
-        static FOUND: std::sync::Mutex<std::collections::BTreeMap<Option<String>, bool>> =
-            std::sync::Mutex::new(std::collections::BTreeMap::new());
-        let host = self.remote(pane).then(|| self.host.clone()).flatten();
-        if let Some(found) = FOUND.lock().unwrap().get(&host) {
-            return *found;
-        }
-        match self.host_call(pane, &self.request(pane, "capabilities")) {
-            Ok(reply) => {
-                let found = reply["tmux"] == true;
-                FOUND.lock().unwrap().insert(host, found);
-                found
-            }
-            // An unreachable host fails either way; keep the saved backend choice.
-            Err(_) => true,
-        }
-    }
-    fn host_call(&self, pane: usize, request: &Value) -> Result<Value> {
+    pub(crate) fn host_call(&self, pane: usize, request: &Value) -> Result<Value> {
         let out = self
             .command(pane, request, false)
             .stdin(Stdio::null())
@@ -480,7 +458,9 @@ impl Config {
         if crate::plugin_panes::owner(self, pane)?.is_some() {
             // Retain an exited plugin's screen/ownership. Reattachment cannot
             // silently rerun its command or replace it with an ordinary shell.
-            self.call(pane, &self.request(pane, "inspect"))?;
+            if !crate::native_backend::ensure_source(self, pane, None)? {
+                self.call(pane, &self.request(pane, "inspect"))?;
+            }
             return Ok(());
         }
         let _worktree = crate::worktrees::ensure_allowed(self)?;
