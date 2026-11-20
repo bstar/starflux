@@ -378,13 +378,12 @@ level of edge/glyph rounding; the physical comparison explicitly allows that
 measured error. Artifacts are in `target/native-planes-kitty-artifacts/` and
 results in `target/native-planes-kitty.log`.
 
-This remains a candidate, not an installed backend or completed graphics parity.
+This host-plane renderer remains a candidate, not an installed backend.
 Remaining requirements include production source recovery/cleanup, compatible
 observation of existing sources, buffer-switch/resize/load coverage, host
 placement-loss recovery, larger/chunked image transport and constrained-network
 media acceptance. File/shared-memory transfers are refused by design, and frame
-composition (`a=c`) is unsupported. The original parity goal
-and its unchecked requirements remain active.
+composition (`a=c`) is unsupported.
 
 The final delivery implementation is asynchronous: the local relay admits an
 image into a latest-per-view queue and keeps forwarding other packets while the

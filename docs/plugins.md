@@ -234,7 +234,7 @@ policy. A Linux controller whose binary has been replaced can use the replacemen
 at the same pathname as its launcher. If that pathname is gone entirely, opening
 fails before allocating a terminal and asks for a frontend refresh. Focused tests exercise these invariants, including old-boot close rejection,
 managed updates and one-shot launch receipts. Broader lifecycle/cross-feature
-acceptance and complete plugin-pane parity remain unfinished.
+acceptance of plugin panes remains open (see Open plugin work).
 
 Pane processes receive `STARFLUX_PLUGIN_ENTRYPOINT_ID`,
 `STARFLUX_PLUGIN_PANE_ID`, `STARFLUX_PROJECT`, `STARFLUX_PANE` and the existing
@@ -421,7 +421,10 @@ and `release`. Corrupt records are
 not permission to repeat an action. An operation replay returns its original API
 result; query `plugins.job` for the current job state.
 
-## Remaining parity work
+## Open plugin work
+
+STAR/FLUX plugins use their own manifest and native ABI; running plugins
+written for other agent multiplexers is not a goal.
 
 Local linking, pinned managed Git/GitHub packages and finite command jobs are
 implemented. Declared link handlers have native menu/API routing and activation
@@ -429,7 +432,6 @@ from visible native terminal URL text and OSC 8 metadata. Normal persistent plug
 terminals and frontend-targeted placement are implemented. Transient popup
 terminals have focused native UI, actual cells-client and App Space acceptance;
 broader lifecycle and actual graphical-host capture remain under audit.
-The native ABI should not be presented
-as compatible with every agent multiplexer plugin. The queue/worker bounds and hook backpressure have focused concurrent-publisher
+The queue/worker bounds and hook backpressure have focused concurrent-publisher
 coverage. Multi-plugin scheduling, source/lifecycle failure coverage and broader
 service-restart semantics remain under audit.

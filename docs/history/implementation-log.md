@@ -1,4 +1,6 @@
-# agent workspace parity: implementation checkpoint
+# Agent workspace implementation log
+
+> Historical checkpoints from October and November 2026. The current feature list is in [plan.md](../plan.md).
 
 Resumed at the user's request on 2026-11-01 after the 2026-10-30 pause.
 The full parity objective remains unfinished. This document is a resumption checklist, not a completion claim.
@@ -94,12 +96,12 @@ shipping UI, adds executable acceptance coverage and records direct evidence.
 | Plugins | Linked/managed Git packages, updates and offline rollback, guarded runner/API/native UI, complete command/log review, executable example, local/SSH graphical/cells UI acceptance, queue/backpressure coverage; native OSC 8 destinations and retention; normal persistent plugin terminals and transient popups with configurable keyboard controls | Browser handoff, broader hook semantics, complete multi-plugin/source/lifecycle coverage and remaining acceptance |
 | Inline terminal graphics | APC framing, bounded RGB/RGBA/static PNG and zlib direct-transfer decoding, generation-bound image/placement store; private local/SSH raw transport acceptance | Connect backend ownership and source responses, complete protocol behavior, graphical/cells presentation, aggregate resource limits and restoration; no live image support advertised yet |
 
-The original [TASKS.md](../TASKS.md) is the broader project backlog and contains
+The original [TASKS.md](../../TASKS.md) is the broader project backlog and contains
 older acceptance criteria. Do not interpret this checkpoint as closing those tasks.
-Existing feature documentation: [agents](agent-lifecycle.md),
-[attention](attention.md), [panes](panes.md), [automation](automation.md),
-[worktrees](worktrees.md), [history](terminal-history.md), [machines](machines.md),
-[cold start](cold-start.md), [keyboard](keyboard.md), [compact windows](compact.md).
+Existing feature documentation: [agents](../agent-lifecycle.md),
+[attention](../attention.md), [panes](../panes.md), [automation](../automation.md),
+[worktrees](../worktrees.md), [history](../terminal-history.md), [machines](../machines.md),
+[cold start](../cold-start.md), [keyboard](../keyboard.md), [compact windows](../compact.md).
 
 ## Previous keyboard checkpoint: prefix-based panel navigation
 
@@ -183,7 +185,7 @@ release gate and strict Clippy were not rerun for the plugin checkpoint.
   unlinking with files/logs retained. Original terminal PIDs are preserved.
 - The UI fixture runs the shipped `examples/plugins/project-summary` against a
   private Git repository and project, proving the documented executable ABI.
-  User documentation is in [plugins.md](plugins.md), linked from API/key docs.
+  User documentation is in [plugins.md](../plugins.md), linked from API/key docs.
 - `scripts/test-plugins.py --capacity`, also with `--ssh`, passed. Eight
   concurrent publishers fill exactly 32 queued jobs; the next enqueue fails.
   Two blocked actions run, further scans do not exceed that worker count,
@@ -733,7 +735,7 @@ logs are `target/graphics-observer-{local,ssh}.log`.
 
 This is not image display: backend ownership, placement/storage, graphical/cells
 presentation, protocol replies, compression and restoration remain unfinished.
-See [inline graphics](inline-graphics.md) for the concrete remaining work.
+See [inline graphics](../inline-graphics.md) for the concrete remaining work.
 Current canonical graphics source checks use
 `target/graphics-transfer-{clippy,all-unit,no-default-unit}.log`; inspect their
 terminal results before claiming completion. Strict Clippy passed; the canonical
@@ -853,7 +855,7 @@ process. Production needs bounded asynchronous decoding, backend singleton
 ownership, process/generation checks, initial-output coverage and explicit
 source reply ordering. tmux itself handles ordinary DA queries, so merely
 observing its output cannot establish that reply-order requirement. See
-[inline graphics](inline-graphics.md) for the remaining pipeline and presentation
+[inline graphics](../inline-graphics.md) for the remaining pipeline and presentation
 work. The wider parity requirements remain unchanged and unfinished.
 
 The final candidate source passed strict all-target/all-feature Clippy and
@@ -2656,7 +2658,7 @@ mode pass. Deterministically forcing the handoff race, further repetition,
 minimal-feature and Nix checks on this exact increment remain necessary. Earlier
 startup acceptance must not be relabeled as validation of this later change.
 
-The complete pause handoff is [parity-handoff-2026-11-14.md](parity-handoff-2026-11-14.md).
+The complete pause handoff is [handoff-2026-11-14.md](handoff-2026-11-14.md).
 It preserves the full remaining agent workspace parity scope and prioritizes real provider
 identity capture/resume. A fake program executing a saved vector does not prove
 that Codex/Claude restored an AI conversation. No native increment was installed

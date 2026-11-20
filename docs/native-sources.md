@@ -43,7 +43,7 @@ blocks replacement. This prevents duplicate agents; automatically terminating
 stubborn/detached process trees and safely resolving owner-loss or never-delivered
 launch intents still need further supervision work. This is not a completed
 native-backend activation or a full graphics-compatibility claim. See the latest
-checkpoint in [parity-progress.md](parity-progress.md).
+checkpoint in the [implementation log](history/implementation-log.md).
 
 On the project host, a private data namespace owns `native-sources/`, containing
 `owner.json`, `token.json`, `broker.sock`, lifetime/startup locks and `launches/`.
@@ -149,10 +149,10 @@ and after capture. A view's review remains independent of other frontends.
 
 This remains an isolated candidate, with no installed backend switch. Its
 current acceptance evidence and remaining requirements are recorded at the end
-of `docs/parity-progress.md`. In particular, sharp host image planes, rich
+of `docs/history/implementation-log.md`. In particular, sharp host image planes, rich
 terminal events/links, broader recovery/lifecycle acceptance and complete
 frontend resource accounting still need work. The candidate's cell fallback
-does not establish graphical image parity.
+does not provide sharp graphical images.
 
 The candidate now retains presentation reservations with conversion canvases,
 accepted UI screens and frozen review screens instead of releasing them at

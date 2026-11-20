@@ -22,7 +22,7 @@ Terminals support [nested right/down splits, zoom, rearrangement and guarded ter
 Use [history search and keyboard copy mode](docs/terminal-history.md) to review retained terminal output while the program continues running.
 The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/agent-multiplexer sessions and acknowledged per-window navigation.
 
-The paused parity effort and remaining work are recorded in the [implementation checkpoint](docs/parity-progress.md).
+The [feature plan](docs/plan.md) lists what is built and what is left; earlier checkpoints are in the [implementation log](docs/history/implementation-log.md).
 
 [Portfolios](docs/categories.md) group related projects with shared progress
 summaries, collapsible sections and manual ordering. An optional
@@ -32,7 +32,7 @@ Manage [Git worktrees](docs/worktrees.md) with **Ctrl+B, Shift+W**, including cr
 **Ctrl+Esc** releases terminal input to workspace controls; **F6** toggles focus.
 Cells mode has **Add project** and **Close project** controls; with controls focused,
 **+** adds or reopens a project and **x** closes it while keeping sessions running.
-See [cells usage, keyboard controls and feature parity](docs/cells.md).
+See [cells usage and keyboard controls](docs/cells.md).
 
 **App Space is available in supported graphical sessions, including Kitty over SSH.**
 Use **App Space** in the terminal header or **Open App Space** in a project's

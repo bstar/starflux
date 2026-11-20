@@ -48,5 +48,3 @@ model and effort selection without real inference. The full workflow fixture
 providers. Real-provider review acceptance and broader event integration remain
 outstanding; account metadata discovery and Codex read-only permission checks
 have been exercised separately. No real portfolio is enabled automatically.
-
-The broader agent workspace parity goal remains paused; this feature is separate work.

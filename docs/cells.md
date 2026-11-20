@@ -90,7 +90,7 @@ opens it; below 60 columns it opens a project picker instead of shrinking the te
 **More** opens every workspace control. The tab strip keeps the selected terminal visible. Below 32×10,
 a resize message replaces the interface and processes continue running.
 
-## Feature parity
+## Same features as graphical mode
 
 The **Sessions** control opens the same session manager as graphical mode.
 Use Up/Down to select, Enter to open, Ctrl+N to create, Ctrl+I to import, and

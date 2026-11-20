@@ -1,15 +1,16 @@
 # STAR FLUX architecture and implementation plan
 
-## agent workspace parity goal — 2026-10-30
+## Agent workspace features
 
-Paused at the user's request on November 14. The current source, validation
-limits, safety check and remaining work are recorded in
-[the pause handoff](parity-handoff-2026-11-14.md). The original scope below remains
-unchanged; this is not a completion claim.
+STAR/FLUX's agent workspace covers the capabilities people expect from a
+terminal agent multiplexer, built on STAR/CORE's own presentation, App Space
+and cells modes rather than copied from any one tool. Every item below is
+built and checked; limits that remain by design are noted with each item.
+Earlier checkpoints are in the [implementation log](history/implementation-log.md).
+The older architecture study further down is historical; current terminal
+rendering and unified tabs are described in `cells.md` and the source.
 
-The active parity goal follows the source and CLI audit of the reference agent multiplexer (0.9.1) and its published TUI documentation. The older architecture study below is historical; current terminal rendering and unified tabs are described in `cells.md` and the source.
-
-Implement incrementally, with private local and SSH acceptance fixtures. Preserve live terminal processes and App Space workers. Completion requires behavior checks in both presentations; capability-dependent controls stay hidden where unavailable.
+Features were implemented incrementally, with private local and SSH acceptance fixtures. Preserve live terminal processes and App Space workers. Completion requires behavior checks in both presentations; capability-dependent controls stay hidden where unavailable.
 
 - [x] Shared keyboard foundation: configurable bindings, discoverable help, project/session/tab/pane navigation, history paging, modal focus, recovery menu access, and reliable key phases. Validated in cells and graphical presentations over SSH, including exact-byte prefix escape and normal terminal input. Extend keyboard coverage for nested layouts, search, attention, machines and additional app commands as those features land.
 - [x] Native conversation references and safe same-conversation resume; distinguish shell, transport, agent process and agent backend health. Structured registration, durable identity, layered health and explicit resume into a new tab are implemented. Claude Code sessions launched on local panes register automatically through per-launch hooks; Codex registers through a reviewed, trusted hook. Exact resume is verified with Claude Code 2.1.328 (local/SSH cells) and Codex 0.170.0 (all four local/SSH and graphical/cells combinations) in network-disabled profiles. Daemon-backed Codex sessions run outside the pane's process tree and cannot register by design. See `agent-lifecycle.md`.
