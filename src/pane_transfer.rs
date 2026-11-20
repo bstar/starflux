@@ -117,8 +117,10 @@ pub fn move_to_project(from: &Config, pane: usize, to: &Config) -> Result<usize>
     source.remove_terminal(pane);
     source.save(from)?;
     crate::agent_state::transfer(from, pane, to, target, &epoch)?;
-    crate::automation::journal::occurred_later(
-        format!("panes/{}/{}", to.workspace, target + 1),
+    // Written before returning: an API process exits as soon as the move does,
+    // which would lose an event queued on a background thread.
+    let _ = crate::automation::journal::occurred(
+        &format!("panes/{}/{}", to.workspace, target + 1),
         "moved",
         serde_json::json!({
             "project": to.workspace, "pane": target + 1, "epoch": epoch,
