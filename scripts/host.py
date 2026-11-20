@@ -350,6 +350,11 @@ def main():
         while any(alive(process) for process in stop) and time.monotonic()<deadline:time.sleep(.05)
         for process in stop:
             if alive(process):os.kill(process,signal.SIGKILL)
+        # The last migrated session ends the project's tmux server; remove the
+        # socket it leaves so nothing mistakes the project for a tmux one.
+        if not req.get('source_socket') and subprocess.run(tm+['list-sessions'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+            stale=pathlib.Path(os.environ.get('TMUX_TMPDIR','/tmp'))/('tmux-'+str(os.getuid()))/server
+            if stale.is_socket():stale.unlink()
         print(json.dumps({'migrated':True,'cwd':cwd,'shell':shell,'claude':claude,'history':str(history) if history else None}))
     elif action=='reap':
         # Reclaim only a terminal whose process has already exited. A live

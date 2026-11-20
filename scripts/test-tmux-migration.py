@@ -108,6 +108,7 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         wait(lambda: 'INTERRUPTED_SCROLLBACK' in api('panes.capture', dict(project=names['plan'], pane=1))['text'], 'interrupted migration did not resume')
         assert not list(plans.glob('*.json')), 'migration plans were not cleared'
         assert subprocess.run(['tmux', '-L', 'starflux-' + names['idle'], 'has-session'], env=env, stderr=subprocess.DEVNULL).returncode != 0, 'tmux server kept the idle project'
+        assert not (sockets / ('tmux-' + str(os.getuid())) / ('starflux-' + names['idle'])).exists(), 'stale tmux socket left behind'
         assert tmux(names['busy'], 'list-sessions', '-F', '#{session_name}').split() == ['p0'], 'busy agent was not kept'
 
         model = json.loads((projects / (names['idle'] + '.model.json')).read_text())
