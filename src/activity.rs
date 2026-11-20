@@ -265,7 +265,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                         .or_else(|| agent["pane_id"].as_str())
                         .unwrap_or("agent");
                     state.signals.insert(
-                        format!("{}:{id}", crate::agent_mux::PROGRAM),
+                        format!("{}:{id}", crate::agent_mux::SOURCE),
                         format!(
                             "{}:{}",
                             observed

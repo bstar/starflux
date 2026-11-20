@@ -17,7 +17,8 @@ pub(crate) fn allowed(path: &Path) -> Result<()> {
         };
         let name = name.to_string_lossy().to_lowercase();
         ensure!(
-            name.strip_prefix('.') != Some(crate::agent_mux::PROGRAM)
+            !crate::agent_mux::program()
+                .is_some_and(|program| name.strip_prefix('.') == Some(program.as_str()))
                 && !matches!(
                     name.as_str(),
                     ".git"

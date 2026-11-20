@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real GPU activity wave using a disposable read-only the agent multiplexer API fixture."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import json,os,subprocess,tempfile,time,uuid
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-wave-') as temp:
     temp=Path(temp);address='unix:'+str(temp/'kitty.sock');statuses=temp/'statuses.json';revisions=temp/'revisions.json'
     statuses.write_text(json.dumps({'w0':'working','w1':'idle','w2':'blocked'}))
     revisions.write_text(json.dumps({'w0':0,'w1':0,'w2':0}))
-    source=temp/(PROGRAM+'-fixture')
+    source=temp/'mux-fixture'
     source.write_text('''#!/usr/bin/python3
 import json,sys,os
 from pathlib import Path

@@ -193,12 +193,12 @@ impl Terminal {
     }
 }
 fn python(script: &str, args: &[&str]) -> Result<()> {
-    Err(crate::host_env::command("python3")
-        .env("STARFLUX_AGENT_MUX_PROGRAM", crate::agent_mux::PROGRAM)
-        .args(["-c", script])
-        .args(args)
-        .exec())
-    .context("Could not start native PTY migration helper")
+    let mut command = crate::host_env::command("python3");
+    if let Some(executable) = crate::agent_mux::executable() {
+        command.env("STARFLUX_AGENT_MUX", executable);
+    }
+    Err(command.args(["-c", script]).args(args).exec())
+        .context("Could not start native PTY migration helper")
 }
 pub fn receive(plan: &str, socket: &str, token: &str) -> Result<()> {
     python(
@@ -233,7 +233,7 @@ pub fn validate_plan(path: &str) -> Result<()> {
         .context("Migration documents missing")?;
     for document in documents {
         let value = &document["value"];
-        if document["kind"] == format!("{}-retired", crate::agent_mux::PROGRAM) {
+        if document["kind"] == "agent-mux-retired" {
             ensure!(
                 value["workspaces"].as_array().is_some_and(|v| v.is_empty()),
                 "Invalid retired multiplexer session"

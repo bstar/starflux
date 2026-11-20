@@ -438,7 +438,7 @@ fn input_transport_available(health: &Value, adopted: bool) -> bool {
         && (!adopted || health["bridge_connected"] == true)
 }
 fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) -> Value {
-    let target = if health["source"] != crate::agent_mux::PROGRAM
+    let target = if health["source"] != crate::agent_mux::SOURCE
         && let Ok((pid, start, boot)) = config.terminal_identity(id, health)
     {
         json!(Target {
@@ -503,7 +503,7 @@ fn guarded(target: &Target) -> Result<(Config, ProjectState, usize, Value)> {
         return Err(fault("stale_target", "Terminal generation changed"));
     }
     let health = inspect(&config, id)?;
-    if health["source"] == crate::agent_mux::PROGRAM {
+    if health["source"] == crate::agent_mux::SOURCE {
         return Err(fault(
             "unsupported_capability",
             "Imported multiplexer process identities are read-only",

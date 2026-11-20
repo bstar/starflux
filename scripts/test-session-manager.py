@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private sessions, independent views, live tmux/agent-multiplexer imports and scoped deletion."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import argparse
 import base64
 import fcntl
@@ -207,7 +207,7 @@ for line in sys.stdin:
         text=shell.read_text();text=text.replace("for line in sys.stdin:","print("+repr('\x1b]8;id=fixture;'+hidden+'\x1b\\OSC8_LABEL_界é\x1b]8;;\x1b\\')+",flush=True)\nfor line in sys.stdin:")
         shell.write_text(text)
     env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
-    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_AGENT_MUX=(PROGRAM) if args.agent_mux else str(tmp/(PROGRAM+'-not-installed')))
+    env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native',STARFLUX_AGENT_MUX=MUX if args.agent_mux else str(tmp/(PROGRAM+'-not-installed')))
     if args.native_launch_race:
         gate=tmp/'launch-gate';gate.mkdir()
         bindir=tmp/'gate-bin';bindir.mkdir()
@@ -512,9 +512,9 @@ GLib.MainLoop().run()
         source_topology=tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')
         if args.agent_mux:
             config=tmp/('config/'+PROGRAM);config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env[(ENV+'_CONFIG_PATH')]=str(config/'config.toml')
-            agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
+            agent_mux=subprocess.Popen([MUX,'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
             wait(lambda:(config/(PROGRAM+'.sock')).exists(),('private '+DISPLAY+' server missing'))
-            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([(PROGRAM),*arguments],env=env))
+            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([MUX,*arguments],env=env))
             agent_mux_cli('workspace','create','--cwd',str(tmp),'--label',(DISPLAY+' Proof One'),'--no-focus')
             agent_mux_cli('workspace','create','--cwd',str(tmp),'--label',(DISPLAY+' Proof Two'),'--no-focus')
             snapshot=agent_mux_cli('api','snapshot')['result']['snapshot']
@@ -1232,15 +1232,15 @@ GLib.MainLoop().run()
             assert alive(source_pid) and saved(imported,0)['pid']==source_pid
             assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
             if args.agent_mux:
-                hp=snapshot['panes'][0];hidden=('background-'+PROGRAM+'-')+secrets.token_hex(3)
-                source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which((PROGRAM)),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label=('Hidden '+DISPLAY),cwd=str(tmp),agent=None)})
-                config.update({PROGRAM:source},workspace=hidden,label=('Background '+DISPLAY),tmux=None)
+                hp=snapshot['panes'][0];hidden='background-mux-'+secrets.token_hex(3)
+                source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which(MUX),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label=('Hidden '+DISPLAY),cwd=str(tmp),agent=None)})
+                config.update({KEY:source},workspace=hidden,label=('Background '+DISPLAY),tmux=None)
                 (projects/(hidden+'.json')).write_text(json.dumps(config));(projects/(hidden+'.model.json')).write_text(json.dumps(model))
                 (projects/'catalog-version').write_bytes(os.urandom(16))
                 wait(lambda:hidden in a.snapshot().get('project_navigation',{}).get('visible',[]),('hidden '+DISPLAY+' project did not enter catalog'))
                 a.action('project:'+hidden);wait(lambda:a.snapshot().get('active_project')==hidden and any(t['pane']==1 for t in a.snapshot().get('direct_terminals',[])),(DISPLAY+' source project did not open owned pane'))
-                subprocess.run([(PROGRAM),'pane','send-text',hp['pane_id'],('UNOPENED_'+ENV+'_界')],env=env,check=True,capture_output=True)
-                subprocess.run([(PROGRAM),'pane','send-keys',hp['pane_id'],'enter'],env=env,check=True,capture_output=True)
+                subprocess.run([MUX,'pane','send-text',hp['pane_id'],('UNOPENED_'+ENV+'_界')],env=env,check=True,capture_output=True)
+                subprocess.run([MUX,'pane','send-keys',hp['pane_id'],'enter'],env=env,check=True,capture_output=True)
                 try:wait(lambda:('UNOPENED_'+ENV+'_界') in saved(hidden,0).get('formatted',''),('unattached '+DISPLAY+' pane did not save'),timeout=25)
                 except AssertionError:
                     print(json.dumps(dict(source_sessions=[{k:s.get(k) for k in ['project','pane','health']} for s in a.snapshot().get('sessions',[])],saved=saved(hidden,0))),flush=True)
@@ -2536,17 +2536,17 @@ GLib.MainLoop().run()
             assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
             if args.agent_mux:
                 picker(a,external=True);choose(a,'default')
-                wait(lambda:a.snapshot().get('collection')==(PROGRAM+'-default') and a.snapshot().get('direct_terminals'),(DISPLAY+' history import missing'))
+                wait(lambda:a.snapshot().get('collection')==(COLLECTION+'-default') and a.snapshot().get('direct_terminals'),(DISPLAY+' history import missing'))
                 a.paste('HISTORY\n');wait(lambda:live(a,'ROW 119'),(DISPLAY+' history fixture missing'))
                 agent_mux_project=a.snapshot()['active_project']
                 agent_mux_page=search_api(agent_mux_project,ignore_case=True)
-                assert agent_mux_page['source']==(PROGRAM)
+                assert agent_mux_page['source']==SOURCE
                 assert search_api(agent_mux_project,agent_mux_page['next_cursor'],ignore_case=True)['matches'][0]['row']>agent_mux_page['matches'][0]['row']
                 a.shortcut('char:/');wait(lambda:review().get('editing'),(DISPLAY+' search did not open'))
-                a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')==(PROGRAM),(DISPLAY+' retained history missing'))
+                a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')==SOURCE,(DISPLAY+' retained history missing'))
                 a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),(DISPLAY+' history did not copy'))
                 assert all(alive(pid) for pid in agent_mux_pids),('history capture replaced a '+DISPLAY+' source process')
-                subprocess.run([(PROGRAM),'server','stop'],env=env,check=True,capture_output=True)
+                subprocess.run([MUX,'server','stop'],env=env,check=True,capture_output=True)
                 agent_mux.wait(timeout=5)
                 search_api(agent_mux_project,unavailable=True)
                 assert not (tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),'history capture started the stopped source'
@@ -3011,7 +3011,7 @@ GLib.MainLoop().run()
         assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'Deleting import killed or changed original tmux'
         if args.agent_mux:
             picker(a,external=True);choose(a,'default')
-            wait(lambda:a.snapshot().get('collection')==(PROGRAM+'-default') and len(a.snapshot().get('project_order',[]))>=2,(DISPLAY+' projects did not import'))
+            wait(lambda:a.snapshot().get('collection')==(COLLECTION+'-default') and len(a.snapshot().get('project_order',[]))>=2,(DISPLAY+' projects did not import'))
             a.action('agent-status:0')
             def source_diagnostic():
                 menu=a.snapshot().get('context_menu') or {}
@@ -3106,7 +3106,7 @@ GLib.MainLoop().run()
             workspace=path.name.removesuffix('.model.json')
             subprocess.run(['tmux','-L','starflux-'+workspace,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         if agent_mux:
-            subprocess.run([(PROGRAM),'server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+            subprocess.run([MUX,'server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
             if agent_mux.poll() is None:agent_mux.terminate();agent_mux.wait(timeout=3)
         try:
             if args.native_sources:

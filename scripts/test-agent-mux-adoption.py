@@ -3,7 +3,7 @@
 
 No display, real workspace, agent prompt, or existing agent multiplexer process is touched.
 """
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import copy
 import json
 import os
@@ -25,10 +25,10 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
     env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_'))}
     env.update(XDG_CONFIG_HOME=str(tmp/'config'),**{ENV+'_CONFIG_PATH':str(config/'config.toml')},XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),SHELL=str(shell),STAR_TERMINAL_RENDERER='native')
     log=(tmp/'source.log').open('w')
-    source=subprocess.Popen([(PROGRAM),'server'],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
+    source=subprocess.Popen([MUX,'server'],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
     broker_pid=None;plan=None;view_processes=[];peer=None
     def cli(*args,raw=False):
-        result=subprocess.run([(PROGRAM),'--session','default',*args],env=env,capture_output=True,timeout=10)
+        result=subprocess.run([MUX,'--session','default',*args],env=env,capture_output=True,timeout=10)
         assert result.returncode==0,(args,result.stderr.decode(errors='replace'),(tmp/'source.log').read_text()[-800:])
         return result.stdout if raw else json.loads(result.stdout)
     def wait(predicate,label,timeout=10):
@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
         for p in bad['panes']:p['server']='invalid/server'
         bad_path=bad_run/'plan.json';bad_path.write_text(json.dumps(bad))
         wrapper=bad_run/'accept';wrapper.write_text('#!/bin/sh\nshift 2\nexec '+shlex.quote(str(app))+' --native-pty-import '+shlex.quote(str(bad_path))+' "$@"\n');wrapper.chmod(0o700)
-        failed=subprocess.run([(PROGRAM),'--session','default','server','live-handoff','--import-exe',str(wrapper)],env=env,capture_output=True,timeout=35)
+        failed=subprocess.run([MUX,'--session','default','server','live-handoff','--import-exe',str(wrapper)],env=env,capture_output=True,timeout=35)
         assert failed.returncode!=0,'Rejected importer unexpectedly committed'
         assert source.poll() is None and all(is_alive(pid) for pid in pids),'Rollback lost original processes'
         assert len(cli('api','snapshot')['result']['snapshot']['panes'])==len(pids)
@@ -129,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
                 inspected=json.loads(inspector.makefile('rb').readline())
             assert inspected['pid']==p['pid'] and inspected['alive'] and inspected['source']=='starflux-adopted'
             project=json.loads(Path(plan['project_root'],p['workspace']+'.json').read_text())
-            assert project[(PROGRAM)] is None and str(p['slot']) in project['adopted']
+            assert project[KEY] is None and str(p['slot']) in project['adopted']
         assert not (config/(PROGRAM+'.sock')).exists(),('Old '+DISPLAY+' API is still running')
         assert json.loads((config/'session.json').read_text())['workspaces']==[], 'Old restore could duplicate live agents'
         stopped=plan['panes'][0];surviving=plan['panes'][1]

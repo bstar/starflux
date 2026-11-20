@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Terminate one private transferred PTY through the UI; retain its sibling owner."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import fcntl
 import base64
 import importlib.util

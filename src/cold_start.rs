@@ -352,7 +352,7 @@ pub(crate) fn save(config: &Config, screen: &Screen) -> Result<()> {
         "host",
         "ssh_config",
         "project_host",
-        crate::agent_mux::PROGRAM,
+        crate::agent_mux::KEY,
         "tmux",
         "adopted",
     ]

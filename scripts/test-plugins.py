@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private plugin commands, hooks and worker failure tests, optionally over SSH."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import argparse,concurrent.futures,getpass,json,os,shlex,shutil,signal,socket,subprocess,tempfile,time,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--capacity',action='store_true');parser.add_argument('--packages',action='store_true');parser.add_argument('--links',action='store_true');parser.add_argument('--panes',action='store_true');args=parser.parse_args()

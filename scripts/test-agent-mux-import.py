@@ -3,16 +3,16 @@
 
 Does not type into the agent multiplexer terminals. Navigation targets the STAR/FLUX linked controller.
 """
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import json,os,pathlib,subprocess,time
 repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux';data=pathlib.Path(os.environ.get('XDG_DATA_HOME',str(pathlib.Path.home()/'.local/share')))/'starflux/projects';out=repo/('target/'+PROGRAM+'-import-proof');out.mkdir(parents=True,exist_ok=True)
-report=json.loads((data/(PROGRAM+'-default.import.json')).read_text());workspace=report['selected']
-for snapshot in runtime.glob((PROGRAM+'-default-*.state.json')):
+report=json.loads((data/(COLLECTION+'-default.import.json')).read_text());workspace=report['selected']
+for snapshot in runtime.glob((COLLECTION+'-default-*.state.json')):
  try:
   existing=json.loads(snapshot.read_text())
-  if existing.get('collection')==(PROGRAM+'-default') and (runtime/(existing['workspace']+'.sock')).exists():workspace=existing['workspace'];break
+  if existing.get('collection')==(COLLECTION+'-default') and (runtime/(existing['workspace']+'.sock')).exists():workspace=existing['workspace'];break
  except (OSError,ValueError,KeyError):pass
-address='unix:'+str(runtime/(PROGRAM+'-import-test.sock'))
+address='unix:'+str(runtime/'mux-import-test.sock')
 def wait(fn,label):
  for _ in range(180):
   try:
@@ -25,27 +25,27 @@ def state():return json.loads((runtime/(workspace+'.state.json')).read_text())
 def action(text):subprocess.check_call([str(app),'--workspace',workspace,'--action',text],stdout=subprocess.DEVNULL)
 # A new import has a distinct workspace identity; never close a pre-existing window.
 if not (runtime/(workspace+'.sock')).exists():
- with (out/'kitty.log').open('w') as log:subprocess.Popen(['/usr/bin/kitty','--class',('starflux-'+PROGRAM+'-test'),'--title',('STAR/FLUX - '+DISPLAY+' session test'),'--config','NONE','--listen-on',address,'-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',workspace],stdout=log,stderr=log,start_new_session=True)
+ with (out/'kitty.log').open('w') as log:subprocess.Popen(['/usr/bin/kitty','--class','starflux-mux-test','--title',('STAR/FLUX - '+DISPLAY+' session test'),'--config','NONE','--listen-on',address,'-o','allow_remote_control=yes','-o','initial_window_width=1450','-o','initial_window_height=1000',str(app),'--workspace',workspace],stdout=log,stderr=log,start_new_session=True)
 s=wait(lambda:state() if state().get('agent_mux_live_attachment') and state()['desktop']['project_windows'] else None,'Imported window did not start')
 expected=[p['workspace']for p in report['projects']];assert s['project_order']==expected,('Import order differs from '+DISPLAY)
 assert len(expected)==report['workspaces']
-before=json.loads((repo/('target/'+PROGRAM+'-source-before.json')).read_text());baseline_order=s['project_order']
+before=json.loads((repo/'target/mux-source-before.json').read_text());baseline_order=s['project_order']
 for project in [expected[0],expected[5],expected[-1],expected[1],workspace]:
  action('project:'+project);s=wait(lambda:state() if state()['active_project']==project else None,'Project switch failed')
  assert s['project_order']==baseline_order,'Selecting a project reordered tabs'
- assert s['collection']==(PROGRAM+'-default')
+ assert s['collection']==(COLLECTION+'-default')
 action('project:'+expected[0]);wait(lambda:state()['active_project']==expected[0],'HOME missing')
 action('terminal:1');s=wait(lambda:state() if state()['project_state']['terminal']==1 else None,'Second HOME tab missing');assert s['project_order']==baseline_order
 page=s['project_page'];action('project:page:right');wait(lambda:state()['project_page']>page,'Project paging failed');assert state()['active_project']==expected[0],'Paging selected a different project'
 action('project:'+workspace);wait(lambda:state()['active_project']==workspace,'Return to imported current space failed')
-source=json.loads(subprocess.check_output([(PROGRAM),'api','snapshot']))['result']['snapshot'];assert [w['workspace_id']for w in source['workspaces']]==before['workspaces'],(DISPLAY+' workspace order changed');assert {p['pane_id']for p in source['panes']}==set(before['panes']),(DISPLAY+' topology changed')
+source=json.loads(subprocess.check_output([MUX,'api','snapshot']))['result']['snapshot'];assert [w['workspace_id']for w in source['workspaces']]==before['workspaces'],(DISPLAY+' workspace order changed');assert {p['pane_id']for p in source['panes']}==set(before['panes']),(DISPLAY+' topology changed')
 identities={}
 for pane_id,old in before['panes'].items():
- info=json.loads(subprocess.check_output([(PROGRAM),'pane','process-info','--pane',pane_id]))['result']['process_info'];assert info['shell_pid']==old['shell_pid'],(DISPLAY+' shell was replaced: ')+pane_id
+ info=json.loads(subprocess.check_output([MUX,'pane','process-info','--pane',pane_id]))['result']['process_info'];assert info['shell_pid']==old['shell_pid'],(DISPLAY+' shell was replaced: ')+pane_id
  identities[pane_id]={'shell_pid':info['shell_pid'],'foreground_pids':[p['pid']for p in info['foreground_processes']]}
 result={'passed':True,'workspaces':len(expected),'tabs':report['tabs'],'source_panes':len(identities),'detected_agents':report['agents'],'stable_project_order':True,'paging_does_not_switch_project':True,('original_'+DISPLAY+'_topology_and_shells_preserved'):True,'interactive_live_attachments':True,'selected':workspace,'window_left_open':True,'identities':identities};(out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:v for k,v in result.items()if k!='identities'},indent=2))
 try:
- clients=json.loads(subprocess.check_output(['hyprctl','clients','-j']));c=next(c for c in clients if c['class']==('starflux-'+PROGRAM+'-test'));addr=c['address']
+ clients=json.loads(subprocess.check_output(['hyprctl','clients','-j']));c=next(c for c in clients if c['class']=='starflux-mux-test');addr=c['address']
  for expr in [f'hl.dsp.window.float({{action="set",window="address:{addr}"}})',f'hl.dsp.window.resize({{x=1450,y=1000,relative=false,window="address:{addr}"}})']:
   subprocess.run(['hyprctl','eval','hl.dispatch('+expr+')'],check=True,stdout=subprocess.DEVNULL)
  time.sleep(1);c=next(c for c in json.loads(subprocess.check_output(['hyprctl','clients','-j']))if c['address']==addr);x,y=c['at'];w,h=c['size'];subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/'imported-session.png')],check=True)

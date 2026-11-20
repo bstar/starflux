@@ -72,6 +72,12 @@ Responses contain `version`, the supplied `id`, `ok`, and either `result` or `er
 
 `panes.saved_screen` reads a historical native-grid preview using `project`, one-based `pane` and optional `previous`. It returns text, screen metadata and explicit historical/read-only flags; it cannot authorize input. See [cold-start recovery](cold-start.md).
 
+Importing from another agent multiplexer is opt-in local configuration. Put its
+program name or path on the first line of `~/.config/starflux/agent-mux` (or set
+`STARFLUX_AGENT_MUX`); without either, discovery lists only tmux sources. Imported
+sources report `"source": "agent-mux"`, and their projects join the
+`starflux-<session>` collection.
+
 To import an existing session, call `sessions.external` on the source host, then pass an entire returned `reference` object to `sessions.import` with a new UUID `operation_id`. Discovery does not import anything. References identify a specific source session rather than a picker row. They bind the source's host boot, owned socket identity and native topology; References also bind server PID/start time; the agent multiplexer verifies the peer credentials of its Unix socket, while tmux additionally binds session creation. `stale_source` means the session was renamed, its membership changed or its server was replaced: discover it again before retrying with a new operation ID. `source_unavailable` means it is no longer discoverable or cannot be read. Replay of an already completed operation returns its original result without re-running import, including when the source has since changed.
 
 Imports serialize metadata creation, so concurrent operations for the same source reuse the same STAR/FLUX copy. The result includes `session`, selected `project`, all imported `projects` and `source_processes_preserved: true`. The agent multiplexer imports retain all source workspaces and terminal references, including named sessions. A missing saved layout does not block a live import: the native snapshot supplies membership and selection, and saved layout metadata enriches the project directory when available. Corrupt saved layout files still report an error. The source still owns its processes, socket and topology; import does not attach a renderer, send agent input, change source options or launch an app. Source applications can continue to change while import runs; the reference is checked immediately before metadata registration and does not freeze the external session. Saved native membership, not terminal output or current activity, determines its fingerprint. Missing or failed individual sources are omitted or reported as warnings. Each discovery query is bounded to four seconds and 2 MiB; the overall request deadline also applies. A separate watchdog owns each read-only CLI query group and removes its helper children on completion, timeout or caller loss. Cancelling an API request therefore also ends its in-flight discovery helpers without signalling the source servers. On Linux, a running view can continue to discover sources after its loaded executable has been replaced on disk; its helper uses the loaded image until the view is refreshed. The agent multiplexer reads require an existing owned live socket and do not intentionally start a missing source server.
@@ -116,9 +122,9 @@ operation before input. Imported terminals retain source ownership and expose
 no termination capability. For an imported agent-multiplexer pane, `panes.get` reports
 the source pane and terminal IDs, shell PID, process start time, and foreground
 process group when the agent multiplexer can verify them. The response keeps `target` null.
-The current the agent multiplexer input schema accepts a pane ID and payload without an expected
-terminal or process identity, so guarded API input for imported agent-multiplexer remains
-open. See the agent multiplexer's socket API documentation.
+That multiplexer's input API accepts a pane ID and payload without an expected
+terminal or process identity, so STAR/FLUX does not offer guarded API input for
+its imported panes.
 
 An interrupted write can have an unknown outcome. Error `outcome` is `not_applied` for known rejected preconditions and `unknown` when side effects cannot be ruled out. A worker stopped after recording an operation but before recording its response leaves an indeterminate record. Retrying that UUID returns `operation_indeterminate` and does **not** repeat the operation. Inspect `operations.get` and the target before deliberately issuing a new UUID. Completed error responses are replayed too. Removing operation records discards this duplicate protection.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real GPU sidebar test using disposable projects and the imported project labels."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import json
 import os
 from pathlib import Path
@@ -16,12 +16,12 @@ out=repo/'target/sidebar-proof';out.mkdir(parents=True,exist_ok=True)
 prefix='nav-'+uuid.uuid4().hex[:6]
 names=[f'{prefix}-{i:02}' for i in range(20)]
 sources=[]
-for p in data.glob((PROGRAM+'-default-*.json')):
+for p in data.glob((COLLECTION+'-default-*.json')):
     try:
         c=json.loads(p.read_text())
-        if isinstance(c,dict) and c.get('collection')==(PROGRAM+'-default') and c.get((PROGRAM)):sources.append(c)
+        if isinstance(c,dict) and c.get('collection')==(COLLECTION+'-default') and c.get(KEY):sources.append(c)
     except (ValueError,OSError):pass
-sources.sort(key=lambda c:c[(PROGRAM)]['order'])
+sources.sort(key=lambda c:c[KEY]['order'])
 
 def wait(fn,label):
     end=time.monotonic()+30

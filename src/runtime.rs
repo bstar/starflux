@@ -271,7 +271,7 @@ impl Config {
                     "text",
                     "--raw",
                 ]),
-                crate::agent_mux::PROGRAM,
+                crate::agent_mux::SOURCE,
             )
         } else {
             (

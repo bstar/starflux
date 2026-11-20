@@ -3,7 +3,7 @@
 
 Only disposable projects and a private authenticated loopback SSH server are used.
 """
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import getpass
 import json
 import os

@@ -111,7 +111,7 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
         ));
     }
     ensure!(
-        entry.source == crate::agent_mux::PROGRAM,
+        entry.source == crate::agent_mux::SOURCE,
         "Unsupported import source"
     );
     let socket = crate::agent_mux::socket_path(&entry.name)?;
@@ -151,7 +151,7 @@ fn prepare(entry: &Entry) -> Result<(Reference, Option<Value>)> {
     );
     Ok((
         Reference {
-            source: crate::agent_mux::PROGRAM.into(),
+            source: crate::agent_mux::SOURCE.into(),
             session: entry.name.clone(),
             socket: None,
             fingerprint: hash(&json!([boot, before, identities]))?,
@@ -174,15 +174,12 @@ pub fn discover() -> Result<Value> {
 pub fn import(reference: Reference) -> Result<Value> {
     if reference.fingerprint.len() != 64
         || !reference.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
-        || !matches!(
-            reference.source.as_str(),
-            "tmux" | crate::agent_mux::PROGRAM
-        )
+        || !matches!(reference.source.as_str(), "tmux" | crate::agent_mux::SOURCE)
         || reference.session.is_empty()
         || reference.session.len() > 128
         || (reference.source == "tmux"
             && !reference.socket.as_ref().is_some_and(|p| p.is_absolute()))
-        || (reference.source == crate::agent_mux::PROGRAM && reference.socket.is_some())
+        || (reference.source == crate::agent_mux::SOURCE && reference.socket.is_some())
     {
         return Err(fault("invalid_params", "Invalid source import reference"));
     }
@@ -226,12 +223,12 @@ pub fn import(reference: Reference) -> Result<Value> {
                     && current.socket.as_ref() == Some(&source.socket)
                     && current.session == source.session
             } else if let Some(source) = &p.agent_mux {
-                current.source == crate::agent_mux::PROGRAM && current.session == source.session
+                current.source == crate::agent_mux::SOURCE && current.session == source.session
             } else {
                 false
             }
         })
-        .map(|p| json!({"project":p.workspace,"source":if p.agent_mux.is_some(){crate::agent_mux::PROGRAM}else{"tmux"}}))
+        .map(|p| json!({"project":p.workspace,"source":if p.agent_mux.is_some(){crate::agent_mux::SOURCE}else{"tmux"}}))
         .collect();
     let _ = crate::snapshot_service::ensure();
     Ok(

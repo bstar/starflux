@@ -476,7 +476,8 @@ fn run() -> Result<()> {
     }
     if raw.get(1).is_some_and(|s| {
         // Panes launched by earlier builds saved the flag under the program's name.
-        s == "--agent-mux-view" || *s == format!("--{}-view", agent_mux::PROGRAM)
+        s == "--agent-mux-view"
+            || agent_mux::program().is_some_and(|program| *s == format!("--{program}-view"))
     }) {
         return agent_mux::viewer(
             raw.get(2).context("Missing multiplexer session")?,

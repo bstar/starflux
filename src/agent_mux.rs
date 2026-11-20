@@ -14,24 +14,64 @@ use std::{
     process::{Command, Stdio},
     time::Duration,
 };
-/// The external agent multiplexer STAR/FLUX imports sessions from. This is
-/// its executable, configuration directory and socket name, and the value
-/// saved project files, source references and the automation API use for it.
-pub const PROGRAM: &str = "herdr";
+/// Identifies imported multiplexer sources in source references, health
+/// reports and the automation API.
+pub const SOURCE: &str = "agent-mux";
+/// The project-file field holding an import binding.
+pub const KEY: &str = "agent_mux";
+/// Collections created by an import are named `{COLLECTION_PREFIX}-{session}`.
+pub const COLLECTION_PREFIX: &str = "starflux";
 
-/// [`PROGRAM`] capitalized, for display.
-pub fn display_name() -> String {
-    let mut chars = PROGRAM.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+/// The external agent multiplexer's executable: `STARFLUX_AGENT_MUX`, or the
+/// first line of the user's local `$XDG_CONFIG_HOME/starflux/agent-mux` file.
+/// Import is unavailable when neither names one.
+pub fn executable() -> Option<String> {
+    if let Ok(value) = std::env::var("STARFLUX_AGENT_MUX")
+        && !value.trim().is_empty()
+    {
+        return Some(value.trim().to_owned());
+    }
+    let root = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|home| home.join(".config")))?;
+    let text = fs::read_to_string(root.join("starflux").join("agent-mux")).ok()?;
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
 }
 
-/// Keeps a project's import binding under the [`PROGRAM`] key that earlier
-/// builds wrote, so existing project files stay bound to their sessions.
+/// The configured executable's file name, which also names its
+/// configuration directory, socket and environment prefix.
+pub fn program() -> Option<String> {
+    let executable = executable()?;
+    std::path::Path::new(&executable)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+}
+
+fn require_executable() -> Result<String> {
+    executable().context(
+        "No multiplexer is configured for import; set STARFLUX_AGENT_MUX or write its \
+         program to ~/.config/starflux/agent-mux",
+    )
+}
+
+fn require_program() -> Result<String> {
+    program().context("No multiplexer is configured for import")
+}
+
+/// Generic label for imported multiplexer terminals.
+pub fn display_name() -> String {
+    "Multiplexer".into()
+}
+
+/// Keeps a project's import binding under [`KEY`]. Files written before the
+/// key was neutral used the configured program's name, which is still read.
 pub mod saved {
-    use super::{PROGRAM, Source};
+    use super::{KEY, Source};
     use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap};
 
     pub fn serialize<S: Serializer>(
@@ -40,7 +80,7 @@ pub mod saved {
     ) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(usize::from(source.is_some())))?;
         if let Some(source) = source {
-            map.serialize_entry(PROGRAM, source)?;
+            map.serialize_entry(KEY, source)?;
         }
         map.end()
     }
@@ -50,8 +90,10 @@ pub mod saved {
     ) -> Result<Option<Source>, D::Error> {
         let mut rest =
             std::collections::BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
-        rest.remove(PROGRAM)
+        let legacy = super::program().and_then(|program| rest.remove(&program));
+        rest.remove(KEY)
             .filter(|value| !value.is_null())
+            .or(legacy.filter(|value| !value.is_null()))
             .map(serde_json::from_value)
             .transpose()
             .map_err(serde::de::Error::custom)
@@ -190,7 +232,7 @@ impl Source {
             .as_str()
             .filter(|cwd| !cwd.is_empty())
             .or_else(|| p["cwd"].as_str());
-        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().map_or_else(|| format!("{} shell", display_name()), String::from),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":crate::agent_mux::PROGRAM,"read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
+        json!({"alive":true,"cwd":cwd,"command":p["agent"].as_str().map_or_else(|| format!("{} shell", display_name()), String::from),"agent":p["agent"],"state":state,"reported_state":p["agent_status"],"source":crate::agent_mux::SOURCE,"read_only":false,"pane_id":p["pane_id"],"terminal_id":p["terminal_id"]})
     }
 }
 pub fn import(session: &str) -> Result<Config> {
@@ -205,22 +247,23 @@ pub(crate) fn socket_path(session: &str) -> Result<PathBuf> {
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
         "Invalid multiplexer session name"
     );
+    let program = require_program()?;
     let home = std::env::home_dir().context("No home directory")?;
-    let config_path = std::env::var_os(format!("{}_CONFIG_PATH", PROGRAM.to_ascii_uppercase()))
+    let config_path = std::env::var_os(format!("{}_CONFIG_PATH", program.to_ascii_uppercase()))
         .map(PathBuf::from)
-        .unwrap_or(home.join(".config").join(PROGRAM).join("config.toml"));
+        .unwrap_or(home.join(".config").join(&program).join("config.toml"));
     Ok(if session == "default" {
         config_path
             .parent()
             .context("No multiplexer config directory")?
-            .join(format!("{PROGRAM}.sock"))
+            .join(format!("{program}.sock"))
     } else {
         config_path
             .parent()
             .context("No multiplexer config directory")?
             .join("sessions")
             .join(session)
-            .join(format!("{PROGRAM}.sock"))
+            .join(format!("{program}.sock"))
     })
 }
 pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
@@ -235,8 +278,7 @@ pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
         "Multiplexer session socket is not owned by this user"
     );
     drop(UnixStream::connect(&socket).context("Multiplexer session is not running")?);
-    let executable =
-        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
+    let executable = require_executable()?;
     let mut command = Command::new(executable);
     command.args(["--session", session, "api", "snapshot"]);
     Ok(serde_json::from_slice(&crate::read_query::output(
@@ -244,8 +286,7 @@ pub(crate) fn live_snapshot(session: &str) -> Result<Value> {
     )?)?)
 }
 pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> {
-    let executable =
-        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
+    let executable = require_executable()?;
     let socket = socket_path(session)?;
     let saved_path = socket.with_file_name("session.json");
     let saved: Value = match fs::read(&saved_path) {
@@ -263,7 +304,7 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
     let tabs = snap["tabs"]
         .as_array()
         .context("Multiplexer snapshot has no tabs")?;
-    let collection = format!("{PROGRAM}-{session}");
+    let collection = format!("{COLLECTION_PREFIX}-{session}");
     let root = project_state::data_root()?;
     let mut selected = None;
     let mut count = 0;
@@ -425,8 +466,7 @@ pub fn viewer(session: &str, pane: &str) -> Result<()> {
                 .all(|b| b.is_ascii_alphanumeric() || b":_-".contains(&b)),
         "Invalid multiplexer pane identity"
     );
-    let executable =
-        std::env::var("STARFLUX_AGENT_MUX").unwrap_or(crate::agent_mux::PROGRAM.into());
+    let executable = require_executable()?;
     starcore::crossterm::terminal::enable_raw_mode()?;
     let _guard = Restore;
     let mut last = Vec::new();
@@ -487,16 +527,16 @@ pub fn reject_write() -> Result<Value> {
 #[cfg(test)]
 mod saved_tests {
     #[test]
-    fn project_files_keep_their_binding_under_the_program_key() {
+    fn project_files_keep_their_binding_under_the_neutral_key() {
         let source = super::Source {
             session: "default".into(),
             workspace_id: "w1".into(),
             order: 0,
-            executable: super::PROGRAM.into(),
+            executable: "mux".into(),
             panes: Default::default(),
         };
         let mut value = serde_json::json!({"workspace": "proof"});
-        value[super::PROGRAM] = serde_json::to_value(&source).unwrap();
+        value[super::KEY] = serde_json::to_value(&source).unwrap();
         #[derive(serde::Serialize, serde::Deserialize)]
         struct Holder {
             workspace: String,
@@ -506,15 +546,15 @@ mod saved_tests {
         let loaded: Holder = serde_json::from_value(value).unwrap();
         assert_eq!(loaded.agent_mux.as_ref().unwrap().workspace_id, "w1");
         let saved = serde_json::to_value(&loaded).unwrap();
-        assert_eq!(saved[super::PROGRAM]["session"], "default");
+        assert_eq!(saved[super::KEY]["session"], "default");
         let empty: Holder =
-            serde_json::from_value(serde_json::json!({"workspace": "p", super::PROGRAM: null}))
+            serde_json::from_value(serde_json::json!({"workspace": "p", super::KEY: null}))
                 .unwrap();
         assert!(empty.agent_mux.is_none());
         assert!(
             serde_json::to_value(&empty)
                 .unwrap()
-                .get(super::PROGRAM)
+                .get(super::KEY)
                 .is_none()
         );
     }

@@ -338,8 +338,9 @@ pub fn external() -> Vec<Entry> {
             });
         }
     }
-    let agent_mux =
-        std::env::var("STARFLUX_AGENT_MUX").unwrap_or_else(|_| crate::agent_mux::PROGRAM.into());
+    let Some(agent_mux) = crate::agent_mux::executable() else {
+        return entries;
+    };
     let mut command = Command::new(agent_mux);
     command.args(["session", "list", "--json"]);
     if let Ok(out) = crate::read_query::output(command)
@@ -349,10 +350,10 @@ pub fn external() -> Vec<Entry> {
         for session in sessions.iter().filter(|s| s["running"] == true) {
             if let Some(name) = session["name"].as_str() {
                 entries.push(Entry {
-                    id: format!("{}-{name}", crate::agent_mux::PROGRAM),
+                    id: format!("{}-{name}", crate::agent_mux::SOURCE),
                     name: name.into(),
                     detail: "Live multiplexer projects and terminals".into(),
-                    source: crate::agent_mux::PROGRAM.into(),
+                    source: crate::agent_mux::SOURCE.into(),
                     is_default: false,
                     project: None,
                     tmux: None,
@@ -369,7 +370,7 @@ pub(crate) fn import_prepared(
     entry: &Entry,
     snapshot: Option<serde_json::Value>,
 ) -> Result<Config> {
-    if entry.source == crate::agent_mux::PROGRAM {
+    if entry.source == crate::agent_mux::SOURCE {
         let config = match snapshot {
             Some(snapshot) => crate::agent_mux::import_snapshot(&entry.name, snapshot)?,
             None => crate::agent_mux::import(&entry.name)?,

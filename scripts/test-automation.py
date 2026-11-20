@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Headless domain automation against private tmux processes, optionally over SSH."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import argparse
 import getpass
 import json
@@ -101,13 +101,13 @@ while True:
             result=json.loads(subprocess.check_output([str(app),'--ssh','proof','--ssh-config',str(config),'--remote-executable',str(wrapper),'--api',json.dumps(dict(version=1,id='relay',method='capabilities'))],env=env))
             assert result['ok'] and result['id']=='relay',result
         if args.agent_mux:
-            agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
+            agent_mux=subprocess.Popen([MUX,'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
             wait(lambda:(tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),('private '+DISPLAY+' server missing'))
-            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([(PROGRAM),*arguments],env=env))
+            def agent_mux_cli(*arguments):return json.loads(subprocess.check_output([MUX,*arguments],env=env))
             agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Native import café','--no-focus')
             agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Other workspace','--no-focus')
             wait(lambda:(tmp/('config/'+PROGRAM+'/session.json')).exists(),(DISPLAY+' layout missing'))
-            agent_mux_named=subprocess.Popen([(PROGRAM),'--session','named','server'],env=env,stdout=(tmp/(PROGRAM+'-named.log')).open('w'),stderr=subprocess.STDOUT)
+            agent_mux_named=subprocess.Popen([MUX,'--session','named','server'],env=env,stdout=(tmp/(PROGRAM+'-named.log')).open('w'),stderr=subprocess.STDOUT)
             wait(lambda:(tmp/('config/'+PROGRAM+'/sessions/named/'+PROGRAM+'.sock')).exists(),('named '+DISPLAY+' socket missing'))
             agent_mux_cli('--session','named','workspace','create','--cwd',str(tmp),'--label','Named source','--no-focus')
         c=Client();assert c.call('projects.list')['projects']==[],'API created an implicit demo project'
@@ -240,10 +240,10 @@ while True:
             if args.agent_mux:
                 original=agent_mux_cli('api','snapshot')['result']['snapshot'];panes=original['panes']
                 pids=[agent_mux_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in panes]
-                selected=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='default')
+                selected=next(s for s in c.call('sessions.external')['sources'] if s['source']==SOURCE and s['name']=='default')
                 params=dict(reference=selected['reference']);op=str(uuid.uuid4())
                 result=c.write('sessions.import',params,op);assert result==c.write('sessions.import',params,op)
-                assert result['session']==(PROGRAM+'-default') and len(result['projects'])>=2
+                assert result['session']==(COLLECTION+'-default') and len(result['projects'])>=2
                 assert c.write('sessions.import',params)['project']==result['project']
                 assert {p['pane_id'] for p in agent_mux_cli('api','snapshot')['result']['snapshot']['panes']}=={p['pane_id'] for p in panes}
                 assert all(Path('/proc',str(pid)).exists() for pid in pids),(DISPLAY+' import restarted a terminal')
@@ -253,14 +253,14 @@ while True:
                 for entry in result['projects']:
                     observed=c.call('panes.get',dict(project=entry['project'],pane=1))
                     health=observed['status'];source_pane=health['pane_id']
-                    assert health['source']==(PROGRAM) and health['pid']==original_pids[source_pane],observed
+                    assert health['source']==SOURCE and health['pid']==original_pids[source_pane],observed
                     assert health['terminal_id']==original_terminals[source_pane] and health['pid_start_ticks']>0,observed
                     assert observed['target'] is None and observed['capabilities']==dict(input=False,terminate=False),observed
                 agent_mux_cli('workspace','create','--cwd',str(tmp),'--label','Changed topology','--no-focus')
                 assert c.call('sessions.import',params,str(uuid.uuid4()),ok=False)['code']=='stale_source'
-                named=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='named')
-                result=c.write('sessions.import',dict(reference=named['reference']));assert result['session']==(PROGRAM+'-named') and result['projects']
-                latest=next(s for s in c.call('sessions.external')['sources'] if s['source']==(PROGRAM) and s['name']=='default')['reference']
+                named=next(s for s in c.call('sessions.external')['sources'] if s['source']==SOURCE and s['name']=='named')
+                result=c.write('sessions.import',dict(reference=named['reference']));assert result['session']==(COLLECTION+'-named') and result['projects']
+                latest=next(s for s in c.call('sessions.external')['sources'] if s['source']==SOURCE and s['name']=='default')['reference']
                 agent_mux.terminate();agent_mux.wait(timeout=5)
                 unavailable=c.call('panes.get',dict(project=agent_mux_project,pane=1),ok=False)
                 assert unavailable['code']=='operation_failed',unavailable
@@ -270,9 +270,9 @@ while True:
                 assert observation['target'] is None and observation['capabilities']==dict(input=False,terminate=False)
                 assert not (tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),'diagnostics restarted the missing server'
                 assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='source_unavailable',('import restarted a missing '+DISPLAY+' server')
-                assert not any(s['source']==(PROGRAM) and s['name']=='default' for s in c.call('sessions.external')['sources'])
-                agent_mux=subprocess.Popen([(PROGRAM),'server'],env=env,stdout=(tmp/(PROGRAM+'-restarted.log')).open('w'),stderr=subprocess.STDOUT)
-                wait(lambda:any(s['source']==(PROGRAM) and s['name']=='default' for s in c.call('sessions.external')['sources']),('restarted private '+DISPLAY+' server missing'))
+                assert not any(s['source']==SOURCE and s['name']=='default' for s in c.call('sessions.external')['sources'])
+                agent_mux=subprocess.Popen([MUX,'server'],env=env,stdout=(tmp/(PROGRAM+'-restarted.log')).open('w'),stderr=subprocess.STDOUT)
+                wait(lambda:any(s['source']==SOURCE and s['name']=='default' for s in c.call('sessions.external')['sources']),('restarted private '+DISPLAY+' server missing'))
                 assert c.call('sessions.import',dict(reference=latest),str(uuid.uuid4()),ok=False)['code']=='stale_source',('restarted '+DISPLAY+' server accepted an old reference')
             slow=tmp/'slow-discovery';record=tmp/'query-processes'
             slow.write_text('#!/usr/bin/python3\nimport os,subprocess,time,json\nfrom pathlib import Path\nchild=subprocess.Popen(["sleep","6"])\nPath('+repr(str(record))+').write_text(json.dumps([os.getpid(),child.pid]))\nchild.wait()\nprint("{\\\"sessions\\\":[]}")\n');slow.chmod(0o700)
@@ -363,7 +363,7 @@ while True:
         assert c.call('panes.get',dict(project=project,pane=1))['target']['pid']==original['pid'],'unrelated agent was replaced'
         data=tmp/'data/starflux/projects';slow='slow-proof';slow_source=tmp/'slow-source'
         slow_source.write_text('#!/bin/sh\nsleep 10\n');slow_source.chmod(0o700)
-        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,**{PROGRAM:dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)})})
+        config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,**{KEY:dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)})})
         (data/(slow+'.json')).write_text(json.dumps(config));(data/(slow+'.model.json')).write_text((data/(project+'.model.json')).read_text())
         interrupted=str(uuid.uuid4());slow_report={**report,'run_id':str(uuid.uuid4()),'sequence':1}
         started=time.monotonic();result=c.call('agents.report',dict(project=slow,pane=1,report=slow_report),interrupted,ok=False,deadline_ms=400)

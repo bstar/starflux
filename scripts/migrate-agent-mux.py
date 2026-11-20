@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare/back up and apply an explicitly requested, live default agent-multiplexer migration."""
-# Embedded runs get the name from STAR/FLUX; a direct run reads it beside this file.
-PROGRAM=__import__('os').environ.get('STARFLUX_AGENT_MUX_PROGRAM') or __import__('agent_mux').PROGRAM;ENV=PROGRAM.upper();DISPLAY=PROGRAM[:1].upper()+PROGRAM[1:]
+# The program is the user's local configuration; STAR/FLUX passes it in STARFLUX_AGENT_MUX.
+PROGRAM=__import__('pathlib').Path(__import__('os').environ['STARFLUX_AGENT_MUX']).name;ENV=PROGRAM.upper().replace('-','_');DISPLAY='Multiplexer';KEY='agent_mux'
 import base64
 import copy
 import datetime
@@ -31,7 +31,7 @@ def alive(pid):
     except OSError:return False
 
 def query(*args,raw=False):
-    result=subprocess.run([(PROGRAM),'--session','default',*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
+    result=subprocess.run([os.environ['STARFLUX_AGENT_MUX'],'--session','default',*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
     if result.returncode:raise RuntimeError((DISPLAY+' read failed: ')+result.stderr.decode(errors='replace')[:300])
     return result.stdout if raw else json.loads(result.stdout)
 
@@ -82,16 +82,16 @@ def ui_clients(config_path,owned_pids):
 def prepare(executable,proxy):
     root=runtime();data=project_root();root.mkdir(mode=0o700,parents=True,exist_ok=True);data.mkdir(mode=0o700,parents=True,exist_ok=True)
     stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6]
-    run=data.parent/'migrations'/((PROGRAM+'-default-')+stamp);run.mkdir(mode=0o700,parents=True)
+    run=data.parent/'migrations'/('starflux-default-'+stamp);run.mkdir(mode=0o700,parents=True)
     snapshot=query('api','snapshot');live=snapshot['result']['snapshot'];panes=live['panes']
     if not panes:raise RuntimeError((DISPLAY+' has no live panes to migrate'))
     config_path=Path(os.environ.get((ENV+'_CONFIG_PATH'),Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/(PROGRAM+'/config.toml')))
     source=config_path.parent/'session.json';saved=json.loads(source.read_text())
-    atomic(run/(PROGRAM+'-session.json'),source.read_bytes());atomic(run/(PROGRAM+'-snapshot.json'),snapshot)
-    if config_path.exists():atomic(run/(PROGRAM+'-config.toml'),config_path.read_bytes())
+    atomic(run/'source-session.json',source.read_bytes());atomic(run/'source-snapshot.json',snapshot)
+    if config_path.exists():atomic(run/'source-config.toml',config_path.read_bytes())
     documents=[];entries=[];projects=[]
     for order,workspace in enumerate(live['workspaces']):
-        wid=workspace['workspace_id'];name=(PROGRAM+'-default-')+wid
+        wid=workspace['workspace_id'];name='starflux-default-'+wid
         members=[p for p in panes if p['workspace_id']==wid]
         if not members:continue
         projects.append(name)
@@ -99,7 +99,7 @@ def prepare(executable,proxy):
         if path.exists():config=json.loads(path.read_text())
         elif (root/(name+'.json')).exists():config=json.loads((root/(name+'.json')).read_text())
         else:raise RuntimeError(('Import the '+DISPLAY+' project metadata first: ')+name)
-        source_meta=config.get((PROGRAM))
+        source_meta=config.get(KEY)
         if not source_meta or source_meta['session']!='default' or source_meta['workspace_id']!=wid:
             raise RuntimeError(('Refusing to overwrite a project that no longer references this '+DISPLAY+' session: ')+name)
         config=copy.deepcopy(config)
@@ -147,7 +147,7 @@ def prepare(executable,proxy):
             pair=[aliases.get(i,i) for i in state['split_panes']]
             if len(set(pair))!=2 or any(i not in ids for i in pair):state.update(split=False,split_panes=None)
             else:state['split_panes']=pair
-        config.update({PROGRAM:None},agent=None)
+        config.update({KEY:None},agent=None)
         for target,value in [(path,config),(root/(name+'.json'),config),(model_path,state)]:
             if target.exists():atomic(run/'backups'/target.parent.name/target.name,target.read_bytes())
             before=json.loads(target.read_text()) if target.exists() else None
@@ -157,7 +157,7 @@ def prepare(executable,proxy):
     views=active_views(root,projects)
     # A later accidental the agent multiplexer launch must not duplicate the migrated agents.
     retired=copy.deepcopy(saved);retired.update(workspaces=[],active=None,selected=0)
-    documents.append(dict(path=str(source),value=retired,kind=(PROGRAM+'-retired')))
+    documents.append(dict(path=str(source),value=retired,kind='agent-mux-retired'))
     for view in views:
         if view['id'].startswith('v-'):continue
         identity='v-'+uuid.uuid4().hex[:24]
@@ -218,7 +218,7 @@ def apply(path):
                     os.kill(client['pid'],signal.SIGTERM);retired.append(client['pid'])
             except (OSError,ValueError,IndexError):pass
         atomic(run/'status.json',dict(phase='handoff-requested',pid=os.getpid(),retired_ui_clients=retired))
-        command=[(PROGRAM),'--session','default','server','live-handoff','--import-exe',str(run/'accept')]
+        command=[os.environ['STARFLUX_AGENT_MUX'],'--session','default','server','live-handoff','--import-exe',str(run/'accept')]
         with (run/'handoff-request.log').open('wb') as log:
             result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=50)
         status=json.loads((run/'status.json').read_text())

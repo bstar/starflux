@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read-only collection with no controller, isolated metadata and cold namespaces."""
-from agent_mux import DISPLAY, ENV, PROGRAM
+from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import os
 import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,subprocess,tempfile,time,uuid
 from pathlib import Path
