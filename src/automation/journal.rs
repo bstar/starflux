@@ -278,13 +278,6 @@ pub(crate) fn occurred(resource: &str, change: &str, data: Value) -> Result<()> 
     journal.append(resource, data, change, "domain")?;
     persist(&path, &serde_json::to_vec(&journal)?)
 }
-/// [`occurred`] off the caller's thread; a frontend must not wait on the
-/// journal lock, and a lost occurrence only means a hook does not run.
-pub(crate) fn occurred_later(resource: String, change: &'static str, data: Value) {
-    std::thread::spawn(move || {
-        let _ = occurred(&resource, change, data);
-    });
-}
 pub(crate) fn read(cursor: &str) -> Result<Vec<Change>> {
     let root = root()?;
     let _lock = project_sync::Transaction::acquire(root.join("events.lock"))?;

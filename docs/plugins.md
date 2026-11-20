@@ -359,9 +359,10 @@ Four discrete occurrences complement those resource changes:
 | `pane.exited` | An open project's terminal process ended | `project`, `pane`, `epoch` |
 
 Focus follows the selected pane and project whether or not the window has
-desktop focus, once per change per frontend. Exits are observed by a frontend
-showing that project, so a project nobody has open reports no exit event; its
-later `pane.removed` change still arrives. Occurrences are not part of the
+desktop focus, once per change per frontend. Exits are reported once per
+terminal generation by the frontend monitoring that project's terminals, so a
+project nobody has open reports no exit event; its later `pane.removed` change
+still arrives. Occurrences are not part of the
 resource snapshot and are never reported as created or removed.
 
 State filters accept `unknown`, `idle`, `working`, `needs_input`,

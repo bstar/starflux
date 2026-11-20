@@ -1280,6 +1280,7 @@ impl Workspace {
                 }
                 let mut captured_at = Instant::now() - Duration::from_secs(10);
                 let mut source_identity: Option<(String, u32, u64)> = None;
+                let mut exit_journaled = false;
                 while !stopped.load(Ordering::Acquire) {
                     let mut permit = (capture.load(Ordering::Acquire)
                         && captured_at.elapsed() >= Duration::from_secs(5)
@@ -1330,6 +1331,16 @@ impl Workspace {
                         }
                     }
                     let mut closed = false;
+                    if value["exited"] == true && !exit_journaled {
+                        // The monitor is the one place that sees every exit of this
+                        // generation, before the pane is reaped and removed.
+                        exit_journaled = true;
+                        let _ = crate::automation::journal::occurred(
+                            &format!("panes/{}/{}", config.workspace, pane + 1),
+                            "exited",
+                            json!({"project": config.workspace, "pane": pane + 1, "epoch": epoch}),
+                        );
+                    }
                     if value["exited"] == true {
                         // Reap and remove membership under the same model transaction.
                         // Another view cannot reuse this slot before removal is durable.
@@ -5980,21 +5991,6 @@ impl Controller for Workspace {
                 Event::Health(project, pane, value, stopped) => {
                     if stopped.load(Ordering::Acquire) {
                         continue;
-                    }
-                    let was_alive = self
-                        .health
-                        .get(&(project.clone(), pane))
-                        .is_some_and(|old| old["alive"] == true);
-                    if was_alive && value["alive"] != true && value["reconnecting"] != true {
-                        // Epochs are known here only for the open project.
-                        let epoch = (project == self.config.workspace)
-                            .then(|| self.state.terminal_epochs.get(&pane).cloned())
-                            .flatten();
-                        crate::automation::journal::occurred_later(
-                            format!("panes/{project}/{}", pane + 1),
-                            "exited",
-                            json!({"project": project, "pane": pane + 1, "epoch": epoch}),
-                        );
                     }
                     if value["exited"] == true && value["reaped"] == true {
                         if let Err(error) = self.remove_exited_terminal(&project, pane) {
