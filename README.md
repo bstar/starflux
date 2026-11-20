@@ -29,7 +29,11 @@ The [feature plan](docs/plan.md) lists what is built and what is left; earlier c
 [Portfolios](docs/categories.md) group related projects with shared progress
 summaries, collapsible sections and manual ordering. An optional
 [Portfolio Coordinator](docs/category-agents.md) reviews alignment and proposes
-cross-project work; coordination is enabled explicitly for each portfolio.
+cross-project work; coordination is enabled explicitly for each portfolio. A shared
+[`PORTFOLIO.md`](docs/portfolio-context.md) gives the coordinator and every
+Codex agent in the portfolio the same cross-project context, and
+[portfolio health](docs/portfolio-health.md) watches project disk usage, runaway
+files and agent context sizes.
 Manage [Git worktrees](docs/worktrees.md) with **Ctrl+B, Shift+W**, including creation, reattachment, repository grouping and guarded removal on local/SSH hosts.
 **Ctrl+Esc** releases terminal input to workspace controls; **F6** toggles focus.
 Cells mode has **Add project** and **Close project** controls; with controls focused,

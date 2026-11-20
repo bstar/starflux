@@ -153,7 +153,16 @@ impl Workspace {
                         rows.push(CategoryRow {
                             id: p.workspace.clone(),
                             name: p.label.clone().unwrap_or(p.workspace.clone()),
-                            detail: p.host.clone().unwrap_or("local".into()),
+                            detail: match self
+                                .coordinator_badges
+                                .get(&format!("project:{}", p.workspace))
+                            {
+                                Some(badge) => format!(
+                                    "{} · {badge}",
+                                    p.host.clone().unwrap_or("local".into())
+                                ),
+                                None => p.host.clone().unwrap_or("local".into()),
+                            },
                             attention: 0,
                             working: 0,
                             project: Some(p.clone()),
@@ -278,13 +287,37 @@ impl Workspace {
             return Ok(true);
         }
         if let Some(id) = command.strip_prefix("details:") {
-            let mut items = vec![
+            let mut items = Vec::new();
+            if id != UNASSIGNED {
+                items.push(item(
+                    format!(
+                        "Portfolio context (PORTFOLIO.md) · {}…",
+                        self.coordinator_badges
+                            .get(id)
+                            .and_then(|b| b.split(" · ").next())
+                            .unwrap_or("checking")
+                    ),
+                    format!("category-agent:context:{id}"),
+                ));
+            }
+            items.push(item(
+                format!(
+                    "Portfolio health (disk & agent context){}…",
+                    self.coordinator_badges
+                        .get(id)
+                        .and_then(|b| b.split(" · ").find(|s| s.contains("Health")))
+                        .map(|s| format!(" · {s}"))
+                        .unwrap_or_default()
+                ),
+                format!("category-agent:health:{id}"),
+            ));
+            items.extend([
                 item(
                     "Portfolio Coordinator…",
                     format!("category-agent:open:{id}"),
                 ),
                 item("Expand / collapse", format!("categories:toggle:{id}")),
-            ];
+            ]);
             if id != UNASSIGNED {
                 items.extend([
                     item("Rename…", format!("categories:rename:{id}")),

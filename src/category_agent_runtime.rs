@@ -922,7 +922,14 @@ pub fn handoffs(project: &str, category: &str) -> Result<()> {
                     p["target"]["pane"].as_u64().unwrap_or(1) as usize - 1,
                     "queue_conversation",
                 );
-                request["text"] = p["text"].clone();
+                // Agents started before the current PORTFOLIO.md receive it with the task.
+                let prefix = crate::portfolio_context::handoff_prefix(
+                    &member,
+                    category,
+                    p["target"]["agent_pid"].as_u64().unwrap_or(0) as u32,
+                )
+                .unwrap_or_default();
+                request["text"] = json!(format!("{prefix}{}", p["text"].as_str().unwrap_or("")));
                 request["conversation"] = p["conversation"].clone();
                 request["expected_boot_id"] = p["target"]["boot_id"].clone();
                 request["expected_agent_pid"] = p["target"]["agent_pid"].clone();

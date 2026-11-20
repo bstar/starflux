@@ -810,6 +810,7 @@ impl Workspace {
                     "Portfolio Coordinator / executable and charter"
                 }
                 Prompt::CategoryAgentMessage(_) => "Portfolio conversation",
+                Prompt::PortfolioContextPath(_, _) => "Portfolio context location",
                 Prompt::CategoryAgentSetting(_, _, _, _) => "Portfolio provider setting",
                 Prompt::CategoryAgentApprove(_, _, _, _) => "Approve portfolio task",
                 Prompt::Category(_, _, _) => "Portfolio",

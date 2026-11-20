@@ -115,7 +115,31 @@ if args.category_agent_selection:
  choose('category-agent:effort:0',keyboard=True)
  wait(lambda:state()['state']['profile']['effort']=='high','effort choice did not save')
  assert 'turn/start' not in calls(),'selection started inference'
- print(json.dumps(dict(result='PASS',selection=True,ssh=args.ssh,cells=args.cells)))
+ if not args.ssh:
+  # Portfolio context and health are reachable, visible and measured headlessly.
+  menu=lambda:(a.snapshot().get('context_menu')or{})
+  labels=lambda:[i['label'] for i in menu().get('items',[])]
+  a.action('category-agent:context:'+gid)
+  wait(lambda:any('PORTFOLIO.md' in l and 'none yet' in l for l in labels()),'portfolio context status missing')
+  wait(lambda:any(i['action']=='category-agent:context-create' for i in menu().get('items',[])),'create PORTFOLIO.md action missing')
+  a.action('category-agent:context-create')
+  wait(lambda:any('PORTFOLIO.md' in l and 'active' in l for l in labels()),'portfolio context did not become active')
+  context=api('category_agent.get',base)['portfolio_context']
+  context_path=pathlib.Path(context['context']['path']);text=context_path.read_text()
+  assert text.startswith('# ') and 'Coordination rules' in text and 'Original' in text,text
+  assert api('category_agent.evidence',base)['portfolio_context']['text']==text
+  a.action('category-agent:close')
+  wait(lambda:any('Context ✓' in l for l in labels()),'portfolio menu does not show the active context')
+  a.action('category-agent:health:'+gid)
+  wait(lambda:any(i['action']=='category-agent:health-check' for i in menu().get('items',[])),'health page missing')
+  a.action('category-agent:health-check')
+  wait(lambda:any(l.startswith('Original ·') for l in labels()),'project disk use missing')
+  health=api('category_agent.get',base)['portfolio_health']['health']
+  assert health['checked_ms']>0 and health['scanned_ms']>0 and health['filesystems'],health
+  assert any(p['label']=='Original' and p['total']>0 for p in health['projects']),health['projects']
+  assert api('category_agent.evidence',base)['portfolio_health']['status']=='sampled'
+  context_path.unlink()
+ print(json.dumps(dict(result='PASS',selection=True,ssh=args.ssh,cells=args.cells,portfolio_context=not args.ssh,portfolio_health=not args.ssh)))
  raise SystemExit(0)
 first=review();first=wait(lambda:completed(first),'review did not complete')
 assert first['sources'] and first['result']['findings'] and first['result']['proposals']
@@ -144,7 +168,7 @@ print(json.dumps(dict(category_workflow='PASS',metadata_only_connect=True,shared
 # Approval binds source fingerprints and exact project/conversation/process identity.
 bindir=tmp/'handoff-bin';bindir.mkdir(exist_ok=True);delivery=tmp/'handoffs.jsonl'
 queue=bindir/'codex';queue.write_text('#!/usr/bin/python3\nimport json,sys,pathlib\nassert sys.argv[1]=="queue"\nwith pathlib.Path('+repr(str(delivery))+').open("a") as f:f.write(json.dumps(sys.argv[2:])+"\\n")\n');queue.chmod(0o700)
-env['PATH']=str(bindir)+os.pathsep+env['PATH']
+assert env['PATH'].split(os.pathsep)[0]==str(bindir),'the fake codex must precede the real CLI from launch'
 pane=api('panes.get',dict(project=name,pane=1));assert pane['status'].get('agent_pid'),pane
 run=secrets.token_hex(16);sequence=0
 
@@ -154,6 +178,9 @@ def report(lifecycle,conversation='fixture-project-conversation'):
  current=api('panes.get',dict(project=name,pane=1))
  values=dict(run_id=run,sequence=sequence,epoch=current['epoch'],agent_pid=current['status']['agent_pid'],agent_start_ticks=current['status']['agent_start_ticks'],boot_id=current['status']['boot_id'],harness='codex',source='proof',state=lifecycle,conversation_id=conversation,resume_argv=['codex','resume',conversation])
  return api('agents.report',dict(project=name,pane=1,report=values),write=True)
+# The receiving agent started before this PORTFOLIO.md, so the handoff must carry it.
+portfolio_md=pathlib.Path(api('category_agent.get',base)['portfolio_context']['context']['path'])
+portfolio_md.write_text('# Fixture portfolio\n\nHANDOFF_CONTEXT_MARKER\n')
 report('working')
 identity=api('panes.get',dict(project=name,pane=1))['target']
 # Keep an editable terminal draft. Native queued delivery must not paste or submit it.
@@ -167,6 +194,8 @@ assert not delivery.exists(),'stale source evidence dispatched work'
 a.action('category-agent:open:'+gid)
 wait(lambda:(a.snapshot().get('context_menu')or{}).get('title')=='Portfolio Coordinator','approval workspace missing')
 a.action('category-agent:proposal:'+third['id']+':'+proposal['id'])
+# The panel loads review history asynchronously; act once the task offers agent targets, as a user would.
+wait(lambda:any(i['action']=='category-agent:targets' for i in (a.snapshot().get('context_menu')or{}).get('items',[])),'proposal task page missing')
 a.action('category-agent:targets')
 wait(lambda:any(i['action'].startswith('category-agent:target:') for i in (a.snapshot().get('context_menu')or{}).get('items',[])),'native agent target picker missing')
 a.action('category-agent:target:0');a.action('category-agent:approve')
@@ -180,7 +209,9 @@ wait(lambda:result(third['id'])['result']['proposals'][0]['status']=='delivered'
 api('category_agent.approve',approval,write=True,ok=False)
 api('category_agent.resume_queue',base,write=True);time.sleep(.25)
 assert len(delivery.read_text().splitlines())==1,'approved task was delivered twice'
-queued=json.loads(delivery.read_text().splitlines()[0]);assert queued[queued.index('--message')+1]==proposal['text']
+queued=json.loads(delivery.read_text().splitlines()[0]);message=queued[queued.index('--message')+1]
+assert message.endswith(proposal['text']) and 'HANDOFF_CONTEXT_MARKER' in message and 'Change only this project' in message,message
+portfolio_md.unlink()
 assert queued[queued.index('--thread')+1]=='fixture-project-conversation'
 # Delivery does not claim that the project completed the task.
 api('category_agent.task',dict(**base,review=third['id'],proposal=proposal['id'],action='verified'),write=True)
@@ -188,7 +219,7 @@ assert result(third['id'])['result']['proposals'][0]['status']=='verified_by_use
 capture=api('panes.capture',dict(project=name,pane=1))
 assert 'DRAFT_DO_NOT_TOUCH' in capture.get('text','') and 'REPLY=DRAFT_DO_NOT_TOUCH' not in capture.get('text',''),'native queue altered or submitted the draft'
 assert alive(original_pid)
-print(json.dumps(dict(approval_workflow='PASS',source_freshness=True,busy_queue=True,exact_conversation=True,duplicate_safe=True,verification_separate_from_delivery=True)))
+print(json.dumps(dict(approval_workflow='PASS',handoff_carries_portfolio_context=True,source_freshness=True,busy_queue=True,exact_conversation=True,duplicate_safe=True,verification_separate_from_delivery=True)))
 
 # Claude uses the same evidence boundary with every native tool disabled.
 claude=tmp/'fake-claude-provider'

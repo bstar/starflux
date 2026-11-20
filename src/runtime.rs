@@ -498,7 +498,7 @@ impl Config {
             req["argv"] = json!(terminal.argv());
             req["recover_proxy"] = json!(true);
         } else if let Some(command) = agent_command.filter(|_| !recovered_boot) {
-            let mut argv = shell_words::split(command)?;
+            let mut argv = crate::portfolio_context::apply(self, shell_words::split(command)?);
             if !self.remote(pane) {
                 argv = crate::agent_hooks::with_session_hook(
                     argv,

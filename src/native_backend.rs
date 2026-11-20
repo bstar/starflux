@@ -718,10 +718,10 @@ fn launch_spec(
     };
     let argv = match agent {
         Some(command) if !config.remote(pane) => crate::agent_hooks::with_session_hook(
-            shell_words::split(command)?,
+            crate::portfolio_context::apply(config, shell_words::split(command)?),
             &std::env::current_exe()?.to_string_lossy(),
         ),
-        Some(command) => shell_words::split(command)?,
+        Some(command) => crate::portfolio_context::apply(config, shell_words::split(command)?),
         None => vec![
             std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()),
             "-l".into(),

@@ -5,6 +5,12 @@ portfolio coordinator…** (or **Configure provider, authentication and charter�
 Setup provides clickable provider and authentication choices. Select
 **Edit executable and portfolio charter…** for an optional CLI path and the
 portfolio objectives, then explicitly enable the portfolio coordinator.
+Shared context for the whole portfolio lives in `PORTFOLIO.md`; see
+[Portfolio context](portfolio-context.md). The coordinator reads it with its
+charter, and it never performs work itself: every change, including edits to
+`PORTFOLIO.md`, is a scoped proposal handed to the owning project's agent.
+Reviews also receive [portfolio health](portfolio-health.md): disk usage, runaway
+alerts and agent context efficiency, which the coordinator turns into proposals.
 
 For an existing Codex subscription, select **Codex** and **Existing CLI
 subscription login**. Select **Connect / refresh available models**, choose

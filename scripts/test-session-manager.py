@@ -244,6 +244,11 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
             real_notify=shutil.which('notify-send');assert real_notify,'notify-send is required for the native service check'
             helper.write_text('#!/usr/bin/python3\nimport json,sys,os,subprocess\nfrom pathlib import Path\nwith Path('+repr(str(tmp/'desktop-notifications'))+').open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\nif Path('+repr(str(tmp/'desktop-fail'))+').exists():raise SystemExit(1)\nenv=dict(os.environ)\nraise SystemExit(subprocess.call(['+repr(real_notify)+',*sys.argv[1:]],env=env))\n')
         env.update(PATH=str(bindir)+':'+env['PATH'],DBUS_SESSION_BUS_ADDRESS='unix:path='+str(tmp/('bus' if args.notification_service else 'fake-bus')),WAYLAND_DISPLAY='fixture-display')
+    if args.category_agent_workflow:
+        # Frontends and their handoff workers must resolve the fixture's fake
+        # `codex queue`, never the user's real Codex CLI.
+        handoff_bin=tmp/'handoff-bin';handoff_bin.mkdir()
+        env['PATH']=str(handoff_bin)+os.pathsep+env['PATH']
     project_directory=tmp
     if args.worktrees or args.narrow:
         project_directory=tmp/'repository';project_directory.mkdir()

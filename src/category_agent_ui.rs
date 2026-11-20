@@ -31,6 +31,42 @@ fn lines(width: usize, items: &mut Vec<crate::shelf::MenuItem>, text: &str) {
         }
     }
 }
+fn context_status(pc: &Value) -> String {
+    let c = &pc["context"];
+    let restart = pc["coverage"]["stale"].as_u64().unwrap_or(0)
+        + pc["coverage"]["missing"].as_u64().unwrap_or(0);
+    match c["status"].as_str() {
+        Some("ready") if restart > 0 => format!("active · {restart} agent(s) need a restart"),
+        Some("ready") => "active".into(),
+        Some("missing") | Some("unset") => "none yet · create it".into(),
+        Some("invalid") => "unreadable".into(),
+        _ => "checking".into(),
+    }
+}
+fn health_status(ph: &Value) -> String {
+    let h = &ph["health"];
+    if h["checked_ms"].as_u64().unwrap_or(0) == 0 {
+        return "not sampled yet".into();
+    }
+    let alerts = h["alerts"].as_array().cloned().unwrap_or_default();
+    let critical = alerts
+        .iter()
+        .filter(|a| a["severity"] == "critical")
+        .count();
+    match (critical, alerts.len() - critical) {
+        (0, 0) => "ok".into(),
+        (0, w) => format!("{w} warning(s)"),
+        (c, w) => format!("⚠ {c} critical · {w} warning(s)"),
+    }
+}
+fn ago(ms: u64) -> String {
+    let elapsed = crate::category_agent_runtime::now().saturating_sub(ms) / 1000;
+    match elapsed {
+        0..60 => format!("{elapsed}s ago"),
+        60..3600 => format!("{}m ago", elapsed / 60),
+        _ => format!("{}h ago", elapsed / 3600),
+    }
+}
 const FLEET: &str = "Keep the member projects aligned as STAR/FLEET. Map shared STAR/CORE primitives and reference implementations. Compare equivalent capabilities across members; separate intentional product differences from parity gaps. Evaluate reported progress against source evidence and acceptance checks. Track dependencies and cross-project regressions. Suggest shared toolkit changes before duplicated application work. Propose scoped tasks with evidence and explicit verification; never change code or dispatch work without user approval.";
 impl Workspace {
     pub(super) fn coordinator_request(
@@ -89,10 +125,8 @@ impl Workspace {
             }
             Err(error) => ui.error = Some(error),
         }
-        if self
-            .coordinator
-            .as_ref()
-            .is_some_and(|u| !u.category.is_empty())
+        // The archive list has no current portfolio but must still render its result.
+        if self.coordinator.is_some()
             && self.modal.is_none()
             && self
                 .context_menu
@@ -111,7 +145,21 @@ impl Workspace {
             let config = self.config.clone();
             let tx = self.tx.clone();
             std::thread::spawn(move || {
-                let badges = crate::category_agent_runtime::badges(&config).unwrap_or_default();
+                let mut badges = crate::category_agent_runtime::badges(&config).unwrap_or_default();
+                crate::portfolio_health::tick(&config);
+                for (key, health) in crate::portfolio_health::badges(&config) {
+                    badges
+                        .entry(key)
+                        .and_modify(|b| *b = format!("{health} · {b}"))
+                        .or_insert(health);
+                }
+                // Portfolio context state leads every header so it is always visible.
+                for (key, context) in crate::portfolio_context::badges(&config) {
+                    badges
+                        .entry(key)
+                        .and_modify(|b| *b = format!("{context} · {b}"))
+                        .or_insert(context);
+                }
                 let _ = tx.send(Event::CategoryAgentBadges(badges));
             });
         }
@@ -122,7 +170,10 @@ impl Workspace {
                 .as_ref()
                 .is_some_and(|m| m.title == "Portfolio Coordinator")
             && self.coordinator.as_ref().is_some_and(|u| {
-                u.pending.is_none() && u.updated.elapsed() > Duration::from_millis(600)
+                // The archive list is loaded once; there is no portfolio to refresh.
+                !u.category.is_empty()
+                    && u.pending.is_none()
+                    && u.updated.elapsed() > Duration::from_millis(600)
             })
         {
             if let Some(ui) = &mut self.coordinator {
@@ -164,6 +215,20 @@ impl Workspace {
         let enabled = profile["enabled"] == true;
         let archived = state["archived"] == true;
         let mut items = vec![
+            item(
+                format!(
+                    "Portfolio context (PORTFOLIO.md) · {}",
+                    context_status(&ui.data["portfolio_context"])
+                ),
+                "category-agent:tab:context",
+            ),
+            item(
+                format!(
+                    "Portfolio health (disk & agent context) · {}",
+                    health_status(&ui.data["portfolio_health"])
+                ),
+                "category-agent:tab:health",
+            ),
             item("Overview", "category-agent:tab:overview"),
             item("Conversation", "category-agent:tab:chat"),
             item("Findings", "category-agent:tab:findings"),
@@ -412,6 +477,287 @@ impl Workspace {
                     lines(width, &mut items, error);
                 }
                 lines(width, &mut items, profile["charter"].as_str().unwrap_or(""));
+            }
+            "context" => {
+                let pc = &ui.data["portfolio_context"];
+                let c = &pc["context"];
+                let status = c["status"].as_str().unwrap_or("checking");
+                let path = c["path"].as_str().unwrap_or("not chosen");
+                lines(
+                    width,
+                    &mut items,
+                    &match status {
+                        "ready" => format!(
+                            "✓ PORTFOLIO.md is active · revision {} · {} of {} bytes",
+                            c["revision"].as_str().unwrap_or("?"),
+                            c["bytes"],
+                            pc["limit"]
+                        ),
+                        "missing" => "No PORTFOLIO.md yet. Agents in this portfolio get no shared context.".into(),
+                        "unset" => "This portfolio has no local projects, so there is no shared root. Choose a location.".into(),
+                        "invalid" => format!(
+                            "PORTFOLIO.md cannot be used: {}",
+                            c["error"].as_str().unwrap_or("unknown error")
+                        ),
+                        _ => "Checking PORTFOLIO.md…".into(),
+                    },
+                );
+                lines(
+                    width,
+                    &mut items,
+                    &format!(
+                        "Location: {path} ({})",
+                        if c["custom_path"] == true {
+                            "custom location"
+                        } else {
+                            "shared root of this portfolio's projects"
+                        }
+                    ),
+                );
+                if !archived {
+                    if status == "missing" {
+                        items.push(item(
+                            "Create PORTFOLIO.md from the template",
+                            "category-agent:context-create",
+                        ));
+                    }
+                    if matches!(status, "ready" | "missing") {
+                        items.push(item(
+                            "Edit PORTFOLIO.md in a new terminal tab ($VISUAL / $EDITOR)",
+                            "category-agent:context-edit",
+                        ));
+                    }
+                    items.push(item(
+                        "Choose a different location…",
+                        "category-agent:context-path",
+                    ));
+                    if c["custom_path"] == true
+                        && let Some(default) = c["default_path"].as_str()
+                    {
+                        items.push(item(
+                            format!("Use the shared project root ({default})"),
+                            "category-agent:context-default",
+                        ));
+                    }
+                    if status == "ready" && !profile["charter"].as_str().unwrap_or("").is_empty() {
+                        items.push(item(
+                            "Copy the coordinator charter into PORTFOLIO.md as Objectives",
+                            "category-agent:context-charter",
+                        ));
+                    }
+                }
+                let cover = &pc["coverage"];
+                lines(
+                    width,
+                    &mut items,
+                    &format!(
+                        "Codex agents: {} current · {} need a restart · {} unknown (remote)",
+                        cover["current"],
+                        cover["stale"].as_u64().unwrap_or(0)
+                            + cover["missing"].as_u64().unwrap_or(0),
+                        cover["unknown"]
+                    ),
+                );
+                for a in cover["agents"].as_array().into_iter().flatten() {
+                    items.push(item(
+                        format!(
+                            "  {} · agent {} · {}",
+                            a["label"].as_str().unwrap_or("?"),
+                            a["pane"],
+                            a["state"].as_str().unwrap_or("?")
+                        ),
+                        format!("categories:reveal:{}", a["project"].as_str().unwrap_or("")),
+                    ));
+                }
+                lines(
+                    width,
+                    &mut items,
+                    "Shared with the portfolio coordinator and every Codex agent STAR/FLUX starts in these projects. Running agents keep the version they started with; restart an agent to apply edits. Tasks handed off by the coordinator include the current version. The coordinator never edits this file or any project: it proposes changes for you to approve and hand to the owning project's agent.",
+                );
+                if let Some(preview) = pc["preview"].as_str() {
+                    items.push(item("── Preview ──", "category-agent:noop"));
+                    lines(width, &mut items, preview);
+                }
+            }
+            "health" => {
+                let ph = &ui.data["portfolio_health"];
+                let h = &ph["health"];
+                let human = crate::portfolio_health::human;
+                if !archived {
+                    items.push(item(
+                        "Check now (rescan projects and agents)",
+                        "category-agent:health-check",
+                    ));
+                }
+                if h["checked_ms"].as_u64().unwrap_or(0) == 0 {
+                    lines(
+                        width,
+                        &mut items,
+                        "Not sampled yet. Free space is checked about every minute and projects are scanned about every 15 minutes while STAR/FLUX is open.",
+                    );
+                } else {
+                    lines(
+                        width,
+                        &mut items,
+                        &format!(
+                            "Free space checked {} · projects scanned {}",
+                            ago(h["checked_ms"].as_u64().unwrap_or(0)),
+                            ago(h["scanned_ms"].as_u64().unwrap_or(0))
+                        ),
+                    );
+                }
+                let alerts = h["alerts"].as_array().cloned().unwrap_or_default();
+                items.push(item(
+                    format!("── Alerts ({}) ──", alerts.len()),
+                    "category-agent:noop",
+                ));
+                if alerts.is_empty() {
+                    lines(
+                        width,
+                        &mut items,
+                        "No disk or agent context problems found.",
+                    );
+                }
+                for a in &alerts {
+                    lines(
+                        width,
+                        &mut items,
+                        &format!(
+                            "{} {}",
+                            if a["severity"] == "critical" {
+                                "⚠"
+                            } else {
+                                "•"
+                            },
+                            a["message"].as_str().unwrap_or("")
+                        ),
+                    );
+                }
+                items.push(item("── Drives ──", "category-agent:noop"));
+                for fs in ph["filesystems"].as_array().into_iter().flatten() {
+                    let total = fs["total"].as_u64().unwrap_or(0);
+                    let free = fs["free"].as_u64().unwrap_or(0);
+                    lines(
+                        width,
+                        &mut items,
+                        &format!(
+                            "{} free of {} ({}%) · drive holding {}{}",
+                            human(free),
+                            human(total),
+                            free * 100 / total.max(1),
+                            fs["path"].as_str().unwrap_or("?"),
+                            fs["loss_per_hour"]
+                                .as_f64()
+                                .filter(|l| *l > 0.0)
+                                .map(|l| format!(" · losing {}/hour", human(l as u64)))
+                                .unwrap_or_default()
+                        ),
+                    );
+                }
+                items.push(item("── Projects (disk use) ──", "category-agent:noop"));
+                let mut projects = h["projects"].as_array().cloned().unwrap_or_default();
+                projects.sort_by_key(|p| std::cmp::Reverse(p["total"].as_u64().unwrap_or(0)));
+                for p in &projects {
+                    let mut parts = p["categories"]
+                        .as_object()
+                        .map(|c| {
+                            c.iter()
+                                .map(|(k, v)| (k.clone(), v.as_u64().unwrap_or(0)))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    parts.sort_by_key(|(_, v)| std::cmp::Reverse(*v));
+                    items.push(item(
+                        format!(
+                            "{} · {}{}",
+                            p["label"].as_str().unwrap_or("?"),
+                            human(p["total"].as_u64().unwrap_or(0)),
+                            if p["complete"] == false && p["note"].is_string() {
+                                " (partial)"
+                            } else {
+                                ""
+                            }
+                        ),
+                        format!("categories:reveal:{}", p["project"].as_str().unwrap_or("")),
+                    ));
+                    let breakdown = parts
+                        .iter()
+                        .filter(|(_, v)| *v > 0)
+                        .map(|(k, v)| format!("{k} {}", human(*v)))
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    if !breakdown.is_empty() {
+                        lines(width, &mut items, &format!("  {breakdown}"));
+                    }
+                    if let Some(f) = p["largest"].as_array().and_then(|l| l.first()) {
+                        lines(
+                            width,
+                            &mut items,
+                            &format!(
+                                "  largest: {} ({})",
+                                f["path"].as_str().unwrap_or("?"),
+                                human(f["bytes"].as_u64().unwrap_or(0))
+                            ),
+                        );
+                    }
+                    if let Some(note) = p["note"].as_str() {
+                        lines(width, &mut items, &format!("  {note}"));
+                    }
+                }
+                items.push(item(
+                    "── Agents (context and storage) ──",
+                    "category-agent:noop",
+                ));
+                if let Some(s) = h["agent_storage"].as_object() {
+                    lines(
+                        width,
+                        &mut items,
+                        &format!(
+                            "All Codex session logs ({}): {}",
+                            s.get("path").and_then(Value::as_str).unwrap_or("?"),
+                            human(s.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+                        ),
+                    );
+                }
+                for a in h["agents"].as_array().into_iter().flatten() {
+                    let usage: crate::agent_context::AgentUsage =
+                        serde_json::from_value(a.clone()).unwrap_or_default();
+                    let window = match (usage.context_tokens, usage.context_window) {
+                        (Some(t), Some(w)) => format!(
+                            "context {}k of {}k ({:.0}%)",
+                            t / 1000,
+                            w / 1000,
+                            usage.window_fraction().unwrap_or(0.0) * 100.0
+                        ),
+                        _ => "context unknown".into(),
+                    };
+                    items.push(item(
+                        format!(
+                            "{} · agent {} · {} · {}",
+                            usage.label, usage.pane, usage.state, window
+                        ),
+                        format!("categories:reveal:{}", usage.project),
+                    ));
+                    let mut detail = vec![format!(
+                        "fixed instructions ~{}k tokens",
+                        usage.instruction_bytes / 4000
+                    )];
+                    if let Some(r) = usage.cache_ratio() {
+                        detail.push(format!("cache reuse {:.0}%", r * 100.0));
+                    }
+                    if let Some(b) = usage.session_log_bytes {
+                        detail.push(format!("session log {}", human(b)));
+                    }
+                    if let Some(n) = &usage.note {
+                        detail.push(n.clone());
+                    }
+                    lines(width, &mut items, &format!("  {}", detail.join(" · ")));
+                }
+                lines(
+                    width,
+                    &mut items,
+                    "STAR/FLUX measures; it never deletes files or changes agents. Ask the coordinator to review, and it proposes cleanup or context fixes as tasks for each project's own agent, which run only after you approve them. Sizes are allocated bytes; btrfs compression is not reflected. Remote projects are not scanned yet.",
+                );
             }
             "models" => {
                 items.push(item(
@@ -706,6 +1052,41 @@ impl Workspace {
             selected: Some(cursor),
         });
     }
+    /// Open PORTFOLIO.md in the user's editor as a new terminal tab of the
+    /// active project. The file is local, so the project must be local too.
+    fn edit_portfolio_context(&mut self, data: &Value) -> Result<()> {
+        let path = data["portfolio_context"]["context"]["path"]
+            .as_str()
+            .context("Choose a location for PORTFOLIO.md first")?
+            .to_owned();
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "nano".into());
+        let mut argv = shell_words::split(&editor)?;
+        argv.push(path);
+        let _lock = crate::project_sync::transaction(&self.config)?;
+        self.sync_project()?;
+        let mut state = self.state.clone();
+        let id = state.add_terminal()?;
+        ensure!(
+            !self.config.remote(id),
+            "PORTFOLIO.md is on this computer; switch to a local project to edit it here"
+        );
+        state.terminal_commands.insert(id, shell_words::join(argv));
+        state.terminal_launch_pending.push(id);
+        state.terminal_labels.insert(id, "PORTFOLIO.md".into());
+        state.save(&self.config)?;
+        drop(_lock);
+        self.coordinator = None;
+        self.context_menu = None;
+        self.release();
+        self.state = state;
+        self.ensure_sessions();
+        self.layout();
+        self.save();
+        self.note("Editing PORTFOLIO.md in a new terminal tab".into());
+        Ok(())
+    }
     pub(super) fn coordinator_action(&mut self, action: &str) -> Result<bool> {
         if let Some(index) = action.strip_prefix("menu:item:")
             && self
@@ -747,6 +1128,8 @@ impl Workspace {
         if let Some(category) = command
             .strip_prefix("open:")
             .or_else(|| command.strip_prefix("archive-open:"))
+            .or_else(|| command.strip_prefix("context:"))
+            .or_else(|| command.strip_prefix("health:"))
         {
             ensure!(
                 command.starts_with("archive-open:")
@@ -756,7 +1139,13 @@ impl Workspace {
             self.release();
             self.coordinator = Some(Coordinator {
                 category: category.into(),
-                tab: "overview".into(),
+                tab: if command.starts_with("context:") {
+                    "context".into()
+                } else if command.starts_with("health:") {
+                    "health".into()
+                } else {
+                    "overview".into()
+                },
                 data: if command.starts_with("archive-open:") {
                     json!({"state":{"archived":true}})
                 } else {
@@ -831,6 +1220,33 @@ impl Workspace {
                 self.open_prompt(Prompt::CategoryAgentSetup(ui.category, revision, profile))
             }
             "compose" => self.open_prompt(Prompt::CategoryAgentMessage(ui.category)),
+            "health-check" => {
+                self.coordinator_render();
+                self.coordinator_request(crate::portfolio_health::check_now);
+            }
+            "context-create" => {
+                self.coordinator_render();
+                self.coordinator_request(|c, g| crate::portfolio_context::create(c, g).map(|_| ()));
+            }
+            "context-default" => {
+                self.coordinator_render();
+                self.coordinator_request(|c, g| crate::portfolio_context::set_path(c, g, None));
+            }
+            "context-charter" => {
+                let charter = profile.charter.clone();
+                self.coordinator_render();
+                self.coordinator_request(move |c, g| {
+                    crate::portfolio_context::append_charter(c, g, &charter)
+                });
+            }
+            "context-path" => self.open_prompt(Prompt::PortfolioContextPath(
+                ui.category,
+                ui.data["portfolio_context"]["context"]["path"]
+                    .as_str()
+                    .unwrap_or("")
+                    .into(),
+            )),
+            "context-edit" => self.edit_portfolio_context(&ui.data)?,
             "model-entry" => self.open_prompt(Prompt::CategoryAgentSetting(
                 ui.category,
                 revision,

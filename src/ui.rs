@@ -168,6 +168,7 @@ struct AppHost {
 enum Prompt {
     CategoryAgentSetup(String, u64, crate::category_agent::Profile),
     CategoryAgentMessage(String),
+    PortfolioContextPath(String, String),
     CategoryAgentSetting(String, u64, crate::category_agent::Profile, bool),
     CategoryAgentApprove(String, String, String, Option<Value>),
     Category(Option<String>, u64, Option<String>),
@@ -2606,6 +2607,10 @@ impl Workspace {
             Prompt::CategoryAgentMessage(_) => {
                 vec![field("Message to the portfolio coordinator", String::new())]
             }
+            Prompt::PortfolioContextPath(_, current) => vec![field(
+                "Absolute local path for PORTFOLIO.md (empty = shared project root)",
+                current.clone(),
+            )],
             Prompt::CategoryAgentSetting(_, _, p, effort) => vec![field(
                 if *effort {
                     "Exact provider effort"
@@ -2952,6 +2957,16 @@ impl Workspace {
                     self.coordinator_request(move |c, g| {
                         ensure!(g == category, "Portfolio changed while editing settings");
                         crate::category_agent::configure(c, g, revision, profile).map(|_| ())
+                    });
+                }
+                Prompt::PortfolioContextPath(category, _) => {
+                    let path = values[0].trim();
+                    let path = (!path.is_empty()).then(|| std::path::PathBuf::from(path));
+                    let category = category.clone();
+                    self.coordinator_render();
+                    self.coordinator_request(move |c, g| {
+                        ensure!(g == category, "Portfolio changed");
+                        crate::portfolio_context::set_path(c, g, path)
                     });
                 }
                 Prompt::CategoryAgentMessage(category) => {
@@ -5022,6 +5037,7 @@ impl Workspace {
                     "Portfolio Coordinator / executable and charter"
                 }
                 Prompt::CategoryAgentMessage(_) => "Portfolio conversation",
+                Prompt::PortfolioContextPath(_, _) => "Portfolio context location",
                 Prompt::CategoryAgentSetting(_, _, _, _) => "Portfolio provider setting",
                 Prompt::CategoryAgentApprove(_, _, _, _) => "Approve portfolio task",
 

@@ -1,5 +1,6 @@
 mod activity;
 mod adoption;
+mod agent_context;
 mod agent_hooks;
 mod agent_mux;
 mod agent_state;
@@ -63,6 +64,8 @@ mod plugin_popup;
 mod plugin_runner;
 mod plugin_store;
 mod plugins;
+mod portfolio_context;
+mod portfolio_health;
 mod presentation;
 mod project;
 mod project_state;

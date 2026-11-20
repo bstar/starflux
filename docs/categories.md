@@ -28,6 +28,10 @@ project into that space to place it after the portfolio's last project. This
 also works when reordering projects already in the same portfolio. The space
 shows **Drop at end of portfolio** during a drag in graphical mode.
 
+Each portfolio header leads with the state of its shared `PORTFOLIO.md`, and
+the portfolio menu opens it first; see [Portfolio context](portfolio-context.md).
+Headers and project rows also show [portfolio health](portfolio-health.md) alerts.
+
 Portfolio membership and ordering are saved with the session and shared between
 its windows. Expansion is saved independently for each frontend. Concurrent
 portfolio edits are guarded: a stale edit asks you to reopen the menu.

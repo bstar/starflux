@@ -94,7 +94,7 @@ pub(crate) fn load_path(path: &std::path::Path) -> Result<State> {
 pub fn read(config: &Config, category: &str) -> Result<Value> {
     let state = load_path(&read_root(config, category)?)?;
     Ok(
-        json!({"category":category,"session":crate::session_catalog::group(config),"state":state,"runtime":crate::category_agent_runtime::snapshot(config,category)?,"policy":{"review_timing":"on_demand","evidence":"repositories_and_structured_status","terminal_history":false,"repository_writes":false,"handoff_approval_required":true,"busy_agent":"queue"}}),
+        json!({"category":category,"session":crate::session_catalog::group(config),"state":state,"runtime":crate::category_agent_runtime::snapshot(config,category)?,"portfolio_context":crate::portfolio_context::read(config, category).unwrap_or(Value::Null),"portfolio_health":crate::portfolio_health::read(config, category),"policy":{"review_timing":"on_demand","evidence":"repositories_and_structured_status","terminal_history":false,"repository_writes":false,"handoff_approval_required":true,"busy_agent":"queue"}}),
     )
 }
 pub fn configure(
@@ -207,7 +207,7 @@ pub fn evidence(config: &Config, category: &str) -> Result<Value> {
         projects.push(project);
     }
     Ok(
-        json!({"version":1,"category":category,"membership_revision":catalog.revision,"configuration_revision":state.revision,"charter":state.profile.charter,"projects":projects,"terminal_history_included":false}),
+        json!({"version":1,"category":category,"membership_revision":catalog.revision,"configuration_revision":state.revision,"charter":state.profile.charter,"portfolio_context":crate::portfolio_context::evidence(config, category),"portfolio_health":crate::portfolio_health::evidence(config, category),"projects":projects,"terminal_history_included":false}),
     )
 }
 
