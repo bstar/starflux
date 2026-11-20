@@ -33,6 +33,7 @@ parser.add_argument('--theme-settings',action='store_true')
 parser.add_argument('--cells',action='store_true')
 parser.add_argument('--native-sources',action='store_true',help='Exercise retained native source ownership instead of the default backend')
 parser.add_argument('--move-project',action='store_true',help='Move a live native terminal to another project')
+parser.add_argument('--latency',action='store_true',help='Measure input-to-frame latency with two and eight panes')
 parser.add_argument('--native-images',action='store_true',help='Check inline Kitty images in native terminals')
 parser.add_argument('--move-project-ui',action='store_true',help='Move it through the tab menu action instead of the API')
 parser.add_argument('--native-launch-race',action='store_true',help='Stall one native resume opener while another frontend attaches')
@@ -808,6 +809,56 @@ GLib.MainLoop().run()
             raise SystemExit(0)
         if args.plugin_panes_ui:
             exec(compile((root/'scripts/test-plugin-panes-ui.py').read_text(),str(root/'scripts/test-plugin-panes-ui.py'),'exec'),globals())
+            raise SystemExit(0)
+        if args.latency:
+            # Input to the frame the presenter receives (not to the physical
+            # display): paste a unique marker into the focused pane, press Enter,
+            # and time until the fake shell's REPLY line appears in a frame.
+            def all_text(client):
+                return '\n'.join(run.get('text','') for frame in client.frames.values()
+                                  for row in frame.get('rows',[]) for run in row.get('runs',[]))
+            def measure(samples=40):
+                timings=[]
+                for n in range(samples+5):
+                    # Short enough to fit one row of the narrowest of eight panes;
+                    # wrapped text interleaves with neighbouring panes in a frame.
+                    token='Z'+secrets.token_hex(2)
+                    if 'REPLY='+token in all_text(a):continue
+                    a.paste(token)
+                    started=time.monotonic();a.key('enter')
+                    while time.monotonic()-started<5:
+                        # Every attached client must be drained, or the controller
+                        # waits on the slowest presenter.
+                        for client in clients:
+                            if client.process.poll() is None:client.pump()
+                        if 'REPLY='+token in all_text(a):break
+                        time.sleep(.001)
+                    else:raise AssertionError('latency marker did not render: '+repr(all_text(a)[-200:])+' '+repr([(t['pane'],t['text'][-80:]) for t in a.snapshot().get('direct_terminals',[])])+' n='+str(n))
+                    if n>=5:timings.append((time.monotonic()-started)*1000)
+                    time.sleep(.05)
+                timings.sort()
+                return dict(median_ms=round(timings[len(timings)//2],2),p95_ms=round(timings[int(len(timings)*.95)-1],2),max_ms=round(timings[-1],2),samples=len(timings))
+            def ready():
+                # Visible panes whose process is running.
+                snap=a.snapshot()
+                visible=len(snap.get('pane_layout',{}).get('panes',[]))
+                running=len([e for e in snap.get('sessions',[]) if (e.get('health') or {}).get('pid')])
+                return min(visible,running)
+            def focus_largest():
+                # Measure in the largest visible pane, so its replies fit one row.
+                layout=a.snapshot().get('pane_layout',{}).get('panes',[])
+                p=max(layout,key=lambda p:p['rect']['width']*p['rect']['height']);r=p['rect']
+                a.pointer('down',r['x']+r['width']/2,r['y']+r['height']/2);a.pointer('up',r['x']+r['width']/2,r['y']+r['height']/2)
+                wait(lambda:a.snapshot().get('active')==p['pane'],'largest pane did not take focus')
+            a.action('terminal:split-right');wait(lambda:ready()>=2,'second pane did not start',timeout=30)
+            focus_largest()
+            two=measure()
+            for n,action in enumerate(['terminal:split-down','terminal:split-right','terminal:split-down','terminal:split-right','terminal:split-down','terminal:split-right'],start=3):
+                a.action(action);wait(lambda:ready()>=n,f'pane {n} did not start',timeout=30)
+            focus_largest()
+            eight=measure()
+            print(json.dumps(dict(result='PASS',latency=True,ssh=args.ssh,cells=args.cells,native=args.native_sources,
+                                  two_panes=two,eight_panes=eight)),flush=True)
             raise SystemExit(0)
         if args.plugin_ui:
             import runpy

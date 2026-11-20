@@ -43,6 +43,27 @@ STARFLUX_LATENCY_PHASE=ssh STARFLUX_LATENCY_KINDS=cells-ssh,graphical-ssh STARFL
 
 The default comparison uses the CPU renderer; set `STARFLUX_BENCH_RENDERER` to select another backend. JSON samples, screenshots and controller logs are saved under `target/terminal-latency-proof/`. The script uses private fake sessions, closes its test windows and restores the previously focused window.
 
+## Input-to-frame latency
+
+`scripts/test-session-manager.py --latency` measures, without a desktop, the
+time from a typed line reaching the controller to the presenter receiving the
+frame that shows its echo, with two panes and then eight. It runs in a private
+environment with fake shells; add `--native-sources`, `--cells` or `--ssh`.
+It excludes the host terminal's own drawing and display refresh. On this
+workstation (40 samples each, after warmup):
+
+| Mode | Two panes median / p95 | Eight panes median / p95 |
+| --- | ---: | ---: |
+| tmux backend | 9.2 / 9.5 ms | 9.4 / 10.1 ms |
+| Cells | 8.7 / 9.0 ms | 8.7 / 8.8 ms |
+| SSH | 9.2 / 9.5 ms | 9.6 / 10.6 ms |
+| Native terminals | 17.9 / 25.4 ms | 18.4 / 26.4 ms |
+| Native terminals over SSH | 17.8 / 18.4 ms | 18.4 / 25.9 ms |
+
+All are well inside the provisional targets (p95 below 50 ms for two panes and
+100 ms for eight). Native terminals add a source-broker hop. Hardware
+input-to-photon latency still needs the desktop benchmark below.
+
 ## Idle CPU
 
 With one native terminal and a cells presenter attached, a private session
