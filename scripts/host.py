@@ -55,6 +55,11 @@ def activity_from_screen(text):
     if yes and no and ('esc' in footer or 'enter' in footer):
         return 'waiting_for_approval'
     for line in reversed(footer.splitlines()):
+        # Claude Code: a spinner glyph and one verb ending in an ellipsis, with
+        # "esc to interrupt" anywhere in the footer (the hint line in 2.1.329).
+        claude=re.match(r'^\s*[✻✶✳✢✽·*●•+]+\s*([^\s(]+?)(?:…|\.\.\.)\s*(\(.*\))?\s*$',line)
+        if claude and re.fullmatch(r'[^\W\d_][\w-]{0,39}',claude.group(1)) and not any(c.isdigit() or c=='_' for c in claude.group(1)) and 'esc to interrupt' in footer:
+            return 'working'
         line=line.lstrip(' \t│┃|●*•■')
         if line.startswith('automatic reconnect could not restore this session') or line.startswith('server connection could not be restored'):
             return 'backend_unavailable'

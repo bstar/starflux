@@ -164,11 +164,11 @@ pub fn screen_state(text: &str) -> &'static str {
     }
     "idle"
 }
-/// Claude Code's busy line: a spinner glyph, one changing verb ending in an
-/// ellipsis, then a parenthesis, e.g.
-/// `✻ cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)`. Newer versions
-/// may show "esc to interrupt" on the hint line instead, so it may appear in
-/// the parenthesis or anywhere in the footer.
+/// Claude Code's busy line: a spinner glyph and one changing verb ending in an
+/// ellipsis, optionally followed by a parenthesis, e.g. `· misting…` (2.1.329,
+/// with "esc to interrupt" on the hint line below the input box) or
+/// `✻ cogitating… (12s · ↑ 1.2k tokens · esc to interrupt)`. "esc to interrupt"
+/// must appear somewhere in the footer.
 fn claude_working(line: &str, footer: &str) -> bool {
     const GLYPHS: &str = "✻✶✳✢✽·*●•+";
     let line = line.trim_start();
@@ -176,9 +176,9 @@ fn claude_working(line: &str, footer: &str) -> bool {
         return false;
     }
     let line = line.trim_start_matches(|c: char| c.is_whitespace() || GLYPHS.contains(c));
-    let Some((label, tail)) = line.split_once('(') else {
-        return false;
-    };
+    let (label, tail) = line
+        .split_once('(')
+        .map_or((line, None), |(label, tail)| (label, Some(tail)));
     let label = label.trim();
     let Some(word) = label
         .strip_suffix('…')
@@ -189,7 +189,7 @@ fn claude_working(line: &str, footer: &str) -> bool {
     !word.is_empty()
         && word.len() <= 40
         && word.chars().all(|c| c.is_alphabetic() || c == '-')
-        && tail.contains(')')
+        && tail.is_none_or(|tail| tail.contains(')'))
         && footer.contains("esc to interrupt")
 }
 pub fn screen_observation(command: Command) -> Option<(String, String)> {
@@ -362,6 +362,15 @@ mod tests {
                 "✻ Clauding… (8s · ↓ 300 tokens)\n╭───╮\n│ > │\n╰───╯\n  ⏵⏵ auto mode · esc to interrupt"
             ),
             "working"
+        );
+        // Screens captured from Claude Code 2.1.329 in a tmux pane.
+        assert_eq!(
+            screen_state(include_str!("../testdata/claude-code-2.1.329-busy.txt")),
+            "working"
+        );
+        assert_eq!(
+            screen_state(include_str!("../testdata/claude-code-2.1.329-idle.txt")),
+            "idle"
         );
         // Without a spinner glyph, an ellipsis line is ordinary output.
         assert_eq!(screen_state("Loading… (step 2)\nesc to interrupt"), "idle");
