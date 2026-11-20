@@ -405,5 +405,7 @@ while True:
                     peer.settimeout(5);peer.connect(str(owner_path.with_name('broker.sock')))
                     peer.sendall((json.dumps(dict(version=1,id=1,token=token,action=dict(op='shutdown',instance=record['instance'])))+'\n').encode())
                     assert json.loads(peer.makefile('rb').readline(65536)).get('ok'),'private native owner rejected shutdown'
+                deadline=time.monotonic()+10
+                while Path('/proc',str(record['pid'])).exists() and time.monotonic()<deadline:time.sleep(.05)
             except (OSError,ValueError,KeyError) as error:print('native owner cleanup failed:',error)
         if daemon:daemon.terminate();daemon.wait(timeout=3)

@@ -790,6 +790,27 @@ fn migrate_legacy(
     if reply["migrated"] != true {
         return Ok(Err(reply["reason"].as_str().unwrap_or("kept").into()));
     }
+    Ok(Ok(migration_launch(config, pane, &reply)?))
+}
+/// A migration whose tmux session already ended but whose native terminal
+/// has not opened yet.
+#[cfg(target_os = "linux")]
+fn pending_migration(
+    config: &crate::runtime::Config,
+    pane: usize,
+) -> Result<Option<(Vec<String>, PathBuf)>> {
+    let reply = config.host_call(pane, &config.request(pane, "migration_plan"))?;
+    if reply["migrated"] != true {
+        return Ok(None);
+    }
+    Ok(Some(migration_launch(config, pane, &reply)?))
+}
+#[cfg(target_os = "linux")]
+fn migration_launch(
+    config: &crate::runtime::Config,
+    pane: usize,
+    reply: &Value,
+) -> Result<(Vec<String>, PathBuf)> {
     let shell: Vec<String> = serde_json::from_value(reply["shell"].clone())
         .ok()
         .filter(|argv: &Vec<String>| !argv.is_empty() && !argv.iter().any(|arg| arg == "-c"))
@@ -823,7 +844,7 @@ fn migrate_legacy(
             .as_str()
             .context("Migrated directory missing")?,
     );
-    Ok(Ok((vec![shell[0].clone(), "-c".into(), script], directory)))
+    Ok((vec![shell[0].clone(), "-c".into(), script], directory))
 }
 /// Move every idle terminal still on a project's retired tmux server to a
 /// native terminal. Busy terminals stay on tmux and are reported.
@@ -831,12 +852,25 @@ fn migrate_legacy(
 pub fn migrate_all(dry_run: bool) -> Result<Value> {
     let sockets = PathBuf::from(std::env::var_os("TMUX_TMPDIR").unwrap_or_else(|| "/tmp".into()))
         .join(format!("tmux-{}", unsafe { libc::getuid() }));
+    let plans = PathBuf::from(
+        std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_else(|| std::env::temp_dir().into()),
+    )
+    .join(format!("starflux-host-{}", unsafe { libc::getuid() }));
     let mut report = Vec::new();
     for config in crate::session_catalog::projects() {
+        let planned = std::fs::read_dir(&plans).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry.file_name().to_str().is_some_and(|name| {
+                    name.strip_prefix(&format!("migrated-{}-p", config.workspace))
+                        .is_some_and(|rest| rest.ends_with(".json"))
+                })
+            })
+        });
         if config.remote(0)
-            || !sockets
-                .join(format!("starflux-{}", config.workspace))
-                .exists()
+            || !planned
+                && !sockets
+                    .join(format!("starflux-{}", config.workspace))
+                    .exists()
         {
             continue;
         }
@@ -888,7 +922,18 @@ fn ensure_migration(
     );
     let info: Value = serde_json::from_slice(&probe.stdout)?;
     if info["state"] == "missing" {
-        return Ok(Err("no tmux terminal".into()));
+        // A migration whose tmux session ended before its native terminal opened.
+        if pending_migration(config, pane)?.is_none() {
+            return Ok(Err("no tmux terminal".into()));
+        }
+        if dry_run {
+            return Ok(Ok(()));
+        }
+        ensure!(
+            ensure_with(config, pane, None)?,
+            "Native terminal did not open"
+        );
+        return Ok(Ok(()));
     }
     if dry_run {
         let mut request = config.request(pane, "migrate");
@@ -1020,7 +1065,12 @@ fn ensure_with(
             Ok(launch) => explicit = Some(launch),
             Err(_) => return Ok(false),
         }
+    } else if explicit.is_none()
+        && let Some(launch) = pending_migration(config, pane)?
+    {
+        explicit = Some(launch);
     }
+    let migrating = explicit.is_some() && !plugin;
     // Select from shared pending metadata, not this frontend's launch hint.
     // Network/default-shell discovery stays outside the project transaction.
     let snapshot = ProjectState::load(config)?;
@@ -1116,6 +1166,9 @@ fn ensure_with(
     );
     state.native_sources.insert(pane, ready);
     state.save(config)?;
+    if migrating {
+        let _ = config.host_call(pane, &config.request(pane, "migration_done"));
+    }
     Ok(true)
 }
 #[cfg(not(target_os = "linux"))]

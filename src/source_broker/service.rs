@@ -261,11 +261,38 @@ pub(super) fn boot() -> Result<String> {
         .trim()
         .to_owned())
 }
+/// Environment that identifies one running agent session rather than the user.
+fn agent_session_marker(key: &str) -> bool {
+    key == "CLAUDECODE"
+        || key == "CLAUDE_PID"
+        || key == "AI_AGENT"
+        || key.starts_with("CLAUDE_CODE_")
+        || key.starts_with("CODEX_THREAD")
+        || key == "STARFLUX_PANE"
+        || key == "STARFLUX_WORKSPACE"
+        || key == "STARFLUX_PANE_EPOCH"
+}
 fn root(data: &Path) -> Result<Directory> {
+    make_private(data)?;
     Directory::open(data)?.child("native-sources")
 }
 fn existing_root(data: &Path) -> Result<Directory> {
+    make_private(data)?;
     Directory::open_existing(data)?.open_child("native-sources", false)
+}
+/// Older builds created STAR/FLUX's data directory with mode 0755. The native
+/// owner requires a private directory, so tighten one this user owns; a
+/// symlink or another user's directory is still rejected by `Directory`.
+fn make_private(data: &Path) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if let Ok(metadata) = fs::symlink_metadata(data)
+        && metadata.is_dir()
+        && metadata.uid() == unsafe { libc::getuid() }
+        && metadata.mode() & 0o077 != 0
+    {
+        fs::set_permissions(data, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 /// Resolving a short descriptor-relative pathname permits deep data directories
 /// without moving the live socket into the ephemeral runtime namespace.
@@ -477,6 +504,14 @@ pub fn ensure(data: &Path, executable: &Path) -> Result<Handle> {
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
+    // The owner outlives whatever started it, and every terminal inherits its
+    // environment. Markers of one agent session (for example when STAR/FLUX is
+    // started from inside Claude Code) must not reach unrelated terminals.
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(agent_session_marker) {
+            command.env_remove(key);
+        }
+    }
     // A separate session prevents closing an SSH launcher from hanging up its
     // retained owner. No inherited PTY or stdio stream is kept alive by it.
     unsafe {
@@ -888,6 +923,23 @@ pub fn stdio(data: &Path, executable: &Path, owner: Option<&Identity>) -> Result
     Ok(())
 }
 
+#[cfg(test)]
+mod marker_tests {
+    #[test]
+    fn agent_session_markers_are_not_user_environment() {
+        for key in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_PID",
+            "STARFLUX_PANE",
+        ] {
+            assert!(super::agent_session_marker(key), "{key}");
+        }
+        for key in ["PATH", "HOME", "CLAUDE_CONFIG_DIR", "SHELL"] {
+            assert!(!super::agent_session_marker(key), "{key}");
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -275,6 +275,12 @@ def main():
                 result['saved_screen']={'rows':rows,'columns':columns,'cursor':[min(int(current[5]),rows-1),min(int(current[4]),columns-1)],'alternate':current[6]=='1','cursor_visible':current[7]=='1','ansi_base64':base64.b64encode(formatted).decode()}
             except Exception as exc:result['screen_error']=str(exc)
         print(json.dumps(result))
+    elif action in ('migration_plan','migration_done'):
+        plan=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))/('migrated-'+workspace+'-'+pane+'.json')
+        if action=='migration_done':
+            plan.unlink(missing_ok=True);print(json.dumps({'done':True}));return
+        try:print(json.dumps(json.loads(plan.read_text())))
+        except (OSError,ValueError):print(json.dumps({'migrated':False,'reason':'no plan'}))
     elif action=='migrate':
         # Retire a terminal from the legacy tmux backend so it reopens as a
         # native terminal. Only an idle shell, or an idle Claude conversation
@@ -323,6 +329,13 @@ def main():
             history=folder/('migrated-'+workspace+'-'+pane+'.ansi')
             history.write_bytes(run('capture-pane','-p','-e','-J','-t',target,'-S','-2000').rstrip(b'\n')+b'\n')
             history.chmod(0o600)
+        # Record the plan before anything stops, so a native launch that fails
+        # afterwards is retried from it instead of losing the terminal.
+        plan=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))/('migrated-'+workspace+'-'+pane+'.json')
+        plan.parent.mkdir(mode=0o700,exist_ok=True)
+        with tempfile.NamedTemporaryFile('w',dir=plan.parent,delete=False) as staged:
+            json.dump({'migrated':True,'cwd':cwd,'shell':shell,'claude':claude,'history':str(history) if history else None},staged);staged.flush();os.fsync(staged.fileno())
+        os.chmod(staged.name,0o600);os.replace(staged.name,plan)
         expected={process:ticks(process) for process in stop}
         def alive(process):
             try:return ticks(process)==expected[process]

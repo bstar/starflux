@@ -20,6 +20,13 @@ window migrates it automatically. `starflux --migrate-terminals` migrates every
 idle terminal of projects that have no open window; add `--dry-run` to only
 report what would happen. `scripts/test-tmux-migration.py` is the headless proof.
 
+A migration records its plan on the host before it stops anything, so a native
+launch that fails afterwards is retried from the plan the next time the pane
+opens or `--migrate-terminals` runs. The native owner tightens STAR/FLUX's data
+directory to mode 0700 (older builds created it 0755) and does not pass one
+agent session's markers (`CLAUDECODE`, `CLAUDE_CODE_*`, `STARFLUX_PANE`, …) on
+to the terminals it starts.
+
 The Arch package lists tmux under optional dependencies; the AppImage and the
 Nix wrapper do not carry it.
 

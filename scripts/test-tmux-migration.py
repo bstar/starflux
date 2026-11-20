@@ -49,12 +49,20 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
                STARFLUX_SNAPSHOT_SERVICE='off', STARFLUX_AGENT_MUX=str(tmp / 'mux-not-installed'))
     projects = tmp / 'data/starflux/projects'
     for folder in (tmp / 'data', tmp / 'data/starflux', projects):folder.mkdir(mode=0o700)
-    names = dict(idle='mig-idle', busy='mig-busy')
+    # Older builds left the data directory world-readable; migration must cope.
+    (tmp / 'data/starflux').chmod(0o755)
+    names = dict(idle='mig-idle', busy='mig-busy', plan='mig-plan')
     for name in names.values():
         (projects / (name + '.json')).write_text(json.dumps(dict(workspace=name, host=None, directory=str(tmp), agent=None,
                                                                  executable=str(app), project_host=True)))
     (projects / (names['idle'] + '.model.json')).write_text(json.dumps(dict(terminal_first=True, terminals=[0, 1])))
     (projects / (names['busy'] + '.model.json')).write_text(json.dumps(dict(terminal_first=True, terminals=[0])))
+    (projects / (names['plan'] + '.model.json')).write_text(json.dumps(dict(terminal_first=True, terminals=[0])))
+    # A migration interrupted after its tmux session ended: only the plan remains.
+    plans = runtime / ('starflux-host-' + str(os.getuid())); plans.mkdir(mode=0o700)
+    (plans / ('migrated-' + names['plan'] + '-p0.ansi')).write_text('INTERRUPTED_SCROLLBACK\n')
+    (plans / ('migrated-' + names['plan'] + '-p0.json')).write_text(json.dumps(dict(migrated=True, cwd=str(tmp), shell=['/bin/bash', '--norc', '-i'], claude=None,
+                                                                                  history=str(plans / ('migrated-' + names['plan'] + '-p0.ansi')))))
 
     def tmux(name, *arguments, check=True):
         return subprocess.run(['tmux', '-L', 'starflux-' + name, '-f', '/dev/null', *arguments], env=env, check=check,
@@ -90,13 +98,15 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         dry = json.loads(subprocess.run([str(app), '--migrate-terminals', '--dry-run'], env=env, check=True, stdout=subprocess.PIPE, text=True).stdout)
         results = {(t['project'], t['pane']): t['result'] for t in dry['terminals']}
         assert results == {(names['idle'], 1): 'would migrate', (names['idle'], 2): 'would migrate',
-                           (names['busy'], 1): 'stays on tmux: agent busy'}, results
+                           (names['busy'], 1): 'stays on tmux: agent busy', (names['plan'], 1): 'would migrate'}, results
         assert tmux(names['idle'], 'list-sessions', '-F', '#{session_name}').split() == ['p0', 'p1'], 'dry run changed tmux'
 
         done = json.loads(subprocess.run([str(app), '--migrate-terminals'], env=env, check=True, stdout=subprocess.PIPE, text=True).stdout)
         results = {(t['project'], t['pane']): t['result'] for t in done['terminals']}
         assert results == {(names['idle'], 1): 'migrated', (names['idle'], 2): 'migrated',
-                           (names['busy'], 1): 'stays on tmux: agent busy'}, results
+                           (names['busy'], 1): 'stays on tmux: agent busy', (names['plan'], 1): 'migrated'}, results
+        wait(lambda: 'INTERRUPTED_SCROLLBACK' in api('panes.capture', dict(project=names['plan'], pane=1))['text'], 'interrupted migration did not resume')
+        assert not list(plans.glob('*.json')), 'migration plans were not cleared'
         assert subprocess.run(['tmux', '-L', 'starflux-' + names['idle'], 'has-session'], env=env, stderr=subprocess.DEVNULL).returncode != 0, 'tmux server kept the idle project'
         assert tmux(names['busy'], 'list-sessions', '-F', '#{session_name}').split() == ['p0'], 'busy agent was not kept'
 
@@ -111,7 +121,7 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         again = {(t['project'], t['pane']): t['result'] for t in again['terminals']}
         assert again.pop((names['busy'], 1)) == 'stays on tmux: agent busy' and set(again.values()) <= {'not on tmux'}, again
         print(json.dumps(dict(result='PASS', idle_shell_migrated=True, scrollback_kept=True, conversation_resumed=True,
-                              prompt_not_resent=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
+                              prompt_not_resent=True, interrupted_plan_resumed=True, public_data_directory=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
     finally:
         for name in names.values():
             subprocess.run(['tmux', '-L', 'starflux-' + name, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
