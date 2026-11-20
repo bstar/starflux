@@ -54,7 +54,8 @@ gst-plugins-ugly dc08bb11dce0a43453466fb9034e4fe06709fb5af68475bcf6d288693b661a5
 SOURCES
 rm -rf "$source_work"
 
-# Native terminal transport needs extended-keys and allow-passthrough (tmux >=3.3).
+# Tests only: the optional tmux backend needs extended-keys and allow-passthrough
+# (tmux >=3.3). The AppImage does not bundle tmux.
 tmux_work=$(mktemp -d)
 curl --retry 5 -fsSL https://github.com/tmux/tmux/releases/download/3.5a/tmux-3.5a.tar.gz -o "$tmux_work/tmux.tar.gz"
 printf '%s  %s\n' 16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951 "$tmux_work/tmux.tar.gz" | sha256sum -c -

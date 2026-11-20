@@ -1216,7 +1216,7 @@ fn dispatch(request: &Request) -> Result<Value> {
                 state.terminal_labels.insert(id, label);
             }
             state.save(&config)?;
-            if config.native_terminals {
+            if config.native_for_new_terminals(id) {
                 drop(_lock);
             }
             config.ensure(id, None)?;

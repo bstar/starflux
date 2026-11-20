@@ -826,7 +826,7 @@ pub fn ensure_source(
         state.save(config)?;
         return Ok(true);
     }
-    if !config.native_terminals {
+    if !config.native_for_new_terminals(pane) {
         return Ok(false);
     }
     // A pre-existing tmux session remains on its original backend, including
@@ -1189,7 +1189,7 @@ pub fn call(
                 rpc(config, pane, native.clone())?;
             }
             return Ok(Some(
-                json!({"queued":true,"submitted":request["submit"]==true,"bytes":bytes.len(),"delivery":"queued","backend":"native"}),
+                json!({"delivered":true,"queued":true,"submitted":request["submit"]==true,"bytes":bytes.len(),"delivery":"queued","backend":"native"}),
             ));
         }
         "reap" => {

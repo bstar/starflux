@@ -1,5 +1,5 @@
 """One-shot host helper. Payload is base64 JSON, file bytes use stdin."""
-import base64, fcntl, hashlib, json, os, pathlib, re, shlex, signal, subprocess, sys, tempfile, termios, time
+import base64, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, termios, time
 
 import stat as file_stat
 
@@ -119,8 +119,13 @@ def main():
         if result.returncode:
             raise RuntimeError('tmux '+args[0]+': '+result.stderr.decode(errors='replace').strip())
         return result.stdout
-    def exists():return subprocess.run(tm+['has-session','-t',target if req.get('source_socket') else pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
+    # tmux is optional. Without it no tmux terminal can exist on this host, and
+    # STAR/FLUX opens native terminals instead.
+    has_tmux=shutil.which('tmux') is not None
+    def exists():return has_tmux and subprocess.run(tm+['has-session','-t',target if req.get('source_socket') else pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
     action=req['action']
+    if action=='capabilities':
+        print(json.dumps({'tmux':has_tmux}));return
     lifecycle_lock=None
     if action in ['ensure','restart','recover','reap','stop','terminate','input'] or (action=='attach' and req.get('ensure_shell')):
         lock_root=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR',tempfile.gettempdir()))/('starflux-host-'+str(os.getuid()))
@@ -128,6 +133,7 @@ def main():
         lifecycle_lock=(lock_root/(workspace+'-'+pane+'.lock')).open('a')
         fcntl.flock(lifecycle_lock,fcntl.LOCK_EX)
     if action=='ensure' or (action=='attach' and req.get('ensure_shell')):
+        if not has_tmux:raise RuntimeError('tmux is not installed on this host; open the terminal as a native terminal')
         replaced=False
         cwd=os.path.expanduser(req.get('directory') or '~')
         argv=req.get('argv') or [os.environ.get('SHELL','/bin/bash'),'-l']

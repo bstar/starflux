@@ -70,7 +70,7 @@ for elf in root.rglob('*'):
                 sys.exit('Invalid rewritten ELF load alignment: ' + str(elf))
 notice = root / 'usr/share/doc/starflux/third-party'
 notice.mkdir(parents=True, exist_ok=True)
-for package in sorted(packages | {'python3.9', 'tmux', 'pulseaudio-utils', 'dbus', 'alsa-plugins'}):
+for package in sorted(packages | {'python3.9', 'pulseaudio-utils', 'dbus', 'alsa-plugins'}):
     copyright_file = Path('/usr/share/doc') / package / 'copyright'
     if copyright_file.exists():
         shutil.copy2(copyright_file, notice / (package + '.copyright'))

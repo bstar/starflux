@@ -25,7 +25,7 @@ for executable in starflux starflux-terminal-client starflux-pty-proxy; do
     install -m755 "$bin/$executable" "$appdir/usr/bin/"
 done
 # Internal process management and audio capture work without distro packages.
-for executable in tmux pactl parec dbus-daemon dbus-launch notify-send; do
+for executable in pactl parec dbus-daemon dbus-launch notify-send; do
     install -m755 "$(command -v "$executable")" "$appdir/usr/bin/"
 done
 install -m755 /usr/bin/dbus-run-session "$appdir/usr/libexec/dbus-run-session"
@@ -73,7 +73,7 @@ python3 scripts/dist/bundle-libraries.py "$appdir"
 # The source archive URLs/hashes are immutable in deps-debian.sh.
 cp scripts/dist/deps-debian.sh "$appdir/usr/share/doc/starflux/third-party/build-sources.sh"
 cat > "$appdir/usr/share/doc/starflux/third-party/README.txt" <<'NOTICE'
-STAR/FLUX and STAR/CORE: MIT. Python, tmux and D-Bus retain their upstream licenses.
+STAR/FLUX and STAR/CORE: MIT. Python and D-Bus retain their upstream licenses.
 GStreamer core/base: LGPL-2.1-or-later. x264 plugin and x264: GPL-2.0-or-later.
 FFmpeg and audio/system libraries retain the licenses in the bundled Debian copyright files.
 Exact Debian binary/source versions are in debian-packages.txt. Corresponding source packages:

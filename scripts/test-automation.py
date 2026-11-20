@@ -17,7 +17,8 @@ import threading
 import time
 import uuid
 
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');parser.add_argument('--without-tmux',action='store_true',help='hide tmux from PATH; terminals must open natively');args=parser.parse_args()
+if args.without_tmux and args.session_imports:parser.error('--without-tmux cannot import tmux sessions')
 if args.agent_mux and not args.session_imports:parser.error('--agent-mux requires --session-imports')
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
@@ -45,6 +46,15 @@ while True:
   elif data.startswith(b'\\x1b') and len(data)<6:break
   else:draft+=data[:1];data=data[1:]
 """);shell.chmod(0o700)
+    if args.without_tmux:
+        # A PATH with every program the caller has except tmux.
+        hidden=tmp/'bin';hidden.mkdir()
+        for folder in env.get('PATH','').split(':'):
+            if not os.path.isdir(folder):continue
+            for name in os.listdir(folder):
+                link=hidden/name
+                if name!='tmux' and not link.exists() and os.access(os.path.join(folder,name),os.X_OK):link.symlink_to(os.path.join(folder,name))
+        env['PATH']=str(hidden);assert shutil.which('tmux',path=env['PATH']) is None
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell))
     clients=[];daemon=None;ssh_args=[];agent_mux=None;agent_mux_named=None;source_socket=None
     if args.agent_mux:
@@ -364,7 +374,7 @@ while True:
         data=tmp/'data/starflux/projects';slow='slow-proof';slow_source=tmp/'slow-source'
         slow_source.write_text('#!/bin/sh\nsleep 10\n');slow_source.chmod(0o700)
         config=json.loads((data/(project+'.json')).read_text());config.update(workspace=slow,**{KEY:dict(session='private',workspace_id='w1',order=0,executable=str(slow_source),panes={'0':dict(terminal_id='private',pane_id='p1',tab_id='t1',label='Slow',cwd=str(tmp),agent=None)})})
-        (data/(slow+'.json')).write_text(json.dumps(config));(data/(slow+'.model.json')).write_text((data/(project+'.model.json')).read_text())
+        (data/(slow+'.json')).write_text(json.dumps(config));model=json.loads((data/(project+'.model.json')).read_text());model.pop('native_sources',None);(data/(slow+'.model.json')).write_text(json.dumps(model))
         interrupted=str(uuid.uuid4());slow_report={**report,'run_id':str(uuid.uuid4()),'sequence':1}
         started=time.monotonic();result=c.call('agents.report',dict(project=slow,pane=1,report=slow_report),interrupted,ok=False,deadline_ms=400)
         assert result['code']=='deadline_exceeded' and result['outcome']=='unknown' and time.monotonic()-started<3,result
@@ -385,5 +395,15 @@ while True:
         if agent_mux_named:agent_mux_named.terminate();agent_mux_named.wait(timeout=5)
         for model in (tmp/'data/starflux/projects').glob('*.model.json'):
             project=model.name.removesuffix('.model.json')
-            subprocess.run(['tmux','-L','starflux-'+project,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            if shutil.which('tmux',path=env.get('PATH')):subprocess.run(['tmux','-L','starflux-'+project,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        owner_path=tmp/'data/starflux/native-sources/owner.json'
+        if owner_path.exists():
+            # Stop this test's private native owner; it ends its terminals.
+            try:
+                record=json.loads(owner_path.read_text())['owner'];token=json.loads(owner_path.with_name('token.json').read_text())
+                with socket.socket(socket.AF_UNIX) as peer:
+                    peer.settimeout(5);peer.connect(str(owner_path.with_name('broker.sock')))
+                    peer.sendall((json.dumps(dict(version=1,id=1,token=token,action=dict(op='shutdown',instance=record['instance'])))+'\n').encode())
+                    assert json.loads(peer.makefile('rb').readline(65536)).get('ok'),'private native owner rejected shutdown'
+            except (OSError,ValueError,KeyError) as error:print('native owner cleanup failed:',error)
         if daemon:daemon.terminate();daemon.wait(timeout=3)

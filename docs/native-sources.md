@@ -1,9 +1,22 @@
 # Native source owner integration
 
-The retained native PTY owner and its streaming connector are implemented as an
-internal component. The normal workspace still uses its existing terminal
-backends. These entry points do not migrate existing tmux/agent-multiplexer/transferred
-terminals or enable inline graphics in the installed UI.
+## Terminal backends
+
+tmux is optional. STAR/FLUX asks each project host whether tmux is installed:
+
+- Without tmux, new terminals are native terminals owned by STAR/FLUX's
+  retained PTY owner. They survive closing STAR/FLUX, show inline graphics
+  and can move between projects.
+- With tmux, new terminals use the tmux backend unless the project was opened
+  with `--native-terminals`. Existing tmux terminals stay on tmux either way.
+
+Importing tmux sessions needs tmux, and so does the tmux backend's test suite.
+The Arch package lists tmux under optional dependencies; the AppImage and the
+Nix wrapper no longer carry it.
+
+The retained native PTY owner and its streaming connector are described below.
+These entry points do not migrate existing tmux/agent-multiplexer/transferred
+terminals.
 
 ## Candidate recovery and compatibility (November 6)
 

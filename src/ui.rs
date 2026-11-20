@@ -1194,6 +1194,8 @@ impl Workspace {
             let tx = self.tx.clone();
             std::thread::spawn(move || {
                 let ensured = (|| -> Result<bool> {
+                    // Probe tmux before the transaction: a remote probe uses SSH.
+                    let native_default = config.native_for_new_terminals(pane);
                     let _transaction = crate::project_sync::transaction(&config)?;
                     let mut state = ProjectState::load(&config)?;
                     if stopped.load(Ordering::Acquire)
@@ -1202,7 +1204,7 @@ impl Workspace {
                     {
                         return Ok(false);
                     }
-                    let native = (config.native_terminals
+                    let native = (native_default
                         || state.native_sources.contains_key(&pane))
                         && !config.externally_owned(pane)
                         && config.adopted_terminal(pane).is_none()
@@ -1247,7 +1249,7 @@ impl Workspace {
                         state.terminal_launch_pending.retain(|id| *id != pane);
                         state.save(&config)?;
                     }
-                    if config.native_terminals || state.native_sources.contains_key(&pane) {
+                    if native_default || state.native_sources.contains_key(&pane) {
                         drop(_transaction);
                     }
                     config.ensure(pane, launch.then_some(command.as_deref()).flatten())?;
