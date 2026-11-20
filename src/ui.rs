@@ -3537,16 +3537,30 @@ impl Workspace {
     fn git_status(&self) -> Option<&crate::git::Status> {
         self.git.get(&self.git_location()).map(|(status, _)| status)
     }
+    /// Whether someone typed or a terminal produced output within `within`.
+    /// Periodic work runs at its interactive rate only while this holds, so an
+    /// idle window stays cheap.
+    fn recently_active(&self, within: Duration) -> bool {
+        self.last_typing.elapsed() < within
+            || self
+                .terminals
+                .values()
+                .any(|terminal| terminal.output_at.elapsed() < within)
+    }
     fn refresh_git(&mut self, force: bool) {
         let location = self.git_location();
         if self.git_pending.contains(&location) {
             return;
         }
+        // Repositories change while someone works in a terminal; an idle window
+        // refreshes rarely instead of starting the git helper every 3 seconds.
+        let active = self.git_open || self.recently_active(Duration::from_secs(10));
+        let interval = Duration::from_secs(if active { 3 } else { 30 });
         if !force
             && self
                 .git
                 .get(&location)
-                .is_some_and(|(_, time)| time.elapsed() < Duration::from_secs(3))
+                .is_some_and(|(_, time)| time.elapsed() < interval)
         {
             return;
         }
@@ -5466,7 +5480,8 @@ impl Controller for Workspace {
         if let Some(error) = self.screen_writer.error() {
             self.note(error);
         }
-        if self.shared_synced_at.elapsed() >= Duration::from_millis(250) {
+        let idle = !self.recently_active(Duration::from_secs(10));
+        if self.shared_synced_at.elapsed() >= Duration::from_millis(if idle { 1000 } else { 250 }) {
             if let Err(error) = self.leave_removed_worktree() {
                 self.note(format!("Worktree project: {error:#}"));
             }
@@ -6379,7 +6394,8 @@ impl Controller for Workspace {
             }
             self.navigation_saved_at = Instant::now();
         }
-        if self.last_inspect.elapsed() > Duration::from_millis(500) {
+        let idle = !self.recently_active(Duration::from_secs(10));
+        if self.last_inspect.elapsed() > Duration::from_millis(if idle { 2000 } else { 500 }) {
             self.last_inspect = Instant::now();
             if let Ok(root) = root() {
                 let stamp = project_state::data_root()
@@ -6989,10 +7005,14 @@ impl Controller for Workspace {
         }
     }
     fn tick_interval(&self) -> Duration {
-        if self.desktop.is_none() && self.state.space != Space::Apps {
+        // Input wakes the session immediately; this tick paces terminal output.
+        if self.desktop.is_some() || self.state.space == Space::Apps {
+            Duration::from_millis(33)
+        } else if self.recently_active(Duration::from_secs(2)) {
             Duration::from_millis(8)
         } else {
-            Duration::from_millis(33)
+            // Idle: STAR/CORE lets a quiet session sleep this long between polls.
+            Duration::from_millis(100)
         }
     }
     fn frame_interval(&self) -> Duration {

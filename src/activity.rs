@@ -297,6 +297,10 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                 source.inspect().ok()
             } else if let Some(terminal) = project.adopted_terminal(pane) {
                 terminal.observe(pane).ok()
+            } else if matches!(crate::native_backend::reference(project, pane), Ok(Some(_))) {
+                // Native terminals answer over the backend's socket; spawning a
+                // helper process per pane every refresh dominated idle CPU.
+                project.call(pane, &project.request(pane, "inspect")).ok()
             } else {
                 read(project.command(pane, &json!({"workspace": project.workspace, "pane": format!("p{pane}"), "action": "inspect"}), false))
             };

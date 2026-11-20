@@ -111,6 +111,14 @@ pub fn rpc(config: &crate::runtime::Config, pane: usize, request: Value) -> Resu
         io::{Seek, SeekFrom},
         time::{Duration, Instant},
     };
+    // A local read-only inspection is answered in this process: the broker
+    // connection is bounded by its own timeouts, and spawning this binary for
+    // every periodic health check was most of an idle controller's CPU.
+    // Inputs, launches, transfers and remote panes keep the isolated helper.
+    #[cfg(target_os = "linux")]
+    if !config.remote(pane) && request["op"] == "call" && request["action"] == "inspect" {
+        return dispatch(request);
+    }
     let mut output = tempfile::tempfile()?;
     let mut errors = tempfile::tempfile()?;
     let mut child = command(config, pane, "--native-pane-rpc")

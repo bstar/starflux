@@ -43,6 +43,27 @@ STARFLUX_LATENCY_PHASE=ssh STARFLUX_LATENCY_KINDS=cells-ssh,graphical-ssh STARFL
 
 The default comparison uses the CPU renderer; set `STARFLUX_BENCH_RENDERER` to select another backend. JSON samples, screenshots and controller logs are saved under `target/terminal-latency-proof/`. The script uses private fake sessions, closes its test windows and restores the previously focused window.
 
+## Idle CPU
+
+With one native terminal and a cells presenter attached, a private session
+measured these idle totals over 30 seconds after settling, including CPU of
+reaped helper processes:
+
+| Build | Idle CPU (one core) |
+| --- | ---: |
+| Before | 5.6% |
+| After | 1.8% |
+
+Three changes account for it: native pane health checks are answered in the
+controller instead of spawning a helper process every refresh; the git status
+helper runs every 30 seconds instead of every 3 while no one is typing and no
+terminal is producing output; and the controller polls every 100 ms while idle
+(8 ms while active), which STAR/CORE 0.25.2 allows. Shared project sync and
+catalog checks also slow down while idle. Input still wakes the controller
+immediately. This was measured on a loaded workstation without a desktop
+window; idle CPU with the graphical presenter and the eight-pane latency target
+still need desktop measurements.
+
 ## App Space
 
 App Space now retains unchanged chrome and crops the background surfaces around

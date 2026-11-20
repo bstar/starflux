@@ -263,6 +263,9 @@ pub struct Terminal {
     padding: [u16; 2],
     native_previous: Option<starcore::terminal_graphics::terminal_cells::Frame>,
     native_dirty: bool,
+    /// When this terminal last produced output; the controller polls quickly
+    /// only while terminals are active.
+    pub output_at: std::time::Instant,
     links: Vec<crate::terminal_links::Link>,
     link_wraps: Vec<bool>,
     link_revision: u64,
@@ -378,6 +381,7 @@ impl Terminal {
             padding: [PAD; 2],
             native_previous: None,
             native_dirty: true,
+            output_at: std::time::Instant::now(),
             links: Vec::new(),
             link_wraps: Vec::new(),
             link_revision: 0,
@@ -441,6 +445,7 @@ impl Terminal {
             padding: [PAD; 2],
             native_previous: None,
             native_dirty: true,
+            output_at: std::time::Instant::now(),
             links: Vec::new(),
             link_wraps: Vec::new(),
             link_revision: 0,
@@ -544,6 +549,7 @@ impl Terminal {
                 self.exited = snapshot.exited;
                 self.native_dirty = true;
                 self.snapshot_dirty = true;
+                self.output_at = std::time::Instant::now();
             }
             self.writer
                 .bracketed
@@ -557,6 +563,7 @@ impl Terminal {
             self.parser.process(&bytes);
             self.native_dirty = true;
             self.snapshot_dirty = true;
+            self.output_at = std::time::Instant::now();
         }
         self.writer
             .bracketed
