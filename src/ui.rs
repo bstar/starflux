@@ -6390,8 +6390,9 @@ impl Controller for Workspace {
             }
             self.navigation_saved_at = Instant::now();
         }
-        let idle = !self.recently_active(Duration::from_secs(10));
-        if self.last_inspect.elapsed() > Duration::from_millis(if idle { 2000 } else { 500 }) {
+        // The frontend snapshot is how tools and other windows see this view;
+        // keep it fresh even while idle.
+        if self.last_inspect.elapsed() > Duration::from_millis(500) {
             self.last_inspect = Instant::now();
             if let Ok(root) = root() {
                 let stamp = project_state::data_root()

@@ -79,8 +79,8 @@ Three changes account for it: native pane health checks are answered in the
 controller instead of spawning a helper process every refresh; the git status
 helper runs every 30 seconds instead of every 3 while no one is typing and no
 terminal is producing output; and the controller polls every 100 ms while idle
-(8 ms while active), which STAR/CORE 0.25.2 allows. Shared project sync and
-catalog checks also slow down while idle. Input still wakes the controller
+(8 ms while active), which STAR/CORE 0.25.2 allows. Shared project sync also
+slows down while idle; the frontend snapshot keeps its 500 ms cadence. Input still wakes the controller
 immediately. This was measured on a loaded workstation without a desktop
 window; idle CPU with the graphical presenter and the eight-pane latency target
 still need desktop measurements.
