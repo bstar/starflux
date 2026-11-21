@@ -76,6 +76,7 @@ pub(super) struct Finished {
 pub(super) struct Renderer {
     jobs: crossbeam_channel::Sender<Job>,
     done: crossbeam_channel::Receiver<Finished>,
+    wake: std::sync::Arc<std::os::fd::OwnedFd>,
 }
 impl Snapshot {
     pub fn capture_screen(source: &Source, history: u16, resources: &Resources) -> Result<Self> {
@@ -566,9 +567,15 @@ impl Renderer {
     pub fn new(resources: Resources, transport: Budget) -> Self {
         let (jobs, rx) = crossbeam_channel::bounded::<Job>(4);
         let (tx, done) = crossbeam_channel::bounded(4);
+        // A finished render wakes the owner's poll at once instead of waiting
+        // for its next timeout; that wait was most of a keystroke's latency.
+        let (wake, signal) = wake_pipe();
+        let wake = std::sync::Arc::new(wake);
+        let signal = std::sync::Arc::new(signal);
         for _ in 0..2 {
             let rx = rx.clone();
             let tx = tx.clone();
+            let signal = signal.clone();
             let resources = resources.clone();
             let transport = transport.clone();
             std::thread::spawn(move || {
@@ -592,10 +599,15 @@ impl Renderer {
                     {
                         break;
                     }
+                    notify(&signal);
                 }
             });
         }
-        Self { jobs, done }
+        Self { jobs, done, wake }
+    }
+    /// Readable whenever a render has finished since the last `receive`.
+    pub fn wake_fd(&self) -> std::os::fd::RawFd {
+        std::os::fd::AsRawFd::as_raw_fd(&*self.wake)
     }
     pub fn submit(&self, job: Job) -> Result<()> {
         self.jobs
@@ -603,8 +615,45 @@ impl Renderer {
             .map_err(|_| anyhow::anyhow!("Presentation workers are busy"))
     }
     pub fn receive(&self) -> Option<Finished> {
+        let mut drain = [0u8; 64];
+        while unsafe {
+            libc::read(
+                std::os::fd::AsRawFd::as_raw_fd(&*self.wake),
+                drain.as_mut_ptr().cast(),
+                drain.len(),
+            )
+        } > 0
+        {}
         self.done.try_recv().ok()
     }
+}
+/// A nonblocking close-on-exec pipe: (read end, write end).
+fn wake_pipe() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0; 2];
+    let result = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) };
+    assert_eq!(
+        result,
+        0,
+        "pipe2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+    unsafe {
+        (
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        )
+    }
+}
+fn notify(signal: &std::os::fd::OwnedFd) {
+    // A full pipe already guarantees a wakeup; nothing else can fail usefully.
+    let _ = unsafe {
+        libc::write(
+            std::os::fd::AsRawFd::as_raw_fd(signal),
+            [1u8].as_ptr().cast(),
+            1,
+        )
+    };
 }
 
 #[cfg(test)]

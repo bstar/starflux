@@ -993,7 +993,20 @@ fn with_desktop_environment(
             (!value.is_empty() && !value.contains('\0')).then(|| format!("{name}={value}"))
         })
         .collect();
+    with_environment(argv, assignments)
+}
+/// Run `argv` with extra `NAME=value` assignments, through one `env` call.
+fn with_environment(argv: Vec<String>, assignments: Vec<String>) -> Vec<String> {
     if assignments.is_empty() {
+        return argv;
+    }
+    if argv
+        .first()
+        .is_some_and(|program| program == "/usr/bin/env")
+    {
+        let mut argv = argv;
+        let at = 1 + argv[1..].iter().take_while(|arg| arg.contains('=')).count();
+        argv.splice(at..at, assignments);
         return argv;
     }
     std::iter::once("/usr/bin/env".to_string())
@@ -1163,11 +1176,21 @@ fn ensure_with(
                 .clone();
             let authorized = requested.is_some()
                 && crate::cold_start::consume_launch(config, pane, Some(&epoch))?;
-            let launch = if authorized {
+            let mut launch = if authorized {
                 wanted
             } else {
                 fallback.unwrap_or(wanted)
             };
+            // Agent hooks report status for exactly this project, pane and
+            // generation; without these a native agent's status is guessed.
+            launch.argv = with_environment(
+                launch.argv,
+                vec![
+                    format!("STARFLUX_WORKSPACE={}", config.workspace),
+                    format!("STARFLUX_PANE={}", pane + 1),
+                    format!("STARFLUX_PANE_EPOCH={epoch}"),
+                ],
+            );
             let target = Pane {
                 namespace,
                 previous: serde_json::from_value(discovered["previous"].clone())?,
@@ -1577,6 +1600,20 @@ pub fn run_query(_: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn launch_environment_uses_one_env_call_and_keeps_the_command() {
+        let argv = |text: &str| text.split(' ').map(String::from).collect::<Vec<_>>();
+        assert_eq!(
+            super::with_environment(argv("bash -l"), argv("A=1")),
+            argv("/usr/bin/env A=1 bash -l")
+        );
+        assert_eq!(
+            super::with_environment(argv("/usr/bin/env D=:0 claude --x"), argv("P=2 E=3")),
+            argv("/usr/bin/env D=:0 P=2 E=3 claude --x")
+        );
+        assert_eq!(super::with_environment(argv("bash"), vec![]), argv("bash"));
+    }
+
     #[test]
     fn model_rejects_native_references_from_an_old_pane_or_host_boot() {
         use crate::native_protocol::{Binding, Identity, Reference};

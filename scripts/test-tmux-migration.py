@@ -113,6 +113,10 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
             return dict(item.split(b'=', 1) for item in Path('/proc', str(children[0]), 'environ').read_bytes().split(b'\0') if b'=' in item) if children else None
         environment = wait(shell_environment, 'native shell process missing')
         assert environment.get(b'WAYLAND_DISPLAY') == b'sf-test-display' and b'CLAUDECODE' not in environment, sorted(environment)
+        # Agent hooks report against exactly this project, pane and generation.
+        model = json.loads((projects / (names['plan'] + '.model.json')).read_text())
+        assert environment.get(b'STARFLUX_WORKSPACE') == names['plan'].encode() and environment.get(b'STARFLUX_PANE') == b'1', sorted(environment)
+        assert environment.get(b'STARFLUX_PANE_EPOCH') == model['terminal_epochs']['0'].encode(), (environment.get(b'STARFLUX_PANE_EPOCH'), model['terminal_epochs'])
         assert not list(plans.glob('*.json')), 'migration plans were not cleared'
         assert subprocess.run(['tmux', '-L', 'starflux-' + names['idle'], 'has-session'], env=env, stderr=subprocess.DEVNULL).returncode != 0, 'tmux server kept the idle project'
         assert not (sockets / ('tmux-' + str(os.getuid())) / ('starflux-' + names['idle'])).exists(), 'stale tmux socket left behind'
@@ -129,7 +133,7 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         again = {(t['project'], t['pane']): t['result'] for t in again['terminals']}
         assert again.pop((names['busy'], 1)) == 'stays on tmux: agent busy' and set(again.values()) <= {'not on tmux'}, again
         print(json.dumps(dict(result='PASS', idle_shell_migrated=True, scrollback_kept=True, conversation_resumed=True,
-                              prompt_not_resent=True, interrupted_plan_resumed=True, public_data_directory=True, desktop_environment=True, agent_markers_dropped=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
+                              prompt_not_resent=True, interrupted_plan_resumed=True, public_data_directory=True, desktop_environment=True, agent_markers_dropped=True, pane_binding_environment=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
     finally:
         for name in names.values():
             subprocess.run(['tmux', '-L', 'starflux-' + name, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

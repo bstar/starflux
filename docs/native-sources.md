@@ -124,7 +124,9 @@ process that started it. Because the owner outlives that process, each local
 terminal also takes the desktop session variables (`DISPLAY`,
 `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, `DBUS_SESSION_BUS_ADDRESS`,
 `SSH_AUTH_SOCK` and similar) from the STAR/FLUX process that opens it, the way
-tmux refreshed them on attach. Terminals already running keep the environment
+tmux refreshed them on attach. Every terminal also gets `STARFLUX_WORKSPACE`,
+`STARFLUX_PANE` and `STARFLUX_PANE_EPOCH`, which agent hooks use to report
+status for exactly that pane. Terminals already running keep the environment
 they started with. The owner drops one agent session's markers (`CLAUDECODE`,
 `CLAUDE_CODE_*`, `CLAUDE_PID`, `AI_AGENT`, `STARFLUX_PANE`, …) and the
 presenter's Kitty and tmux markers. Packaged builds restore the host's

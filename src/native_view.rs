@@ -43,6 +43,15 @@ struct State {
     error: Mutex<Option<String>>,
     input_error: Mutex<Option<String>>,
     uncertain_input: AtomicBool,
+    /// Wakes this view's connector loop; set once the view joins a hub.
+    wake: OnceLock<Sender<()>>,
+}
+impl State {
+    fn poke(&self) {
+        if let Some(wake) = self.wake.get() {
+            let _ = wake.try_send(());
+        }
+    }
 }
 enum InputData {
     Raw(Vec<u8>),
@@ -137,6 +146,9 @@ impl InputSink {
             data: input,
             memory: Arc::new(memory),
         });
+        crate::latency_trace::mark("1 view-input-queued");
+        drop(queue);
+        self.0.poke();
         Ok(())
     }
     pub fn raw(&self, bytes: Vec<u8>) -> Result<()> {
@@ -153,8 +165,18 @@ struct Hub {
     identities: AtomicUsize,
     _slot: crate::graphics_resources::Lease,
     stopped: Arc<AtomicBool>,
+    wake: Sender<()>,
 }
 static HUBS: OnceLock<Mutex<Vec<Weak<Hub>>>> = OnceLock::new();
+/// Signalled whenever a native frame is ready for the controller to take, so it
+/// ticks at once instead of on its next interval.
+static OUTPUT_READY: OnceLock<(Sender<()>, Receiver<()>)> = OnceLock::new();
+fn output_ready() -> &'static (Sender<()>, Receiver<()>) {
+    OUTPUT_READY.get_or_init(|| bounded(1))
+}
+pub fn output_ready_receiver() -> Receiver<()> {
+    output_ready().1.clone()
+}
 impl Drop for Hub {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
@@ -163,6 +185,7 @@ impl Drop for Hub {
 impl Drop for View {
     fn drop(&mut self) {
         self.state.alive.store(false, Ordering::Release);
+        self.state.poke();
     }
 }
 fn disconnect(state: &State, error: String) {
@@ -220,6 +243,7 @@ impl View {
             error: Mutex::new(None),
             input_error: Mutex::new(None),
             uncertain_input: AtomicBool::new(false),
+            wake: OnceLock::new(),
         });
         let key = serde_json::to_string(&(
             config.remote(pane).then_some(&config.host),
@@ -242,6 +266,8 @@ impl View {
                 hub.identities.fetch_add(1, Ordering::AcqRel);
                 views.push(Arc::downgrade(&state));
                 drop(views);
+                let _ = state.wake.set(hub.wake.clone());
+                state.poke();
                 return Ok(Self {
                     state,
                     _hub: hub,
@@ -267,12 +293,15 @@ impl View {
             .stdout
             .take()
             .context("Native connector output unavailable")?;
+        let (wake, woken) = bounded(1);
+        let _ = state.wake.set(wake.clone());
         let hub = Arc::new(Hub {
             key,
             views: Mutex::new(vec![Arc::downgrade(&state)]),
             identities: AtomicUsize::new(1),
             _slot: slot,
             stopped: Arc::new(AtomicBool::new(false)),
+            wake,
         });
         list.push(Arc::downgrade(&hub));
         let (tx, rx) = bounded(32);
@@ -289,7 +318,7 @@ impl View {
         });
         let weak = Arc::downgrade(&hub);
         std::thread::spawn(move || {
-            let result = run(weak.clone(), input, rx);
+            let result = run(weak.clone(), input, rx, woken);
             if let Some(h) = weak.upgrade() {
                 let error = result.err().map_or_else(
                     || "Native view disconnected; input was not replayed".into(),
@@ -345,6 +374,8 @@ impl View {
         if next != *settings {
             next.epoch = settings.epoch.saturating_add(1);
             *settings = next;
+            drop(settings);
+            self.state.poke();
         }
     }
     pub fn set_palette(&self, theme: &crate::appearance::Appearance) {
@@ -356,6 +387,8 @@ impl View {
         if s.pixels != enabled {
             s.pixels = enabled;
             s.epoch = s.epoch.saturating_add(1);
+            drop(s);
+            self.state.poke();
         }
     }
     pub fn visible(&self, visible: bool) {
@@ -363,14 +396,19 @@ impl View {
         if s.visible != visible {
             s.visible = visible;
             s.epoch = s.epoch.saturating_add(1);
+            drop(s);
+            self.state.poke();
         }
     }
     pub fn take(&self) -> Option<Snapshot> {
         let snapshot = self.state.latest.lock().unwrap().take()?;
+        crate::latency_trace::mark("10 ui-frame-taken");
         if snapshot.epoch != self.state.settings.lock().unwrap().epoch {
             return None;
         }
         *self.state.applied.lock().unwrap() = Some((snapshot.epoch, snapshot.sequence));
+        // The owner sends the next frame only after this acknowledgement.
+        self.state.poke();
         Some(snapshot)
     }
     pub fn error(&self) -> Option<String> {
@@ -573,6 +611,7 @@ fn converter() -> Sender<Conversion> {
             let screen = canvas.parser.screen().visible_snapshot();
             drop(canvas);
             if state.settings.lock().unwrap().epoch == job.settings.epoch {
+                crate::latency_trace::mark("9 view-frame-converted");
                 *state.latest.lock().unwrap() = Some(Snapshot {
                     metadata: job.metadata,
                     clipboard_floor: job.clipboard_floor,
@@ -588,6 +627,7 @@ fn converter() -> Sender<Conversion> {
                     }),
                     memory: job.memory,
                 });
+                let _ = output_ready().0.try_send(());
             }
         }
     });
@@ -597,6 +637,7 @@ fn run(
     hub: Weak<Hub>,
     mut writer: std::process::ChildStdin,
     incoming: Receiver<Result<resources::Incoming>>,
+    wake: Receiver<()>,
 ) -> Result<()> {
     let fd = writer.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -834,6 +875,7 @@ fn run(
                 let sequence = value["sequence"]
                     .as_u64()
                     .context("Native frame sequence missing")?;
+                crate::latency_trace::mark("8 view-frame-received");
                 let frame: Frame = serde_json::from_value(value["frame"].clone())?;
                 frame.validate()?;
                 let metadata_charge = crate::graphics_owner::metadata::Metadata::preflight(
@@ -1057,6 +1099,7 @@ fn run(
             match writer.write(&packet.bytes[packet.offset..]) {
                 Ok(0) => anyhow::bail!("Native connector input closed"),
                 Ok(n) => {
+                    crate::latency_trace::mark("2 view-request-written");
                     packet.offset += n;
                     if packet.offset == packet.bytes.len() {
                         queue.pop_front();
@@ -1066,7 +1109,36 @@ fn run(
                 Err(e) => return Err(e.into()),
             }
         }
-        std::thread::sleep(Duration::from_millis(2));
+        // Sleep until the owner replies or a view has input, an acknowledgement
+        // or new settings. Only blocked writes, a busy converter or a pending
+        // retry need a short timer; a fixed poll here cost every keystroke.
+        if !incoming.is_empty() {
+            continue;
+        }
+        // Hand frames received this turn to the converter now.
+        for peer in peers.values_mut() {
+            if let Some(job) = peer.conversion.take() {
+                match conversions.try_send(job) {
+                    Ok(()) => (),
+                    Err(crossbeam_channel::TrySendError::Full(job)) => peer.conversion = Some(job),
+                    Err(_) => anyhow::bail!("Native frame worker stopped"),
+                }
+            }
+        }
+        let blocked = !queue.is_empty() || peers.values().any(|v| v.conversion.is_some());
+        let timeout = if blocked {
+            Duration::from_millis(2)
+        } else {
+            match retry.checked_duration_since(Instant::now()) {
+                Some(until) => until.clamp(Duration::from_millis(1), Duration::from_millis(50)),
+                None => Duration::from_millis(50),
+            }
+        };
+        let mut select = crossbeam_channel::Select::new();
+        select.recv(&incoming);
+        select.recv(&wake);
+        let _ = select.ready_timeout(timeout);
+        while wake.try_recv().is_ok() {}
     }
 }
 fn apply(parser: &mut vt100::Parser, frame: &Frame, modes: &Value) -> Result<()> {
@@ -1155,6 +1227,7 @@ mod tests {
             error: Mutex::new(None),
             input_error: Mutex::new(None),
             uncertain_input: AtomicBool::new(false),
+            wake: OnceLock::new(),
         })
     }
     #[test]

@@ -5470,6 +5470,7 @@ impl Controller for Workspace {
         self.refresh_kitty_fonts();
     }
     fn tick(&mut self) {
+        crate::latency_trace::mark("t ui-tick");
         let visible = self
             .visible_panes()
             .into_iter()
@@ -6577,12 +6578,14 @@ impl Controller for Workspace {
         }
     }
     fn scene(&mut self, v: Viewport) -> Scene {
+        crate::latency_trace::mark("11 ui-scene");
         let mut scene = self.draw(v);
         self.popup_scene(&mut scene);
         self.terminal_link_regions(&mut scene);
         scene
     }
     fn input(&mut self, input: Input) {
+        crate::latency_trace::mark("0 ui-input");
         if self.popup_input(&input) {
             return;
         }

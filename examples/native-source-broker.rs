@@ -22,6 +22,8 @@ mod graphics_store;
 mod graphics_stream;
 #[path = "../src/graphics_transfer.rs"]
 mod graphics_transfer;
+#[path = "../src/latency_trace.rs"]
+mod latency_trace;
 #[path = "../src/native_links.rs"]
 mod native_links;
 #[path = "../src/native_protocol.rs"]

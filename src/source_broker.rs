@@ -519,7 +519,10 @@ impl Source {
             let mut bytes = [0; 8192];
             match self.reader.read(&mut bytes) {
                 Ok(0) => self.eof = true,
-                Ok(n) => self.waiting = Some(bytes[..n].to_vec()),
+                Ok(n) => {
+                    crate::latency_trace::mark("5 owner-pty-read");
+                    self.waiting = Some(bytes[..n].to_vec())
+                }
                 Err(e)
                     if e.kind() == io::ErrorKind::WouldBlock
                         || e.kind() == io::ErrorKind::Interrupted => {}
@@ -574,6 +577,7 @@ impl Source {
                     self.queued = 0;
                 }
                 Ok(n) => {
+                    crate::latency_trace::mark("4 owner-pty-written");
                     message.offset += n;
                     self.queued -= n;
                     if message.offset == message.bytes.len() {
@@ -900,6 +904,7 @@ impl Broker {
             }
             Action::Inspect { source } => Ok(self.source(&source)?.info()),
             Action::Input { source, data } => {
+                crate::latency_trace::mark("3 owner-input-received");
                 ensure!(
                     data.len() <= INPUT.div_ceil(3) * 4,
                     "Input request exceeds limit"
@@ -1390,6 +1395,7 @@ impl Broker {
                     }
                     match done.result {
                         Ok(rendered) => {
+                            crate::latency_trace::mark("7 owner-frame-queued");
                             w.awaiting = true;
                             w.error = None;
                             w.sent = rendered.picture;
@@ -1463,6 +1469,7 @@ impl Broker {
             );
             match result {
                 Ok(tag) => {
+                    crate::latency_trace::mark("6 owner-render-started");
                     let w = self.watches.get_mut(&key).unwrap();
                     w.sequence = sequence;
                     w.pending = Some(tag);
@@ -1642,6 +1649,11 @@ impl Broker {
         for id in &source_ids {
             descriptors.push(self.sources[id].pollfd());
         }
+        descriptors.push(libc::pollfd {
+            fd: self.renderer.wake_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
         let ready = self.peers.values().any(|p| p.input.contains(&b'\n'))
             || self
                 .sources
@@ -1649,7 +1661,8 @@ impl Broker {
                 .any(|s| s.owner.buffered() > 0 && !s.owner.pending());
         let timeout = if ready {
             0
-        } else if self.inflight.is_empty() && self.opening.is_empty() && self.renders.is_empty() {
+        } else if self.inflight.is_empty() && self.opening.is_empty() {
+            // Finished renders wake the poll through the renderer's pipe.
             16
         } else {
             2
@@ -1759,6 +1772,9 @@ impl Broker {
                 }
             }
         }
+        // Start rendering output read in this turn now, not after the next poll.
+        self.collect_rendered();
+        self.schedule_watches();
         let opening = &self.opening;
         let renders = &self.renders;
         self.peers.retain(|id, p| {

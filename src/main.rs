@@ -45,6 +45,7 @@ mod host_env;
 mod inline_graphics_tests;
 mod keyboard;
 mod kitty_selection;
+mod latency_trace;
 mod machines;
 mod native_backend;
 mod native_links;
