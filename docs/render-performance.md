@@ -25,7 +25,7 @@ Results are written to `target/graphical-render-proof/chrome.json`.
 
 ## Local and SSH input measurement
 
-A native terminal fixture in disposable 1800×1800 Kitty windows produced these medians, with 15 measured inputs after warmup:
+A terminal fixture in disposable 1800×1800 Kitty windows produced these medians on 2026-10-28, with 15 measured inputs after warmup. Terminals then ran on the retired tmux backend; this benchmark has not been rerun on native terminals, because it needs an otherwise idle desktop:
 
 | Presentation | Local input delivery | Local captured update | SSH input delivery | SSH captured update |
 | --- | ---: | ---: | ---: | ---: |
@@ -48,21 +48,24 @@ The default comparison uses the CPU renderer; set `STARFLUX_BENCH_RENDERER` to s
 `scripts/test-session-manager.py --latency` measures, without a desktop, the
 time from a typed line reaching the controller to the presenter receiving the
 frame that shows its echo, with two panes and then eight. It runs in a private
-environment with fake shells; add `--native-sources`, `--cells` or `--ssh`.
-It excludes the host terminal's own drawing and display refresh. On this
-workstation (40 samples each, after warmup):
+environment with fake shells; add `--cells` or `--ssh`. It excludes the host
+terminal's own drawing and display refresh. Measured on 2026-11-20 with native
+terminals, the only backend (40 samples each, after warmup):
 
 | Mode | Two panes median / p95 | Eight panes median / p95 |
 | --- | ---: | ---: |
-| tmux backend | 9.2 / 9.5 ms | 9.4 / 10.1 ms |
-| Cells | 8.7 / 9.0 ms | 8.7 / 8.8 ms |
-| SSH | 9.2 / 9.5 ms | 9.6 / 10.6 ms |
-| Native terminals | 17.9 / 25.4 ms | 18.4 / 26.4 ms |
-| Native terminals over SSH | 17.8 / 18.4 ms | 18.4 / 25.9 ms |
+| Graphical | 17.7 / 25.0 ms | 18.2 / 25.7 ms |
+| Cells | 17.1 / 24.6 ms | 17.1 / 24.6 ms |
+| SSH | 17.7 / 18.0 ms | 18.1 / 25.7 ms |
 
 All are well inside the provisional targets (p95 below 50 ms for two panes and
-100 ms for eight). Native terminals add a source-broker hop. Hardware
-input-to-photon latency still needs the desktop benchmark below.
+100 ms for eight). The retired tmux backend measured about 9 ms median and
+10 ms p95 in every mode; native terminals add a hop through the terminal owner.
+Samples cluster near 17 ms and 25 ms, about 8 ms apart, which suggests a fixed
+polling step on the native path rather than variable work; it has not been
+profiled yet. Hardware input-to-photon latency needs the desktop benchmark
+below, which was last run on 2026-10-28, before native terminals became the
+default.
 
 ## Idle CPU
 

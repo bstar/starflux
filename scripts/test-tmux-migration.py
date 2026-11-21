@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
     log = tmp / 'claude-runs.log'
     env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'STARFLUX_SNAPSHOT_SERVICE')}
     env.update(HOME=str(home), XDG_RUNTIME_DIR=str(runtime), XDG_DATA_HOME=str(tmp / 'data'), XDG_CONFIG_HOME=str(tmp / 'config'),
-               TMUX_TMPDIR=str(sockets), SHELL='/bin/bash', PATH=str(bin_dir) + ':' + env['PATH'], MIGRATION_LOG=str(log),
+               TMUX_TMPDIR=str(sockets), SHELL='/bin/bash', PATH=str(bin_dir) + ':' + env['PATH'], MIGRATION_LOG=str(log), WAYLAND_DISPLAY='sf-test-display', CLAUDECODE='1',
                STARFLUX_SNAPSHOT_SERVICE='off', STARFLUX_AGENT_MUX=str(tmp / 'mux-not-installed'))
     projects = tmp / 'data/starflux/projects'
     for folder in (tmp / 'data', tmp / 'data/starflux', projects):folder.mkdir(mode=0o700)
@@ -106,6 +106,13 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         assert results == {(names['idle'], 1): 'migrated', (names['idle'], 2): 'migrated',
                            (names['busy'], 1): 'stays on tmux: agent busy', (names['plan'], 1): 'migrated'}, results
         wait(lambda: 'INTERRUPTED_SCROLLBACK' in api('panes.capture', dict(project=names['plan'], pane=1))['text'], 'interrupted migration did not resume')
+        # Native terminals get the opener's desktop session, never an agent session's markers.
+        supervisor = api('panes.get', dict(project=names['plan'], pane=1))['status']['source']['pid']
+        def shell_environment():
+            children = [int(c) for t in Path('/proc', str(supervisor), 'task').iterdir() for c in (t / 'children').read_text().split()]
+            return dict(item.split(b'=', 1) for item in Path('/proc', str(children[0]), 'environ').read_bytes().split(b'\0') if b'=' in item) if children else None
+        environment = wait(shell_environment, 'native shell process missing')
+        assert environment.get(b'WAYLAND_DISPLAY') == b'sf-test-display' and b'CLAUDECODE' not in environment, sorted(environment)
         assert not list(plans.glob('*.json')), 'migration plans were not cleared'
         assert subprocess.run(['tmux', '-L', 'starflux-' + names['idle'], 'has-session'], env=env, stderr=subprocess.DEVNULL).returncode != 0, 'tmux server kept the idle project'
         assert not (sockets / ('tmux-' + str(os.getuid())) / ('starflux-' + names['idle'])).exists(), 'stale tmux socket left behind'
@@ -122,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
         again = {(t['project'], t['pane']): t['result'] for t in again['terminals']}
         assert again.pop((names['busy'], 1)) == 'stays on tmux: agent busy' and set(again.values()) <= {'not on tmux'}, again
         print(json.dumps(dict(result='PASS', idle_shell_migrated=True, scrollback_kept=True, conversation_resumed=True,
-                              prompt_not_resent=True, interrupted_plan_resumed=True, public_data_directory=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
+                              prompt_not_resent=True, interrupted_plan_resumed=True, public_data_directory=True, desktop_environment=True, agent_markers_dropped=True, busy_agent_kept=True, dry_run_read_only=True, repeat_is_noop=True)))
     finally:
         for name in names.values():
             subprocess.run(['tmux', '-L', 'starflux-' + name, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

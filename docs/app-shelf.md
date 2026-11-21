@@ -186,7 +186,7 @@ starflux --workspace my-app
 starflux --workspace my-app --stop
 ```
 
-`--close` detaches the controller while retaining tmux sessions and app workers. `--stop` explicitly stops that named project's terminals and app desktops. Other projects are retained. A project lease prevents two updated controllers from simultaneously resizing or typing into the same project.
+`--close` detaches the controller while retaining its native terminals and app workers. `--stop` explicitly stops that named project's terminals and app desktops. Other projects are retained. A project lease prevents two updated controllers from simultaneously resizing or typing into the same project.
 
 Already-running controllers keep the executable they started with. To adopt App Shelf for an existing workspace, close its workspace frontend and reopen the same name. Its agent processes remain alive.
 
@@ -226,7 +226,7 @@ Terminals now follow the PTY/cell model used by the agent multiplexer: the backe
 
 Selection, wide/combining characters, ANSI colors, bold, dim, italic, underline, cursor position, bracketed paste, menu keys, splits and file staging use the PTY state. Only changed rows cross the connection. Producer polling is independent of periodic chrome redraws. The terminal header shows the current font family and opens a system monospace picker on the display computer. Its minus/plus controls adjust the current Kitty OS window's native font size, with reset in the picker. The local STAR/FLUX helper and font watcher acknowledge applied changes after resize presentation; an outdated helper must be updated on the listening machine, including SSH clients. Kitty font families apply to all windows in its process, as stated in the picker; size changes stay window-local. The installer versions watcher paths so a configuration reload loads the upgrade. Font choices are runtime-only and do not rewrite Kitty's configured fonts.
 
-`scripts/test-native-terminal.py` runs a headless proof with a private fake shell, private tmux namespace and isolated state directories. It checks for native row delivery and zero terminal pixel frames, without opening windows or touching real agents. `STAR_TERMINAL_RENDERER=kitty-pixels` is an explicit compatibility/diagnostic choice rather than the default.
+`scripts/test-native-terminal.py` runs a headless proof with a private fake shell and isolated state directories. It checks for native row delivery and zero terminal pixel frames, without opening windows or touching real agents. `STAR_TERMINAL_RENDERER=kitty-pixels` is an explicit compatibility/diagnostic choice rather than the default.
 
 Sidebar context menus retain the main terminal view. Native terminal regions stay visible beneath graphical overlays; opening a menu changes input/cursor focus rather than hiding the terminal content.
 
@@ -255,10 +255,9 @@ connection lifetime. A slow or muted viewer does not replace another subscriber.
 App input ownership transfers between viewers, releasing the preceding viewer's
 held input; stale release events cannot release the current owner's keys.
 
-A terminal has one underlying TUI screen. STAR-owned tmux sessions follow the most
-recently active attachment's size. An inactive smaller window therefore does not
-leave tmux's dotted unused-area filler around a larger cells frontend. Other
-viewers clip the shared screen to their own viewport until they become active. The app desktop likewise has
+A terminal has one underlying TUI screen, which follows the most recently active
+attachment's size. An inactive smaller window therefore does not shrink a larger
+cells frontend's terminal. Other viewers clip the shared screen to their own viewport until they become active. The app desktop likewise has
 shared geometry, negotiated from its viewers, while each frontend uses its own
 placement and coordinate transform.
 
@@ -274,7 +273,7 @@ terminals/apps. A model-changing `--action` executes once; shared metadata then
 propagates to peers. Header controls always act on their own view.
 
 Headless validation uses `scripts/test-multiwindow.py`: two protocol clients,
-private fake shells and tmux servers, and isolated runtime/data directories. It
+private fake shells and isolated runtime/data directories. It
 checks shared input, independent projects/menus/viewports/tabs/splits/font
 requests, concurrent tab allocation, shared exits, safe slot reuse, window-local
 refresh, disconnect isolation, and reattachment without restarting the shell.
@@ -290,7 +289,10 @@ Linux host, build the small helper with `scripts/build-pty-proxy`, then use
 `starflux --plan-agent-mux-migration` to validate and back up the default session, or
 `starflux --migrate-agent-mux` to prepare and apply the transfer.
 
-The migration uses the agent multiplexer 0.9.1's Unix handoff version 1, protocol 22. It receives
+This migration still presents the transferred terminals through STAR-owned tmux
+sessions, so it is the one STAR/FLUX feature besides **Import…** that needs tmux
+on the host; landing transferred terminals directly on the native owner is open
+work. The migration uses the agent multiplexer 0.9.1's Unix handoff version 1, protocol 22. It receives
 the original PTY masters before the source releases them, stages native proxies
 inside STAR-owned tmux sessions, and commits only after every proxy is connected.
 The original shell and agent processes keep their PIDs, working state and native

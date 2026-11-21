@@ -1,6 +1,6 @@
 # Inline terminal graphics implementation
 
-Native terminals (projects with `native_terminals` enabled) show inline Kitty
+Every STAR/FLUX terminal is native and shows inline Kitty
 graphics. They answer a graphics query before DA1, so programs detect support,
 and retained images reach every graphical view as lossless planes through the
 local presenter. `scripts/test-session-manager.py --native-images` checks query
@@ -8,8 +8,8 @@ advertisement, one-pixel detail, copy-mode hide/restore, App Space clear and
 restore, deletion, and that cells views receive no graphics, locally and over
 SSH. `scripts/native/test-native-presenter.py`,
 `scripts/native/test-native-image-delivery.py` and the real Kitty screenshot
-proof `scripts/native/test-native-presenter-kitty.py` cover the presenter. The
-default tmux backend does not carry images. Saved screens archive and redisplay the
+proof `scripts/native/test-native-presenter-kitty.py` cover the presenter.
+Imported tmux sessions do not carry images. Saved screens archive and redisplay the
 visible images. Unicode placeholders (`U=1` virtual placements shown through
 U+10EEEE cells) are supported: each placeholder cell shows its image tile in
 the image planes and reaches the host terminal as a blank cell. Animation is
@@ -21,7 +21,13 @@ frame change redraws the views. Frame composition (`a=c`) is not supported.
 File, temporary-file
 and shared-memory transfers are refused deliberately, because they would let a
 terminal program make the host read arbitrary local paths or memory. Existing
-App Space streaming is separate.
+App Space streaming is separate. Tools that default to file or shared-memory
+transfers on a local machine, such as `kitty +kitten icat`, need a stream
+transfer mode (for `icat`, `--transfer-mode=stream`).
+
+The rest of this page records how the image path was built, stage by stage.
+Statements there such as "not yet wired", "candidate" or "not the normal
+backend" describe that stage; the image path described above is what runs today.
 
 The native parser now frames APC strings in output order, delivering complete
 APC bodies through callbacks. It bounds them to 8 KiB, distinguishes BEL from
@@ -231,7 +237,7 @@ source ID never implicitly restarts its saved command. Initialization/fsync runs
 in a bounded worker pool, duplicate opens share one initialization, and PID-bound
 close requests escalate asynchronously instead of blocking the service loop.
 
-This component is not yet selected by the application's normal session backend.
+At this stage the component was not yet the application's normal session backend; it is now (see [native terminals](native-sources.md)).
 Its helper `examples/native-source-broker.rs` is disposable acceptance plumbing,
 not an installed daemon launcher or a replacement for existing tmux/transferred
 owners. Run `scripts/test-source-broker.py --executable
@@ -319,9 +325,9 @@ can be recovered read-only without rerunning saved commands. See
 backend/host-presentation integration. The normal workspace still uses its
 existing backends; none were migrated or restarted by this component work.
 
-## Native graphical planes candidate
+## Native graphical planes
 
-The isolated native-source candidate now has an actual lossless image path from
+Native terminals have a lossless image path from
 source-owned uploads to the presenting Kitty window. `graphics_planes.rs`
 encodes view-sized PNG planes separately from native terminal text. It masks
 under-background pixels where the source cell has an explicit background or
@@ -378,8 +384,7 @@ level of edge/glyph rounding; the physical comparison explicitly allows that
 measured error. Artifacts are in `target/native-planes-kitty-artifacts/` and
 results in `target/native-planes-kitty.log`.
 
-This host-plane renderer remains a candidate, not an installed backend.
-Remaining requirements include production source recovery/cleanup, compatible
+This is the image path native terminals use. Open work includes production source recovery/cleanup, compatible
 observation of existing sources, buffer-switch/resize/load coverage, host
 placement-loss recovery, larger/chunked image transport and constrained-network
 media acceptance. File/shared-memory transfers are refused by design, and frame

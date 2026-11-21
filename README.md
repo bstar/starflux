@@ -72,11 +72,14 @@ Click to type; returning to the STAR/FLUX window restores input to the selected 
 
 Terminals use a PTY cell stream over local/SSH connections and are drawn directly
 by the presenting terminal. They do not require a virtual desktop, terminal
-screenshots, or video encoding.
+screenshots, or video encoding. STAR/FLUX owns every terminal itself, so terminals
+keep running when STAR/FLUX closes; tmux is optional and only needed to import tmux
+sessions. See [native terminals](docs/native-sources.md).
 
 Drag with the left mouse button to select text in Codex or a terminal; releasing copies it to your local clipboard, including over SSH. In a split terminal view, **Close pane** dismisses the focused half and keeps its session available in its tab. **Unsplit** also returns to one pane without ending sessions.
 
 - [App Shelf usage, SSH requirements and acceptance](docs/app-shelf.md)
+- [Native terminals, migration from tmux and limits](docs/native-sources.md)
 
 - [Visual treatment and theme gallery](design/treatments.html)
 - [Build and use the demo](docs/demo.md)

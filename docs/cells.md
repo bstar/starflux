@@ -29,7 +29,7 @@ visible split. Selecting a hidden tab reconnects it at its pane's dimensions.
 Both modes use the same project and terminal model. Closing a frontend keeps its
 sessions running. Reattach with the same `--workspace`; use `--stop` only to end
 project processes explicitly. SSH project terminals and `--ssh` workspace attachment
-need Python and OpenSSH on the host. tmux is optional (see [terminal backends](native-sources.md#terminal-backends)). The shipped binary still links
+need Python, OpenSSH and a compatible STAR/FLUX executable on the host. tmux is optional (see [native terminals](native-sources.md)). The shipped binary still links
 its graphical dependencies; cells mode does not start those graphical services.
 
 ## Projects

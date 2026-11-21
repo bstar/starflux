@@ -17,7 +17,7 @@ starflux --version
 
 Reuse an existing correct link rather than replacing another command. The runtime wrapper loads the Nix graphics library paths, and the development shell profile keeps their store paths rooted. The executable remains in `target/release/starflux`.
 
-Runtime requirements are Linux, Wayland, an EGL device usable by Smithay, Kitty with graphics and OSC 72 file-drop support, Python 3, and tmux. Remote hosts need Python 3, tmux and the chosen agent command; no remote graphical desktop or installed STAR/FLUX binary is required. The test harness uses a STAR/FLUX fixture remotely, but normal remote agent launch sends only the embedded Python host helper.
+Runtime requirements are Linux, Wayland, an EGL device usable by Smithay, Kitty with graphics and OSC 72 file-drop support, and Python 3. tmux is optional; it is needed only to import tmux sessions. Remote hosts need Python 3, a compatible STAR/FLUX executable (which runs the host's native terminals) and the chosen agent command; no remote graphical desktop is required.
 
 The installed Kitty 0.48.2 successfully negotiates OSC 72. Graphics support alone does not establish file-drop support in another terminal build.
 
@@ -41,7 +41,7 @@ When launched from outside Kitty, STAR/FLUX opens a Kitty window. Inside Kitty i
 
 Each ordinary `starflux` launch generates an independent workspace, so different tabs never compete for a controller. `starflux --sessions` lists saved names; `starflux --workspace NAME` reconnects to one. Only one frontend may control a named workspace at a time; a second attachment is rejected instead of stealing the first tab.
 
-Workspace names identify saved launch configuration and isolated tmux sessions. Reopening a name reuses its sessions. A conflicting explicit host, directory or agent produces an error instead of silently switching an existing session. Stop that workspace or choose another name to change its configuration.
+Workspace names identify saved launch configuration and its native terminals. Reopening a name reattaches to them. A conflicting explicit host, directory or agent produces an error instead of silently switching an existing session. Stop that workspace or choose another name to change its configuration.
 
 Normal launches open a local shell and real Codex. Use `--agent "bash -l"` for a second shell or pass another harness command explicitly. Existing real processes are retained. When reopening a legacy local workspace with Codex already running in the first pane, the verified old demo pane becomes a shell instead of starting a duplicate Codex. Pane labels follow the actual process. The fixture is reserved for explicit internal acceptance tests. Agent panes display process health; complete Codex lifecycle and approval integration is still a later task.
 
@@ -73,7 +73,7 @@ starflux --workspace remote
 starflux --workspace remote --stop
 ```
 
-Closing the frontend or workspace preserves tmux-owned shells and agents. The controller runs in its own process group, so presentation loss does not kill it. If an inner Kitty or its SSH terminal client exits, the controller attempts to reopen that view after five seconds. Inspect reports live session health rather than treating its cached graphical snapshot as current process state.
+Closing the frontend or workspace preserves its shells and agents, which the native terminal owner keeps running. The controller runs in its own process group, so presentation loss does not kill it. If an inner Kitty or its SSH terminal client exits, the controller attempts to reopen that view after five seconds. Inspect reports live session health rather than treating its cached graphical snapshot as current process state.
 
 The demo uses the authenticated OpenSSH transport for attach, inspection and transfers. It does not pool every control operation into one connection. Use SSH keys or an existing SSH agent for background operations; interactive password entry for each background helper is not implemented. Host identity checking follows OpenSSH configuration.
 
@@ -176,7 +176,7 @@ starflux --theme system
 
 Theme commands save the application preference and update all running views without opening a frontend. Click the theme label in the top bar, or release embedded input with Ctrl+Esc and press **t**, to cycle palettes. The selected theme is stored in the core application configuration, `~/.config/starflux/config.json`, independently of projects and sessions. System is the default. Chrome, terminal backgrounds, foregrounds, cursors, selections and ANSI colors update together through private Kitty sockets. There are sixteen shared STAR/CORE built-ins plus `system`; system uses CORE's supported desktop detection and falls back to Kanagawa. Existing shell/agent processes are preserved during palette changes. Applications emitting their own true-color escapes still own those colors.
 
-Controllers started before the Blueprint build need to be closed once and reopened to load the new presentation; their tmux-backed agents survive:
+Controllers started before the Blueprint build need to be closed once and reopened to load the new presentation; their agents survive:
 
 ```sh
 starflux --workspace NAME --close

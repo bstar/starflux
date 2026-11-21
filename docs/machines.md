@@ -8,7 +8,7 @@ Profiles live in `$XDG_CONFIG_HOME/starflux/machines.json` (normally `~/.config/
 
 ## Check a connection
 
-**Test connection / retry** runs a bounded, read-only SSH check in the background. It checks Python 3 and tmux for project terminals, then checks the remote STAR/FLUX automation API independently. An installed STAR/FLUX helper is needed for attaching to a remote workspace and App Space; ordinary remote project terminals use Python 3 and tmux. Current project terminal workers require Linux.
+**Test connection / retry** runs a bounded, read-only SSH check in the background. It checks Python 3, then the remote STAR/FLUX automation API. Remote project terminals are native terminals run by an installed STAR/FLUX on that host, so they need Linux, Python 3 and a compatible STAR/FLUX executable; so do attaching to a remote workspace and App Space. tmux is reported only because it is needed to import that host's tmux sessions.
 
 Checks use batch authentication and strict host-key verification. If SSH is not set up, use **Copy SSH setup command** and run it in an interactive terminal, complete authentication or verify the host key there, then retry. The error retains OpenSSH's diagnostic. Tests do not install software, start servers or create terminal sessions. A failed machine check does not disconnect another machine or alter running projects.
 

@@ -29,7 +29,7 @@ or SSH is temporarily unavailable), the UI reports **reconnecting** and retries
 every three seconds. It does not leave the pane permanently registered without
 an attachment. One-shot agent launch intents are still never replayed.
 
-An exited tmux pane can retain its screen while reporting an empty process ID.
+An exited terminal not yet migrated from tmux can retain its screen while reporting an empty process ID.
 STAR/FLUX reports this as an exited terminal, with no process identity, so its
 recovery menu remains usable. **Reopen in a shell** starts a fresh shell only
 when explicitly selected; observing or reconnecting an exited pane does not

@@ -335,7 +335,7 @@ pub fn test(m: &Machine) -> Result<Value> {
         });
     Ok(
         json!({"machine":m.id,"revision":m.revision,"connected":true,"host":host,
-        "project_terminals_ready":host["system"]=="Linux"&&(host["tmux"].is_string()||api),"workspace_api_ready":api,
+        "project_terminals_ready":host["system"]=="Linux"&&api,"workspace_api_ready":api,
         "workspace_error":if api{Value::Null}else{json!(if stderr.trim().is_empty(){"STAR/FLUX automation API is missing or incompatible"}else{stderr.trim()})},
         "checked_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64}),
     )

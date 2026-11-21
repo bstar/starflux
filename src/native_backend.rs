@@ -961,6 +961,46 @@ fn ensure_migration(
 pub fn migrate_all(_: bool) -> Result<Value> {
     anyhow::bail!("Native terminals need Linux")
 }
+/// Desktop session variables a local terminal should see. The terminal owner
+/// outlives the STAR/FLUX process that started it, so its own environment can
+/// be stale or lack the desktop; each launch takes them from the process that
+/// opens the terminal instead, as tmux refreshed them on attach.
+const DESKTOP_ENVIRONMENT: [&str; 11] = [
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "SWAYSOCK",
+    "NIRI_SOCKET",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SSH_AUTH_SOCK",
+];
+fn with_desktop_environment(
+    config: &crate::runtime::Config,
+    pane: usize,
+    argv: Vec<String>,
+) -> Vec<String> {
+    if config.remote(pane) {
+        return argv;
+    }
+    let assignments: Vec<String> = DESKTOP_ENVIRONMENT
+        .iter()
+        .filter_map(|name| {
+            let value = std::env::var(name).ok()?;
+            (!value.is_empty() && !value.contains('\0')).then(|| format!("{name}={value}"))
+        })
+        .collect();
+    if assignments.is_empty() {
+        return argv;
+    }
+    std::iter::once("/usr/bin/env".to_string())
+        .chain(assignments)
+        .chain(argv)
+        .collect()
+}
 #[cfg(target_os = "linux")]
 fn pending_command(
     config: &crate::runtime::Config,
@@ -1085,10 +1125,15 @@ fn ensure_with(
         wanted.argv = argv;
         wanted.directory = directory;
     }
+    wanted.argv = with_desktop_environment(config, pane, wanted.argv);
     let fallback = requested
         .as_ref()
         .map(|_| launch_spec(config, pane, None))
-        .transpose()?;
+        .transpose()?
+        .map(|mut launch| {
+            launch.argv = with_desktop_environment(config, pane, launch.argv);
+            launch
+        });
     let discovered = rpc(
         config,
         pane,

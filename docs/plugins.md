@@ -310,9 +310,9 @@ single-byte ST and ESC-backslash terminators. It preserves raw URI semicolons
 and UTF-8. Destinations are limited to 8192 bytes, parameters to 1024 bytes, individual
 OSC bodies to 128 KiB and shared retained target allocations to 8 MiB. Invalid,
 truncated or oversized destinations cannot become partial clickable URLs. These
-parser bounds do not bypass backend limits: for example, tmux can discard long
-OSC 8 destinations before Starflux receives them. Native and imported tmux
-attachments advertise hyperlink support per client; history capture retains
+parser bounds do not bypass a source's own limits: for example, an imported tmux
+session can discard long OSC 8 destinations before Starflux receives them. Native
+and imported tmux attachments advertise hyperlink support per client; history capture retains
 escape attributes. Saved-grid formatting stops at 1 MiB before encoding, and
 host capture is capped at 2 MiB. Oversized captures report an error rather than
 replacing a valid archive.

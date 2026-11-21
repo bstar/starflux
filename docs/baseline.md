@@ -10,7 +10,7 @@ The Linux demo uses the following source and runtime baseline, inspected on 2026
 | Rust | 1.98.1 through the Nix development shell |
 | Cargo | 1.98.0 through the Nix development shell |
 | Kitty | System 0.48.2, real Wayland surfaces and successful OSC 72 negotiation |
-| tmux | System 3.7c for runtime verification |
+| tmux | System 3.7c, for tmux import and migration tests only |
 | OpenSSH | 10.5p1 |
 | Python | System 3.14.7 |
 | Hyprland | 0.56.2 |
@@ -23,4 +23,4 @@ The vendored Crossterm parser comes from STAR/FOLD's existing MIT-licensed copy.
 
 The SSH acceptance host is a private, authenticated loopback server created by `scripts/test-desktop.py`. Its keypair, host key, known-hosts file, port and configuration are disposable. It requires no changes to `~/.ssh` and proves real OpenSSH framing and process behavior. A separate physical host, network latency and container filesystem mappings remain additional checks.
 
-The demo's terminal ownership uses isolated tmux servers named `starflux-WORKSPACE`. Native session workers and the standalone presentation alternative remain design tasks. Existing STAR/CORE and STAR/SCREEN working edits were left untouched.
+The original demo's terminal ownership used isolated tmux servers named `starflux-WORKSPACE`; terminals are now owned natively (see [native terminals](native-sources.md)). The standalone presentation alternative remains a design task. Existing STAR/CORE and STAR/SCREEN working edits were left untouched.
