@@ -18,6 +18,10 @@ else:
     assert entry['source']==f"git+{core['git']}?rev={core['rev']}#{core['rev']}", 'SDK lock must retain its Git source and revision'
 assert entry['version'].startswith(core['version']+'.'), 'SDK version mismatch'
 assert 'cargoToml.package.version' in (root/'flake.nix').read_text()
+import json
+version=manifest['package']['version']
+assert json.loads((root/'manifest.json').read_text())['version']==version, 'Omarchy plugin manifest version mismatch'
+assert f'readonly property string pluginVersion: "{version}"' in (root/'omarchy/Widget.qml').read_text(), 'Omarchy widget version mismatch'
 assert (root/'docs/releases'/f"{manifest['package']['version']}.md").is_file(), 'Versioned release notes are missing'
 if os.environ.get('GITHUB_REF_TYPE')=='tag':
     assert os.environ['GITHUB_REF_NAME']=='v'+manifest['package']['version'], 'Release tag/version mismatch'

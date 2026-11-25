@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Bring a STAR/FLUX project to the front: starflux-open PROJECT [PANE EPOCH]
+#
+# Navigation only. It reuses a local window already showing the project, or
+# asks an idle local window in the same session to select it, and otherwise
+# opens a new window on that workspace. It never sends input to a terminal.
+set -euo pipefail
+project=${1:?usage: starflux-open PROJECT [PANE EPOCH]}
+pane=${2:-}
+epoch=${3:-}
+
+# STARFLUX_OPEN_DRY_RUN=1 prints each action instead of taking it.
+dry=${STARFLUX_OPEN_DRY_RUN:-}
+api() { starflux --api "$1"; }
+act() { if [ -n "$dry" ]; then printf 'would run:'; printf ' %q' "$@"; echo; else "$@"; fi; }
+uuid() { cat /proc/sys/kernel/random/uuid; }
+
+# The Hyprland client whose process is an ancestor of PID, if any. A frontend
+# attached over SSH has no local window and yields nothing.
+window_for() {
+  local pid=$1 clients
+  clients=$(hyprctl clients -j 2>/dev/null) || return 1
+  while [ "${pid:-0}" -gt 1 ]; do
+    if jq -e --argjson p "$pid" 'any(.[]; .pid == $p)' <<<"$clients" >/dev/null; then
+      echo "$pid"
+      return 0
+    fi
+    pid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null) || return 1
+  done
+  return 1
+}
+
+command_frontend() { # target-json command-json
+  local req
+  req=$(jq -cn --arg op "$(uuid)" --argjson target "$1" --argjson command "$2" \
+    '{version:1,id:"omarchy-open",operation_id:$op,method:"frontends.command",
+      params:{target:$target,command:$command,wait_ms:2000}}')
+  if [ -n "$dry" ]; then echo "would send: $req"; return 0; fi
+  api "$req" | jq -e '.ok' >/dev/null
+}
+
+session=$(api '{"version":1,"id":"p","method":"projects.list","params":{}}' |
+  jq -r --arg p "$project" '.result.projects[] | select(.id == $p) | .session' | head -n1)
+[ -n "$session" ] || { echo "starflux-open: no project $project" >&2; exit 1; }
+
+frontends=$(api '{"version":1,"id":"f","method":"frontends.list","params":{}}' | jq -c '.result.frontends // []')
+
+# Prefer a window already on the project, then any idle window in its session.
+chosen=""
+window=""
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if w=$(window_for "$(jq -r '.target.pid' <<<"$f")"); then
+    chosen=$f
+    window=$w
+    break
+  fi
+done < <(jq -c --arg p "$project" --arg s "$session" '
+  (map(select(.project == $p)) + map(select(.project != $p and .session == $s and .commands_available and (.busy | not))))[]' <<<"$frontends")
+
+if [ -z "$chosen" ]; then
+  args=(--workspace "$project")
+  [ -n "$pane" ] && args+=(--focus-pane "$pane")
+  [ -n "$epoch" ] && args+=(--focus-pane-epoch "$epoch")
+  act omarchy-launch-tui --app-id=org.omarchy.starflux starflux "${args[@]}"
+  exit 0
+fi
+
+target=$(jq -c '.target' <<<"$chosen")
+if [ "$(jq -r '.project' <<<"$chosen")" != "$project" ]; then
+  command_frontend "$target" "$(jq -cn --arg p "$project" '{kind:"select_project",project:$p}')"
+fi
+if [ -n "$pane" ] && [ -n "$epoch" ]; then
+  command_frontend "$target" "$(jq -cn --arg p "$project" --argjson n "$pane" --arg e "$epoch" \
+    '{kind:"select_pane",project:$p,pane:$n,epoch:$e}')" || true
+fi
+act hyprctl dispatch focuswindow "pid:$window"

@@ -22,6 +22,8 @@ Terminals support [nested right/down splits, zoom, rearrangement and guarded ter
 Use [history search and keyboard copy mode](docs/terminal-history.md) to review retained terminal output while the program continues running.
 The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/agent-multiplexer sessions and acknowledged per-window navigation.
 
+On Omarchy, the optional [bar widget](docs/omarchy.md) lists running agents, puts the ones waiting on you first and opens an agent's workspace when you click it.
+
 The [feature plan](docs/plan.md) lists what is built and what is left; earlier checkpoints are in the [implementation log](docs/history/implementation-log.md).
 
 [Portfolios](docs/categories.md) group related projects with shared progress

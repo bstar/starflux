@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "bstar.starflux",
+  "name": "STAR/FLUX Agents",
+  "version": "0.2.0",
+  "author": "bstar",
+  "license": "MIT",
+  "description": "Live STAR/FLUX agents in the bar: which are working, which need you, and one click to their workspace",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "omarchy/Widget.qml" },
+  "barWidget": {
+    "displayName": "STAR/FLUX Agents",
+    "description": "Agents across your STAR/FLUX workspaces, with the ones waiting on you first",
+    "category": "AI",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": { "refreshIntervalSec": 15 },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "defaultValue": 15
+      }
+    ]
+  }
+}
