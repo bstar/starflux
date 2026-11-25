@@ -1109,7 +1109,10 @@ GLib.MainLoop().run()
             os.kill(controller,signal.SIGSTOP)
             try:
                 expired_id=secrets.token_hex(16);cancelled_id=secrets.token_hex(16)
-                assert command(dict(kind='select_project',project='extra-a'),expired_id,wait_ms=0,ttl_ms=100)['status']=='queued'
+                # 100 ms is the shortest TTL; slow storage can spend it before
+                # the reply, so an immediate expiry is also correct here.
+                short=command(dict(kind='select_project',project='extra-a'),expired_id,wait_ms=0,ttl_ms=100)
+                assert short['status'] in ('queued','expired'),short
                 time.sleep(.15);assert api('frontends.command_status',dict(command_id=expired_id))['status']=='expired'
                 assert command(dict(kind='select_project',project='extra-a'),cancelled_id,wait_ms=0)['status']=='queued'
                 assert write('frontends.cancel_command',dict(command_id=cancelled_id))['status']=='cancelled'

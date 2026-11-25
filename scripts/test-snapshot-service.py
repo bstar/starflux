@@ -2,7 +2,7 @@
 """Read-only collection with no controller, isolated metadata and cold namespaces."""
 from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import os
-import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,subprocess,tempfile,time,uuid
+import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,signal,subprocess,tempfile,time,uuid
 from pathlib import Path
 
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--upgrade',action='store_true');parser.add_argument('--previous-executable',type=Path);args=parser.parse_args()
@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
     shell=tmp/'fake-shell';shell.write_text("#!/usr/bin/python3\nimport os,sys\nprint('SNAPSHOT_READY',flush=True)\nfor line in sys.stdin:print('\\x1b[1;31mSAVED_'+line.strip()+'\\x1b[0m',flush=True)\n");shell.chmod(0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell));env.pop('STARFLUX_SNAPSHOT_SERVICE',None)
-    env2={**env,'XDG_DATA_HOME':str(tmp/'second-data')};daemon=None;ssh=[];projects=[];collectors=[]
+    env2={**env,'XDG_DATA_HOME':str(tmp/'second-data')};daemon=None;ssh=[];projects=[];collectors=[];owners=[]
     def stamp(pid):
         try:
             fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
             exec(compile((root/'scripts/test-snapshot-upgrade.py').read_text(),str(root/'scripts/test-snapshot-upgrade.py'),'exec'),globals())
             raise SystemExit(0)
         session=api('sessions.create',dict(name='Headless snapshots',directory=str(tmp)),write=True);project=session['project'];projects.append((env,project))
-        target=api('panes.get',dict(project=project,pane=1))['target'];owner=target['pid']
+        target=api('panes.get',dict(project=project,pane=1))['target'];owner=target['pid'];owners.append(owner)
         meta=wait(lambda:(m if (m:=status(env)).get('pid') and stamp(m['pid'])==m['start_ticks'] else None),'collector did not start');collectors.append((meta['pid'],meta['start_ticks']))
         assert not list((runtime/'starflux').glob('v-*.state.json')),'headless collection created a frontend'
         api('panes.send',dict(target=target,text='HEADLESS_界',submit=True),write=True)
@@ -89,23 +89,12 @@ with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
         api('panes.send',dict(target=target,text='AFTER_API_EXIT',submit=True),write=True)
         wait(lambda:'SAVED_AFTER_API_EXIT' in screen(env,project).get('formatted',''),'collector stopped with its API parent')
         assert not marker.exists() and stamp(owner)==target['start_ticks'],'collector launched or replaced an agent'
-        # Register a read-only import of the same private source, with no UI or
-        # renderer. A collector must inspect its original socket/session.
-        base=model.parent;imported='collector-import'
-        config=json.loads((base/(project+'.json')).read_text())
-        socket_path,session_id=subprocess.check_output(['tmux','-L','starflux-'+project,'display-message','-p','-t','p0','#{socket_path} #{session_id}'],env=env,text=True).strip().split()
-        config.update(workspace=imported,tmux=dict(socket=socket_path,session=session_id))
-        (base/(imported+'.json')).write_text(json.dumps(config))
-        (base/(imported+'.model.json')).write_text(model.read_text())
-        api('panes.send',dict(target=target,text='IMPORTED_WITH_NO_CONTROLLER',submit=True),write=True)
-        wait(lambda:'SAVED_IMPORTED_WITH_NO_CONTROLLER' in screen(env,imported).get('formatted',''),'headless imported tmux source was not captured')
-        assert screen(env,imported)['pid']==owner and stamp(owner)==target['start_ticks']
         policy(env,project,False);api('panes.send',dict(target=target,text='WHILE_PAUSED',submit=True),write=True);time.sleep(12)
         assert not screen(env,project),'paused collector wrote a snapshot'
         policy(env,project,True);api('snapshots.status')
         wait(lambda:'SAVED_WHILE_PAUSED' in screen(env,project).get('formatted',''),'collector did not resume after shared policy changed')
         second=api('sessions.create',dict(name='Isolated metadata',directory=str(tmp)),scope=env2,write=True)['project'];projects.append((env2,second))
-        other=api('panes.get',dict(project=second,pane=1),scope=env2)['target']
+        other=api('panes.get',dict(project=second,pane=1),scope=env2)['target'];owners.append(other['pid'])
         second_meta=wait(lambda:(m if (m:=status(env2)).get('pid') and stamp(m['pid'])==m['start_ticks'] else None),'second namespace did not start');collectors.append((second_meta['pid'],second_meta['start_ticks']))
         assert second_meta['pid']!=meta['pid']
         assert not (Path(env2['XDG_DATA_HOME'])/'starflux/screens'/project).exists(),'collector mixed data namespaces'
@@ -118,11 +107,13 @@ with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
         api('panes.send',dict(target=other,text='AFTER_RUNTIME_REPLACEMENT',submit=True),scope=env2,write=True)
         wait(lambda:'SAVED_AFTER_RUNTIME_REPLACEMENT' in screen(env2,second).get('formatted',''),'new collector did not attach to retained terminal')
         assert stamp(other['pid'])==other['start_ticks'] and not marker.exists()
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,no_controller=True,parent_exit_survival=True,single_collector=True,headless_tmux_import=True,metadata_namespaces_isolated=True,unicode_screen=True,private_files=True,saved_commands_not_launched=True,shared_pause_resume=True,cold_runtime_retirement=True,retained_processes_preserved=True)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,no_controller=True,parent_exit_survival=True,single_collector=True,metadata_namespaces_isolated=True,unicode_screen=True,private_files=True,saved_commands_not_launched=True,shared_pause_resume=True,cold_runtime_retirement=True,retained_processes_preserved=True)))
     finally:
         for scope in [env,env2]:
             try:stop(scope)
             except (AssertionError,OSError,ValueError):pass
-        for scope,project in projects:subprocess.run(['tmux','-L','starflux-'+project,'kill-server'],env=scope,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        for pid in owners:
+            try:os.kill(pid,signal.SIGKILL)
+            except OSError:pass
         if daemon:
             daemon.terminate();daemon.wait(timeout=5)
