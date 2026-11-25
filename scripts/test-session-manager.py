@@ -564,9 +564,10 @@ GLib.MainLoop().run()
                     wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'review did not restore retained native images')
                     # Saved screens archive the visible images beside the screen record.
                     sidecar=tmp/'data/starflux/screens'/name/'p0.images.json'
-                    wait(sidecar.exists,'saved screen did not archive its images',timeout=40)
-                    record=json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text())
-                    assert record.get('images_digest'),'saved screen does not reference its images'
+                    # The sidecar is written before the screen record that names it, so wait for both.
+                    screen_record=tmp/'data/starflux/screens'/name/'p0.screen.json'
+                    referenced=lambda:sidecar.exists() and screen_record.exists() and json.loads(screen_record.read_text()).get('images_digest')
+                    wait(referenced,'saved screen did not archive and reference its images',timeout=40)
                     a.images=[];a.action('terminal:saved-current')
                     wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'saved screen did not show its archived images: '+json.dumps(dict(sidecar=sidecar.exists(),digest=bool(json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text()).get('images_digest')),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images],review={k:v for k,v in a.snapshot().items() if 'review' in k or 'history' in k or 'saved' in k})))
                     a.images=[];a.key('escape')
