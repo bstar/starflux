@@ -735,9 +735,8 @@ fn launch_spec(
         })
     };
     let argv = match agent {
-        Some(command) if !config.remote(pane) => crate::agent_hooks::with_session_hook(
+        Some(command) if !config.remote(pane) => crate::agent_hooks::with_local_session_hook(
             crate::portfolio_context::apply(config, shell_words::split(command)?),
-            &std::env::current_exe()?.to_string_lossy(),
         ),
         Some(command) => crate::portfolio_context::apply(config, shell_words::split(command)?),
         None => vec![
@@ -844,10 +843,7 @@ fn migration_launch(
         let claude = if config.remote(pane) {
             claude
         } else {
-            crate::agent_hooks::with_session_hook(
-                claude,
-                &std::env::current_exe()?.to_string_lossy(),
-            )
+            crate::agent_hooks::with_local_session_hook(claude)
         };
         format!("{}; {continue_shell}", shell_words::join(&claude))
     } else {

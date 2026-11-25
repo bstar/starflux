@@ -4243,6 +4243,8 @@ impl Workspace {
                             Some("clock_skew") => "timestamp ahead of controller clock",
                             Some("heartbeat_expired") => "heartbeat expired",
                             Some("backend_failure_override") => "backend failure shown by terminal",
+                            Some("screen_activity_override") =>
+                                "finished, but the terminal shows activity",
                             Some("transport_failure_override") => "terminal transport disconnected",
                             Some("current") => "current",
                             _ => "unknown",

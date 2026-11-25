@@ -56,6 +56,7 @@ elif "--agent-report" in argv:
              "--workspace", "proof", "--pane", "1", "--epoch", epoch,
              "--", "/usr/bin/claude", "--resume", "{session_id}"],
             input=json.dumps(event), text=True, capture_output=True, timeout=20,
+            env={**os.environ, "XDG_RUNTIME_DIR": str(tmp / "run")},
         )
         assert (result.returncode == 0) == expect_ok, result.stderr
         return json.loads(state.read_text())["reports"]
@@ -64,19 +65,40 @@ elif "--agent-report" in argv:
     reports = run({"hook_event_name": "SessionStart", "source": "startup", "session_id": session})
     assert len(reports) == 1 and reports[0]["conversation_id"] == session and reports[0]["sequence"] == 1
     assert reports[0]["resume_argv"] == ["/usr/bin/claude", "--resume", session]
+    # None: the event reports nothing new (the state is unchanged or not lifecycle).
     expected = [
         ({"hook_event_name": "UserPromptSubmit"}, "working"),
+        ({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"}, "needs_input"),
+        ({"hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion"}, "working"),
+        ({"hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode"}, "needs_input"),
+        ({"hook_event_name": "PostToolUse", "tool_name": "Bash"}, None),
+        ({"hook_event_name": "PermissionRequest", "tool_name": "Bash"}, "waiting_for_approval"),
+        ({"hook_event_name": "SubagentStart", "agent_id": "a1"}, "working"),
+        ({"hook_event_name": "SubagentStart", "agent_id": "a2"}, None),
+        ({"hook_event_name": "SubagentStop", "agent_id": "a1"}, None),
+        # The turn ends while a background sub-agent still runs: still working.
+        ({"hook_event_name": "Stop"}, None),
         ({"hook_event_name": "Notification", "message": "Claude needs your permission to use Bash"},
          "waiting_for_approval"),
-        ({"hook_event_name": "Notification", "message": "Claude is waiting for your input"}, "needs_input"),
+        ({"hook_event_name": "Notification", "message": "Claude has a question"}, "needs_input"),
+        ({"hook_event_name": "SubagentStop", "agent_id": "a2"}, None),
         ({"hook_event_name": "Stop"}, "completed"),
+        ({"hook_event_name": "Notification", "notification_type": "idle_prompt",
+          "message": "Claude is waiting for your input"}, None),
         ({"hook_event_name": "SessionEnd", "reason": "exit"}, "stopped"),
     ]
-    for sequence, (event, wanted) in enumerate(expected, start=2):
+    sequence = 1
+    for event, wanted in expected:
+        before = len(reports)
         reports = run({**event, "session_id": session})
+        if wanted is None:
+            assert len(reports) == before, (event, reports[-1])
+            continue
+        sequence += 1
         last = reports[-1]
-        assert last["state"] == wanted and last["sequence"] == sequence, last
+        assert last["state"] == wanted and last["sequence"] == sequence, (event, last)
         assert last["run_id"] == reports[0]["run_id"] and last["conversation_id"] == session
+    assert not list((tmp / "run" / "starflux" / "agent-subagents").iterdir()), "finished sub-agents leave no record"
     count = len(reports)
     # Another conversation's events, and a repeated state, change nothing.
     assert len(run({"hook_event_name": "Stop", "session_id": str(uuid.uuid4())})) == count
@@ -88,5 +110,5 @@ elif "--agent-report" in argv:
     state.write_text(json.dumps(data))
     run({"hook_event_name": "UserPromptSubmit", "session_id": session}, expect_ok=False)
 
-print(json.dumps({"result": "PASS", "registration": True, "lifecycle_states": [w for _, w in expected],
+print(json.dumps({"result": "PASS", "registration": True, "lifecycle_states": [w for _, w in expected if w],
                   "foreign_conversation_ignored": True, "non_descendant_rejected": True}))

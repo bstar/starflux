@@ -130,6 +130,12 @@ pub fn screen_state(text: &str) -> &'static str {
     if yes && no && (footer.contains("esc") || footer.contains("enter")) {
         return "waiting_for_approval";
     }
+    if choices.len() >= 2 && choice_dialog(&footer) {
+        return "needs_input";
+    }
+    if background_work(&footer) {
+        return "working";
+    }
     for line in footer.lines().rev() {
         if claude_working(line, &footer) {
             return "working";
@@ -164,6 +170,64 @@ pub fn screen_state(text: &str) -> &'static str {
     }
     "idle"
 }
+/// A selection dialog waiting on the user: the cursor sits on a numbered
+/// choice (`❯ 1. Yes, and auto-accept edits`) under a question or with the
+/// dialog's key hints, as in Claude Code's plan approval and its questions.
+fn choice_dialog(footer: &str) -> bool {
+    let cursor = footer.lines().any(|line| {
+        let Some(rest) = line.trim_start().strip_prefix('❯') else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        let tail = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        tail.len() < rest.len() && tail.starts_with(['.', ')'])
+    });
+    cursor
+        && (footer.lines().any(|line| line.trim_end().ends_with('?'))
+            || [
+                "enter to select",
+                "esc to cancel",
+                "to navigate",
+                "tell claude what to change",
+            ]
+            .iter()
+            .any(|hint| footer.contains(hint)))
+}
+/// Work that outlives Claude Code's turn: background shells, sub-agents and
+/// tasks, listed on the status line (`⏵⏵ … · 1 shell, 2 agents · ↓ to manage`)
+/// and on the finished line (`✻ Cooked for 3m · done 9:33 AM · 1 shell still
+/// running`). A monitor alone waits on events indefinitely, so it is not work.
+fn background_work(footer: &str) -> bool {
+    footer
+        .lines()
+        .filter(|line| line.contains("↓ to manage") || line.contains("still running"))
+        .flat_map(|line| line.split(['·', ',']))
+        .any(|segment| {
+            let segment = segment.trim();
+            let segment = segment
+                .strip_suffix("still running")
+                .map_or(segment, str::trim_end);
+            let Some((count, kind)) = segment.split_once(' ') else {
+                return false;
+            };
+            count.parse::<u32>().is_ok_and(|n| n > 0)
+                && matches!(
+                    kind.trim(),
+                    "shell"
+                        | "shells"
+                        | "agent"
+                        | "agents"
+                        | "local agent"
+                        | "local agents"
+                        | "background task"
+                        | "background tasks"
+                        | "task"
+                        | "tasks"
+                        | "teammate"
+                        | "teammates"
+                )
+        })
+}
 /// Claude Code's busy line: a spinner glyph and one changing verb ending in an
 /// ellipsis, optionally followed by a parenthesis, e.g. `· misting…` (2.1.329,
 /// with "esc to interrupt" on the hint line below the input box) or
@@ -186,11 +250,27 @@ fn claude_working(line: &str, footer: &str) -> bool {
     else {
         return false;
     };
-    !word.is_empty()
-        && word.len() <= 40
-        && word.chars().all(|c| c.is_alphabetic() || c == '-')
-        && tail.is_none_or(|tail| tail.contains(')'))
-        && footer.contains("esc to interrupt")
+    if word.is_empty() || word.len() > 40 || !word.chars().all(|c| c.is_alphabetic() || c == '-') {
+        return false;
+    }
+    match tail {
+        // A running timer is the busy line itself; newer releases show a tip
+        // beneath it instead of "esc to interrupt".
+        Some(tail) => {
+            tail.contains(')') && (elapsed_timer(tail) || footer.contains("esc to interrupt"))
+        }
+        None => footer.contains("esc to interrupt"),
+    }
+}
+/// `5m 1s · ↓ 11.4k tokens)` or `12s)`: the parenthesis opens with a duration.
+fn elapsed_timer(tail: &str) -> bool {
+    let head = tail.split(['·', '•', ')']).next().unwrap_or("").trim();
+    !head.is_empty()
+        && head.split_whitespace().all(|part| {
+            part.len() >= 2
+                && part[..part.len() - 1].chars().all(|c| c.is_ascii_digit())
+                && part.ends_with(['h', 'm', 's'])
+        })
 }
 pub fn screen_observation(command: Command) -> Option<(String, String)> {
     let bytes = read_output(command)?;
@@ -381,6 +461,59 @@ mod tests {
             "> Waiting…",
         ] {
             assert_eq!(screen_state(screen), "idle", "{screen}");
+        }
+    }
+    #[test]
+    fn claude_spinner_with_a_timer_and_a_tip_is_working() {
+        let screen = "● Checking the build\n\n✽ Jitterbugging… (5m 1s · ↓ 11.4k tokens)\n  ⎿  Tip: Use /btw to ask a side question without interrupting Claude\n\n──────\n❯ f\n──────\n  ⏵⏵ auto mode on (shift+tab to cycle)";
+        assert_eq!(screen_state(screen), "working");
+        assert_eq!(screen_state("✻ Cogitating… (12s)\n❯ "), "working");
+        for idle in [
+            "✻ Worked for 5m 1s\n❯ ",
+            "✽ Jitterbugging… (soon · tip)\n❯ ",
+            "✽ Jitterbugging…\n❯ ",
+        ] {
+            assert_eq!(screen_state(idle), "idle", "{idle}");
+        }
+    }
+    #[test]
+    fn claude_plan_approval_and_questions_need_input() {
+        // Claude Code 2.1.332's plan approval, as captured from a live pane.
+        let plan = "   4. Trainers & chemistry\n\n  ────────\n   Claude has written up a plan and is ready to execute. Would you like to proceed?\n\n   ❯ 1. Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session\n     2. Yes, manually approve edits\n     3. Tell Claude what to change\n        shift+tab to approve with this feedback\n\n   ctrl+g to edit in Omarchy-launch-editor · ~/.claude/plans/plan.md";
+        assert_eq!(screen_state(plan), "needs_input");
+        let question = "☐ Layout\n\nWhich layout should the panel use?\n\n❯ 1. Grouped by machine\n     Projects under each host\n  2. Flat list\n  3. Type something.\n\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+        assert_eq!(screen_state(question), "needs_input");
+        for not_a_dialog in [
+            // A numbered list in the transcript, with no cursor on it.
+            "Steps?\n  1. Build\n  2. Test\n──────\n❯ \n──────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+            // The cursor on one numbered line is a typed prompt, not choices.
+            "──────\n❯ 1. do it?\n──────",
+        ] {
+            assert_eq!(screen_state(not_a_dialog), "idle", "{not_a_dialog}");
+        }
+    }
+    #[test]
+    fn claude_background_shells_and_agents_are_working() {
+        let finished = "✻ Cooked for 1h 38m 8s · done 12:14 AM · 1 shell still running\n\n──────\n❯ \n──────\n  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage";
+        assert_eq!(screen_state(finished), "working");
+        for status in [
+            "  ⏵⏵ bypass permissions on · 2 agents · ↓ to manage",
+            "  ⏵⏵ accept edits on · 1 shell, 1 monitor · ↓ to manage",
+            "  1 local agent · ↓ to manage",
+        ] {
+            assert_eq!(
+                screen_state(&format!("✻ Worked for 2m\n❯ \n{status}")),
+                "working",
+                "{status}"
+            );
+        }
+        for idle in [
+            // A monitor waits on events; on its own it is not work.
+            "✻ Worked for 2m\n❯ \n  ⏵⏵ bypass permissions on · 1 monitor · ↓ to manage",
+            "✻ Brewed for 36m 13s · done 12:03 AM\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+            "  Ran 2 shell commands\n❯ ",
+        ] {
+            assert_eq!(screen_state(idle), "idle", "{idle}");
         }
     }
     #[test]

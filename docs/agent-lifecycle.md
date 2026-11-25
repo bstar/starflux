@@ -4,6 +4,15 @@ Right-click a terminal tab and choose **Agent status / conversation**. From the 
 
 The known “Automatic reconnect could not restore this session” and “Server connection could not be restored” footers produce `backend_unavailable`, rather than idle. Affected projects get an error marker. Output detection is a heuristic; the inspector labels it accordingly and does not export transcript text.
 
+For Claude Code, the screen check reports working while a spinner runs and also
+while background shells, sub-agents, tasks or teammates are listed on the status
+line or as "still running" on a finished turn (a monitor alone does not count).
+A plan approval or question dialog, with the cursor on a numbered choice,
+reports needs input and marks the project with "?". A fresh report of a finished
+turn does not override a screen that shows activity or a prompt; the inspector
+labels that `screen_activity_override`. Claude sessions started by typing
+`claude` in a shell have no hooks, so their status always comes from the screen.
+
 The inspector explains why a registered report lost authority. The JSON health field `report_status` distinguishes an archived record, process identity mismatch, clock skew, heartbeat expiry, and a terminal-observed backend failure overriding a current report. It also identifies current and unregistered reports.
 
 A confirmed terminal transport failure takes precedence over the last reported lifecycle. A disconnected presentation bridge can also appear alongside a running agent and its current lifecycle when the terminal owner remains reachable.
@@ -116,13 +125,20 @@ starts a sandboxed Claude without any settings and passed with Claude Code
 2.1.328.
 
 The same hook reports the session's lifecycle after registration:
-`UserPromptSubmit` reports working, `Notification` reports waiting for approval
-for permission prompts and needs input otherwise, `Stop` reports completed and
-`SessionEnd` reports stopped. Each advances the registered run's sequence; an
-event from another process or conversation, or one that repeats the current
-state, changes nothing. These reports drive agent status and the attention
-inbox. Claude launches get all five events automatically, and `--print-config`
-includes them for a reviewed Codex hook. `scripts/test-agent-session-hook.py`
+`UserPromptSubmit` reports working. `PermissionRequest`, and a `Notification`
+about permission, report waiting for approval; other notifications report needs
+input, except Claude's idle reminder after a finished turn. `PreToolUse` for
+`AskUserQuestion` or `ExitPlanMode` reports needs input and the matching
+`PostToolUse` reports working again; only those two tools run the hook around
+tool use. `SubagentStart` reports working, and `Stop` reports completed only
+when every sub-agent started in that session has stopped, so a turn that ends
+with background sub-agents running stays working. `SessionEnd` reports stopped.
+Each advances the registered run's sequence; an event from another process or
+conversation, or one that repeats the current state, changes nothing. These
+reports drive agent status and the attention inbox. Claude launches get all of
+these events automatically, and `--print-config` includes them for a reviewed
+Codex hook. The hook command names the STAR/FLUX executable's stable path, so
+hooks keep working after the binary is rebuilt. `scripts/test-agent-session-hook.py`
 checks every state and the refusals; the automatic Claude fixture observed the
 real `UserPromptSubmit` report through STAR/FLUX. Remote panes and Codex keep the explicit hook: Codex requires persisted
 hook trust, and STAR/FLUX never bypasses it. The daemon-backed Codex path remains

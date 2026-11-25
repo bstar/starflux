@@ -654,7 +654,16 @@ fn apply_health(health: &mut Value, record: Option<&Record>, now: u64) {
     let backend_failed = agent && health["state"] == "backend_unavailable";
     let disconnected = health["state"] == "disconnected";
     let transport_disconnected = disconnected || health["bridge_connected"] == false;
-    let use_report = fresh && !backend_failed && !disconnected;
+    // A finished turn's report must not hide what the screen still shows:
+    // background shells or sub-agents at work, or a prompt waiting on the user.
+    let screen_active = matches!(
+        health["state"].as_str(),
+        Some("working" | "needs_input" | "waiting_for_approval")
+    );
+    let report_settled =
+        current.is_some_and(|r| matches!(r.report.state, Lifecycle::Idle | Lifecycle::Completed));
+    let use_report =
+        fresh && !backend_failed && !disconnected && !(agent && screen_active && report_settled);
     let report_status = match (record, current) {
         (None, _) => "unregistered",
         (Some(_), None) => "process_mismatch",
@@ -662,6 +671,7 @@ fn apply_health(health: &mut Value, record: Option<&Record>, now: u64) {
         _ if !fresh => "heartbeat_expired",
         _ if disconnected => "transport_failure_override",
         _ if backend_failed => "backend_failure_override",
+        _ if agent && screen_active && report_settled => "screen_activity_override",
         _ => "current",
     };
     if use_report {
@@ -938,6 +948,25 @@ mod tests {
             failed["health"]["report_status"],
             "backend_failure_override"
         );
+        // A completed turn still shows background work or a prompt on screen.
+        let mut finished = record.clone();
+        finished.report.state = Lifecycle::Completed;
+        for active in ["working", "needs_input", "waiting_for_approval"] {
+            let mut screen = health.clone();
+            screen["state"] = json!(active);
+            apply_health(&mut screen, Some(&finished), 1002);
+            assert_eq!(screen["state"], active);
+            assert_eq!(screen["health"]["source"], "screen");
+            assert_eq!(
+                screen["health"]["report_status"],
+                "screen_activity_override"
+            );
+        }
+        let mut quiet = health.clone();
+        quiet["state"] = json!("idle");
+        apply_health(&mut quiet, Some(&finished), 1002);
+        assert_eq!(quiet["state"], "completed");
+        assert_eq!(quiet["health"]["report_status"], "current");
         let mut shell = health;
         shell["agent_pid"] = Value::Null;
         shell["agent"] = Value::Null;

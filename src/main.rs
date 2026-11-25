@@ -336,7 +336,7 @@ fn run() -> Result<()> {
         hook.arg("-c")
             .arg(include_str!("../scripts/agent-session-hook.py"));
         if !print_config {
-            hook.arg("--starflux").arg(std::env::current_exe()?);
+            hook.arg("--starflux").arg(crate::plugin_panes::launcher()?);
         }
         return Err(hook.args(options).exec())
             .context("Could not run the STAR/FLUX provider hook with python3");

@@ -51,21 +51,66 @@ def resume_template(argv):
 
 
 # Provider hook events after SessionStart and the lifecycle state each reports.
-LIFECYCLE = ("UserPromptSubmit", "Notification", "Stop", "SessionEnd")
+LIFECYCLE = (
+    "UserPromptSubmit", "Notification", "PermissionRequest", "SubagentStart", "SubagentStop",
+    "Stop", "SessionEnd",
+)
+# Tools that stop and wait for the user; only these run the hook around tool use.
+ASKING_TOOLS = "AskUserQuestion|ExitPlanMode"
 
 
-def lifecycle_state(event):
+def lifecycle_state(event, subagents_running=False):
     name = event.get("hook_event_name")
-    if name == "UserPromptSubmit":
+    if name in ("UserPromptSubmit", "SubagentStart"):
         return "working"
+    if name == "PreToolUse":
+        return "needs_input" if event.get("tool_name") in ASKING_TOOLS.split("|") else None
+    if name == "PostToolUse":
+        return "working" if event.get("tool_name") in ASKING_TOOLS.split("|") else None
+    if name == "PermissionRequest":
+        return "waiting_for_approval"
     if name == "Notification":
+        kind = str(event.get("notification_type", "")).lower()
+        if kind in ("idle_prompt", "auth_success"):
+            # "Waiting for your input" after a finished turn is not a question.
+            return None
         text = " ".join(str(event.get(key, "")) for key in ("notification_type", "message")).lower()
         return "waiting_for_approval" if "permission" in text or "approv" in text else "needs_input"
     if name == "Stop":
-        return "completed"
+        # The turn ended, but sub-agents it started in the background still work.
+        return "working" if subagents_running else "completed"
     if name == "SessionEnd":
         return "stopped"
     return None
+
+
+def track_subagents(event):
+    """Record sub-agents that started and have not stopped; return whether any remain."""
+    name = event.get("hook_event_name")
+    session = event.get("session_id")
+    if name not in ("SubagentStart", "SubagentStop", "Stop", "SessionEnd") or not isinstance(session, str):
+        return False
+    import fcntl
+    root = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/starflux-{os.getuid()}") / "starflux" / "agent-subagents"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = root / str(uuid.UUID(session))
+    with open(path, "a+", encoding="utf-8") as file:
+        fcntl.flock(file, fcntl.LOCK_EX)
+        file.seek(0)
+        running = set(file.read().split())
+        agent = str(event.get("agent_id") or "")
+        if name == "SubagentStart" and agent:
+            running.add(agent)
+        elif name == "SubagentStop":
+            running.discard(agent)
+        elif name == "SessionEnd":
+            running.clear()
+        file.seek(0)
+        file.truncate()
+        file.write("\n".join(sorted(running)))
+    if not running:
+        path.unlink(missing_ok=True)
+    return bool(running)
 
 
 def hook_config(args):
@@ -74,7 +119,10 @@ def hook_config(args):
         "--", *resume_template(args.resume_argv),
     ])
     group = {"hooks": [{"type": "command", "command": command}]}
-    return {"hooks": {name: [group] for name in ("SessionStart", *LIFECYCLE)}}
+    hooks = {name: [group] for name in ("SessionStart", *LIFECYCLE)}
+    for name in ("PreToolUse", "PostToolUse"):
+        hooks[name] = [{"matcher": ASKING_TOOLS, **group}]
+    return {"hooks": hooks}
 
 
 def bound_status(args):
@@ -122,7 +170,7 @@ def report_lifecycle(args, event, state):
 def register(args, event):
     if not isinstance(event, dict):
         raise ValueError("Provider hook payload must be an object")
-    state = lifecycle_state(event)
+    state = lifecycle_state(event, track_subagents(event))
     if state is not None:
         report_lifecycle(args, event, state)
         return
