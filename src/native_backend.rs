@@ -56,10 +56,10 @@ pub fn reference(config: &crate::runtime::Config, pane: usize) -> Result<Option<
         Some(_) => anyhow::bail!("Invalid native source ownership map"),
     };
     if let Some(r) = &reference {
+        // A plugin pane is itself a native terminal, so a plugin owner is not
+        // a conflict; an external or adopted terminal is.
         ensure!(
-            !config.externally_owned(pane)
-                && config.adopted_terminal(pane).is_none()
-                && state["terminal_plugins"][pane.to_string()].is_null(),
+            !config.externally_owned(pane) && config.adopted_terminal(pane).is_none(),
             "Native pane has conflicting backend ownership"
         );
         r.validate()?;
