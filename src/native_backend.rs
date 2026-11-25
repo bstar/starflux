@@ -578,6 +578,24 @@ fn dispatch(request: Value) -> Result<Value> {
                     "error":proof.err().map_or_else(||"Owner ended; supervisor tree retirement verified; recover explicitly".into(),|error|format!("{error:#}"))}),
                 );
             }
+            if target.binding.source.is_none() && request["action"] == "seal" {
+                // Closing a terminal whose launch never reached the owner:
+                // fence the launch so it can never start, then report whether
+                // anything is left to retire.
+                let expected = &target.binding;
+                check_pending_slot(&target)?;
+                let handle = service::existing(&target.namespace, &expected.owner)?;
+                let mut connection = handle.connect()?;
+                let status = connection.call(source_broker::Action::ResolveLaunch {
+                    id: expected.source_id.clone(),
+                    epoch: expected.source_epoch.clone(),
+                    digest: expected.launch_digest.clone(),
+                    seal: true,
+                })?;
+                return Ok(
+                    json!({"never_started":status["status"] == "sealed","launch_status":status["status"]}),
+                );
+            }
             if target.binding.source.is_none() && request["action"] == "inspect" {
                 let expected = &target.binding;
                 check_pending_slot(&target)?;
@@ -995,6 +1013,23 @@ fn with_desktop_environment(
         .collect();
     with_environment(argv, assignments)
 }
+/// Agent hooks report status for exactly this project, pane and generation;
+/// without these a native agent's status is guessed from its screen.
+fn with_pane_identity(
+    config: &crate::runtime::Config,
+    pane: usize,
+    epoch: &str,
+    argv: Vec<String>,
+) -> Vec<String> {
+    with_environment(
+        argv,
+        vec![
+            format!("STARFLUX_WORKSPACE={}", config.workspace),
+            format!("STARFLUX_PANE={}", pane + 1),
+            format!("STARFLUX_PANE_EPOCH={epoch}"),
+        ],
+    )
+}
 /// Run `argv` with extra `NAME=value` assignments, through one `env` call.
 fn with_environment(argv: Vec<String>, assignments: Vec<String>) -> Vec<String> {
     if assignments.is_empty() {
@@ -1181,16 +1216,7 @@ fn ensure_with(
             } else {
                 fallback.unwrap_or(wanted)
             };
-            // Agent hooks report status for exactly this project, pane and
-            // generation; without these a native agent's status is guessed.
-            launch.argv = with_environment(
-                launch.argv,
-                vec![
-                    format!("STARFLUX_WORKSPACE={}", config.workspace),
-                    format!("STARFLUX_PANE={}", pane + 1),
-                    format!("STARFLUX_PANE_EPOCH={epoch}"),
-                ],
-            );
+            launch.argv = with_pane_identity(config, pane, &epoch, launch.argv);
             let target = Pane {
                 namespace,
                 previous: serde_json::from_value(discovered["previous"].clone())?,
@@ -1272,7 +1298,7 @@ pub fn recover(
         (config, target)
     };
     let _worktree = crate::worktrees::ensure_allowed(&config)?;
-    let launch = launch_spec(&config, pane, None)?;
+    let mut launch = launch_spec(&config, pane, None)?;
     let mut sealed = false;
     let mut owner_lost = false;
     if target.binding.source.is_none() {
@@ -1331,6 +1357,7 @@ pub fn recover(
             "Terminal changed during native recovery; no shell launched"
         );
         let epoch = uuid::Uuid::new_v4().to_string();
+        launch.argv = with_pane_identity(&config, pane, &epoch, std::mem::take(&mut launch.argv));
         let pending = Pane {
             namespace: target.namespace.clone(),
             previous: Some(previous),
@@ -1389,6 +1416,16 @@ pub fn call(
         .context("Missing terminal action")?;
     let target =
         if matches!(action, "stop" | "terminate" | "reap") && target.binding.source.is_none() {
+            // A launch that never started has no process to stop; seal it so
+            // it never can, instead of failing the close or deletion.
+            let sealed = rpc(
+                config,
+                pane,
+                json!({"op":"call","target":target,"action":"seal"}),
+            )?;
+            if sealed["never_started"] == true {
+                return Ok(Some(json!({"retired":true,"never_started":true})));
+            }
             serde_json::from_value(rpc(config, pane, json!({"op":"reattach","target":target}))?)?
         } else {
             target

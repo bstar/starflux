@@ -50,22 +50,39 @@ time from a typed line reaching the controller to the presenter receiving the
 frame that shows its echo, with two panes and then eight. It runs in a private
 environment with fake shells; add `--cells` or `--ssh`. It excludes the host
 terminal's own drawing and display refresh. Measured on 2026-11-20 with native
-terminals, the only backend (40 samples each, after warmup):
+terminals (40 samples each, after warmup):
 
 | Mode | Two panes median / p95 | Eight panes median / p95 |
 | --- | ---: | ---: |
-| Graphical | 17.7 / 25.0 ms | 18.2 / 25.7 ms |
-| Cells | 17.1 / 24.6 ms | 17.1 / 24.6 ms |
-| SSH | 17.7 / 18.0 ms | 18.1 / 25.7 ms |
+| Graphical | 1.9 / 2.1 ms | 2.3 / 2.7 ms |
+| Cells | 2.3 / 2.4 ms | 2.3 / 2.5 ms |
+| SSH | 1.7 / 2.2 ms | 2.3 / 2.7 ms |
 
-All are well inside the provisional targets (p95 below 50 ms for two panes and
-100 ms for eight). The retired tmux backend measured about 9 ms median and
-10 ms p95 in every mode; native terminals add a hop through the terminal owner.
-Samples cluster near 17 ms and 25 ms, about 8 ms apart, which suggests a fixed
-polling step on the native path rather than variable work; it has not been
-profiled yet. Hardware input-to-photon latency needs the desktop benchmark
-below, which was last run on 2026-10-28, before native terminals became the
-default.
+The retired tmux backend measured about 9 ms median and 10 ms p95 in every mode,
+and native terminals measured 18 / 25 ms before these changes. Almost all of
+that was waiting on timers, not work:
+
+- The controller ticked every 8 ms and took native frames only on a tick, and
+  the owner sends the next frame only after the previous one is acknowledged,
+  so most keystrokes waited for two ticks. A finished frame now wakes the
+  controller through STAR/CORE's `Controller::wake` (STAR/CORE 0.26).
+- The connector between owner and view polled every 2 ms and handed frames to
+  the converter only on its next pass. It now sleeps until the owner replies
+  or a view has input, an acknowledgement or new settings.
+- The owner started rendering output only on its next poll, which could wait
+  its 16 ms idle timeout, and noticed finished renders only by polling every
+  2 ms. It now starts rendering in the same turn and finished renders wake it.
+
+Hardware input-to-photon latency needs the desktop benchmark below, which was
+last run on 2026-10-28, before native terminals became the default.
+
+To see where a keystroke's time goes, set `STARFLUX_LATENCY_TRACE` to a file
+path before starting STAR/FLUX (or a test). Each process appends
+`monotonic_ns pid stage` lines for input queued, request written, owner input,
+PTY write and read, render start, frame queued, frame received, frame converted
+and frame taken, plus controller ticks and scenes. The timestamps share the
+system monotonic clock, so stages from the controller, connector and owner line
+up. Unset, tracing costs one cached check per mark.
 
 ## Idle CPU
 

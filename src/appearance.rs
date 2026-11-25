@@ -52,12 +52,23 @@ fn readable(color: Rgb, surfaces: &[Rgb], target: f64) -> Rgb {
 impl Appearance {
     pub fn sidebar_palette(&self) -> SidebarPalette {
         let bg = Rgb::parse_hex(&self.bg).unwrap();
-        if (self.id.starts_with("gruvbox") || self.name.to_ascii_lowercase().contains("gruvbox"))
-            && bg.contrast(Rgb::new(255, 255, 255)) > bg.contrast(Rgb::new(0, 0, 0))
-        {
-            // Gruvbox's hard background gives navigation a distinct dark plane,
-            // including when the palette comes from the System theme.
-            let background = Rgb::new(29, 32, 33);
+        let named = |family: &str| {
+            self.id.starts_with(family) || self.name.to_ascii_lowercase().contains(family)
+        };
+        let dark = bg.contrast(Rgb::new(255, 255, 255)) > bg.contrast(Rgb::new(0, 0, 0));
+        // Gruvbox's hard background gives navigation a distinct dark plane;
+        // Kanagawa's navigation sits on the base background, the colour the
+        // desktop uses. Both apply when the palette comes from the System theme.
+        let plane = if !dark {
+            None
+        } else if named("gruvbox") {
+            Some(Rgb::new(29, 32, 33))
+        } else if named("kanagawa") {
+            Some(bg)
+        } else {
+            None
+        };
+        if let Some(background) = plane {
             return SidebarPalette {
                 background: background.to_hex(),
                 hover: mix(background, Rgb::new(255, 255, 255), 0.045).to_hex(),
@@ -268,6 +279,7 @@ mod tests {
         let t = Appearance::load("kanagawa").unwrap();
         assert_eq!(t.bg, "#1f1f28");
         assert_eq!(t.panel, "#2a2a37");
+        assert_eq!(t.sidebar_palette().background, "#1f1f28");
         assert_eq!(t.grid, "#22232d");
         assert!(Appearance::load("../../bad").is_err());
     }

@@ -154,8 +154,11 @@ restarted to free resources.
 
 ## Performance
 
-Input-to-frame latency is about 18 ms median and 25 ms p95, roughly twice the
-old tmux path; see [render performance](render-performance.md#input-to-frame-latency).
+Input-to-frame latency is about 2 ms median and under 3 ms p95, roughly four
+times faster than the old tmux path (about 9 ms); see
+[render performance](render-performance.md#input-to-frame-latency). Changes to
+the owner process take effect only when it restarts, which normally means a
+reboot, because a running owner is never replaced.
 
 ## Tests
 

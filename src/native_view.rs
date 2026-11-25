@@ -771,6 +771,29 @@ fn run(
                         json!({"op":"ack","view":state.id,"epoch":epoch,"sequence":sequence}),
                     )?;
                 }
+                // A terminal follows the view someone is typing in. When another
+                // view resized it since this one did, this view shows only the
+                // top of a taller grid (cutting off an agent's input line), so
+                // take the size back before the input lands.
+                if s.visible
+                    && !state.input.lock().unwrap().is_empty()
+                    && v.last_resize_size
+                        .as_ref()
+                        .zip(v.source_size.as_ref())
+                        .is_some_and(|(mine, source)| {
+                            (mine.rows, mine.columns) != (source.rows, source.columns)
+                        })
+                    && !pending
+                        .values()
+                        .any(|p| matches!(p, Pending::Resize(id, _) if id == &state.id))
+                {
+                    v.last_resize_size = None;
+                    let mut current = state.settings.lock().unwrap();
+                    current.epoch = current
+                        .epoch
+                        .checked_add(1)
+                        .context("View epoch exhausted")?;
+                }
                 if state.input_error.lock().unwrap().is_none()
                     && v.inflight < 256 * 1024
                     && pending.len() < 128

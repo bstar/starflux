@@ -542,51 +542,50 @@ fn activity_icon(
     working: bool,
 ) {
     let [x, y] = position;
-    // A fixed central spark and eight orbit points. Only their light moves;
-    // integer geometry stays crisp at the sidebar's native pixel size.
-    let phase = if reduced_motion {
+    // A comet orbit: twelve fixed points on an 18 px ring. A bright head
+    // travels continuously and the tail fades by angular distance, so the
+    // motion reads smoothly even though every point stays on whole pixels.
+    const POINTS: usize = 12;
+    let head = if reduced_motion {
         0.
     } else {
-        f64::from(phase % 48)
+        f64::from(phase % 48) / 48. * POINTS as f64
     };
-    for (i, (dx, dy)) in [
-        (7, 0),
-        (12, 2),
-        (14, 7),
-        (12, 12),
-        (7, 14),
-        (2, 12),
-        (0, 7),
-        (2, 2),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let behind = (phase - i as f64 * 6.).rem_euclid(48.);
-        // Fade the tail over most of an orbit and ease the next point in.
-        let strength = if behind > 42. {
-            (behind - 42.) / 6.
+    let tint = |strength: f64| {
+        if attention {
+            t.attention_color(&t.border, strength)
         } else {
-            (1. - behind / 36.).max(0.).powf(1.5)
+            t.activity_color(&t.border, strength * if working { 1. } else { 0.55 })
+        }
+    };
+    for i in 0..POINTS {
+        let angle = i as f64 / POINTS as f64 * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+        let dx = (8. + 7. * angle.cos()).round() as u16;
+        let dy = (8. + 7. * angle.sin()).round() as u16;
+        // How far this point trails the head, in points (0 = at the head).
+        let behind = (head - i as f64).rem_euclid(POINTS as f64);
+        let strength = if behind > POINTS as f64 - 1. {
+            // The point just ahead brightens as the head arrives.
+            1. - (POINTS as f64 - behind)
+        } else {
+            (1. - behind / (POINTS as f64 * 0.7)).max(0.).powf(1.6)
         };
-        p.fill(
-            R::new(x + dx, y + dy, 2, 2),
-            &if attention {
-                t.attention_color(&t.border, strength)
-            } else {
-                t.activity_color(&t.border, strength * if working { 1. } else { 0.55 })
-            },
-        );
+        p.fill(R::new(x + dx, y + dy, 2, 2), &tint(strength.max(0.08)));
     }
+    // A soft centre that breathes once per orbit.
+    let pulse = if reduced_motion {
+        0.6
+    } else {
+        0.45 + 0.4 * ((f64::from(phase % 48) / 48. * std::f64::consts::TAU).sin() + 1.) * 0.5
+    };
+    p.fill(R::new(x + 7, y + 7, 4, 4), &tint(pulse));
     let ink = if attention { &t.warning } else { &t.accent };
-    p.fill(R::new(x + 7, y + 5, 2, 6), ink);
-    p.fill(R::new(x + 5, y + 7, 6, 2), ink);
     p.fill(
-        R::new(x + 7, y + 7, 2, 2),
+        R::new(x + 8, y + 8, 2, 2),
         &if attention {
-            t.attention_color(ink, 0.85)
+            t.attention_color(ink, 0.9)
         } else {
-            t.activity_color(ink, 0.85)
+            t.activity_color(ink, 0.9)
         },
     );
 }
@@ -791,8 +790,14 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             p.fill(R::new(0, y, content_right, 34), &sidebar.selection);
             p.fill(R::new(r.x, r.y, 2, r.height), &t.accent);
         }
-        let label = R::new(44, y + 2, content_right.saturating_sub(64), 19);
         let working = project.working > 0;
+        // Leave the activity mark its own column.
+        let label = R::new(
+            44,
+            y + 2,
+            content_right.saturating_sub(if working { 76 } else { 64 }),
+            19,
+        );
         if project.failed > 0 || project.waiting > 0 {
             let r = R::new(w.saturating_sub(33), y + 5, 14, 14);
             p.text(
@@ -811,7 +816,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
         } else if working {
             activity_icon(
                 &mut p,
-                [content_right.saturating_sub(16), y + 4],
+                [content_right.saturating_sub(28), y + 7],
                 t,
                 ((if working || project.waiting > 0 {
                     m.wave_phase
@@ -833,7 +838,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
             // Fixed mono positions keep names still as the activity wave passes.
             // A broad crest travels back and forth across the actual name;
             // short names no longer spend most of a cycle outside the wave.
-            let phase = f64::from((m.wave_phase + n as u16 * 7) % 48) / 48.;
+            let phase = f64::from((m.wave_phase / 2 + n as u16 * 7) % 48) / 48.;
             let center = (1. - (phase * std::f64::consts::TAU).cos())
                 * 0.5
                 * project.name.len().saturating_sub(1) as f64;
@@ -871,7 +876,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
                 if m.reduced_motion {
                     0.65
                 } else {
-                    ((f64::from(m.wave_phase) / 48. * std::f64::consts::TAU).sin() + 1.) * 0.5
+                    ((f64::from(m.wave_phase / 2) / 48. * std::f64::consts::TAU).sin() + 1.) * 0.5
                 }
             } else {
                 0.

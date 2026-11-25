@@ -2974,6 +2974,72 @@ GLib.MainLoop().run()
         assert b.snapshot()['project_order']==expected,'project close leaked to another window'
         a.action('project:new');wait(lambda:a.snapshot().get('modal_open'),'reopen dialog missing');a.paste('extra-a');a.accept()
         wait(lambda:a.snapshot()['project_order']==expected,'reopening a project lost its position')
+        if args.cells:a.action('project:new')
+        else:
+            # Click the sidebar's add button itself; with manual ordering a press there once started a project drag.
+            assert a.snapshot()['project_navigation']['sort']=='manual'
+            v=a.scene['viewport'];px=[40,v['height']-51]
+            for action in ('down','up'):a.input(dict(kind='pointer',action=action,button=0,modifiers=0,x=px[0]*v['columns']//v['width'],y=px[1]*v['rows']//v['height'],pixel=px))
+        wait(lambda:a.snapshot().get('modal_open'),'new project dialog missing');a.paste('fresh-proof');a.accept()
+        try:wait(lambda:(s if (s:=a.snapshot()).get('active_project')=='fresh-proof' and not s.get('modal_open') and s.get('panes') and s['panes'][0].get('alive') else None),'adding a new project failed',30)
+        except AssertionError:
+            s=a.snapshot();print({k:s.get(k) for k in ('active_project','modal_open','modal_error','status','panes','history')},flush=True);raise
+        # Switching between two live native projects keeps each one's terminal drawing and answering input.
+        def live_reply(label):
+            if args.cells and not a.snapshot().get('cell_terminal_focus'):
+                a.key('f:6');wait(lambda:a.snapshot().get('cell_terminal_focus'),'terminal focus did not return')
+            a.paste(label);a.key('enter')
+            wait(lambda:any('REPLY='+label in t.get('text','') for t in a.snapshot().get('direct_terminals',[])),'terminal stopped responding: '+label)
+        live_reply('FRESH_BEFORE_SWITCH')
+        for round in range(3):
+            a.action('project:'+name);wait(lambda:a.snapshot().get('active_project')==name,'switch to original failed')
+            live_reply(f'ORIGINAL_AFTER_SWITCH_{round}')
+            a.action('project:fresh-proof');wait(lambda:a.snapshot().get('active_project')=='fresh-proof','switch to new project failed')
+            live_reply(f'FRESH_AFTER_SWITCH_{round}')
+        # A terminal follows the window someone types in. Another window's
+        # resize must not leave this one showing only the top of a taller grid.
+        def api(method,**params):
+            reply=json.loads(subprocess.check_output([str(app),'--api',json.dumps(dict(version=1,id=method,operation_id=str(uuid.uuid4()),method=method,params=params))],env=env,timeout=30))
+            assert reply['ok'],reply;return reply['result']
+        def pty_size(project):
+            supervisor=api('panes.get',project=project,pane=1)['status']['pid']
+            shell=Path(f'/proc/{supervisor}/task/{supervisor}/children').read_text().split()[0]
+            rows,columns=map(int,subprocess.check_output(['stty','-F',f'/proc/{shell}/fd/0','size'],text=True).split())
+            return columns,rows
+        def view_size(client):
+            return next((c['rect']['width'],c['rect']['height']) for c in client.scene['components'] if c['kind']=='terminal')
+        other=Client('v-size-proof');wait(lambda:other.scene,'second window did not start')
+        other.action('project:fresh-proof');wait(lambda:other.snapshot().get('active_project')=='fresh-proof','second window did not open the shared project')
+        other.resize(140,50,1400,1000)
+        wait(lambda:view_size(other)!=view_size(a) and pty_size('fresh-proof')==view_size(other),'larger window did not size the shared terminal')
+        live_reply('TYPED_IN_SMALLER_WINDOW')
+        wait(lambda:pty_size('fresh-proof')==view_size(a),f'terminal did not follow the window being typed in: {pty_size("fresh-proof")} != {view_size(a)}')
+        other.process.terminate();other.process.wait(timeout=10)
+        # A project whose terminal cannot open must not keep showing the previous project's screen.
+        gone=tmp/'gone-directory';gone.mkdir()
+        created=json.loads(subprocess.check_output([str(app),'--api',json.dumps(dict(version=1,id='gone',operation_id=str(uuid.uuid4()),method='projects.create',params=dict(session='base',label='Gone proof',directory=str(gone))))],env=env,timeout=20))
+        assert created['ok'],created;gone_id=created['result']['project'];gone.rmdir()
+        wait(lambda:(a.action('project:'+gone_id),time.sleep(.3),a.snapshot().get('active_project')==gone_id)[2],'switch to unopenable project failed')
+        def pane_text(frame):return '\n'.join(''.join(r['text'] for r in row['runs']) for row in frame['rows'])
+        wait(lambda:(a.pump(),a.frames.get(0) and a.frames[0]['stream'].startswith('starflux-'+gone_id) and 'Terminal unavailable' in pane_text(a.frames[0]))[1],'unopenable project kept the previous screen: '+repr(a.frames.get(0) and (a.frames[0]['stream'],pane_text(a.frames[0])[:200])))
+        assert 'FRESH_AFTER_SWITCH' not in pane_text(a.frames[0])
+        a.action('project:fresh-proof');wait(lambda:a.snapshot().get('active_project')=='fresh-proof','return from unopenable project failed')
+        live_reply('FRESH_AFTER_UNOPENABLE')
+        # Once the directory exists, Recover to shell opens a shell that carries
+        # its pane identity, so agents started there report their own status.
+        gone.mkdir()
+        epoch=api('panes.list',project=gone_id)['panes'][0]['epoch']
+        api('panes.recover',project=gone_id,pane=1,epoch=epoch,confirm='RECOVER')
+        def recovered_shell():
+            status=api('panes.get',project=gone_id,pane=1)
+            if not status['status'].get('alive'):return None
+            children=Path(f"/proc/{status['status']['pid']}/task/{status['status']['pid']}/children").read_text().split()
+            return children and (status['epoch'],dict(l.split('=',1) for l in Path(f'/proc/{children[0]}/environ').read_bytes().decode(errors='replace').split('\0') if '=' in l))
+        recovered_epoch,shell_env=wait(recovered_shell,'recovered shell did not start',30)
+        assert recovered_epoch!=epoch
+        assert (shell_env.get('STARFLUX_WORKSPACE'),shell_env.get('STARFLUX_PANE'),shell_env.get('STARFLUX_PANE_EPOCH'))==(gone_id,'1',recovered_epoch),{k:v for k,v in shell_env.items() if k.startswith('STARFLUX')}
+        a.action('close-project:'+gone_id);wait(lambda:gone_id not in a.snapshot()['project_order'],'unopenable project did not close')
+        a.action('close-project:fresh-proof');wait(lambda:'fresh-proof' not in a.snapshot()['project_order'],'new project did not close')
         a.action('project:'+name);wait(lambda:a.snapshot().get('active_project')==name and a.snapshot()['panes'][0].get('pid')==original_pid,'return to original project failed')
         picker(a)
         assert any(r[1].removeprefix('● ')=='base' for r in a.snapshot()['session_manager']['rows'])

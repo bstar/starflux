@@ -336,6 +336,8 @@ pub struct Workspace {
     native_terminal_cells: bool,
     pub(crate) native_skins: bool,
     native_layout_key: String,
+    /// Placeholder last drawn for a visible pane with no attached terminal.
+    native_placeholders: BTreeMap<String, String>,
     native_plane_views: BTreeSet<String>,
     fonts: font_ui::Fonts,
     native_font_points: Option<u32>,
@@ -594,6 +596,7 @@ impl Workspace {
             native_terminal_cells: false,
             native_skins: false,
             native_layout_key: String::new(),
+            native_placeholders: BTreeMap::new(),
             native_plane_views: BTreeSet::new(),
             fonts: Default::default(),
             native_font_points: None,
@@ -870,7 +873,7 @@ impl Workspace {
         if !self.reduced_motion
             && self.state.space != Space::Apps
             && self.last_typing.elapsed() >= Duration::from_millis(150)
-            && self.wave_at.elapsed() >= Duration::from_millis(110)
+            && self.wave_at.elapsed() >= Duration::from_millis(40)
             && self.projects.iter().any(|p| {
                 let a = self.project_activity(p);
                 a.working > 0
@@ -921,8 +924,10 @@ impl Workspace {
                     .rev()
                     .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
                     .and_then(|h| {
+                        // Only real project rows drag; "project:new" is the add button.
                         h.action
                             .strip_prefix("project:")
+                            .filter(|id| category_rows.iter().any(|r| r.id == *id))
                             .map(str::to_owned)
                             .or_else(|| {
                                 h.action
@@ -1032,6 +1037,15 @@ impl Workspace {
         }
         self.project_offset = self.project_offset.min(rows.len().saturating_sub(page));
         self.category_cursor = self.category_cursor.min(rows.len().saturating_sub(1));
+    }
+    /// Whether the sidebar is animating a working project.
+    fn working_animation(&self) -> bool {
+        !self.reduced_motion
+            && self.state.space != Space::Apps
+            && self
+                .projects
+                .iter()
+                .any(|p| self.project_activity(p).working > 0)
     }
     fn project_activity(&self, project: &Config) -> crate::activity::Activity {
         let mut result = if self.activity_at.elapsed() < Duration::from_secs(8) {
@@ -3317,6 +3331,18 @@ impl Workspace {
                     {
                         return self.reopen_project(crate::saved(&values[0])?);
                     }
+                    let local = values[1] == "local" || values[1].is_empty();
+                    // A missing directory leaves the project's terminal unable
+                    // to start; the API refuses it the same way.
+                    let directory = if local {
+                        let path = std::fs::canonicalize(&values[2]).with_context(|| {
+                            format!("Directory {} does not exist; create it first", values[2])
+                        })?;
+                        ensure!(path.is_dir(), "{} is not a directory", values[2]);
+                        path.to_string_lossy().into_owned()
+                    } else {
+                        values[2].clone()
+                    };
                     let config = Config {
                         ssh_config: self.config.ssh_config.clone(),
                         workspace: values[0].clone(),
@@ -3327,12 +3353,8 @@ impl Workspace {
                         adopted: Default::default(),
                         native_terminals: false,
                         theme: self.config.theme.clone(),
-                        host: if values[1] == "local" || values[1].is_empty() {
-                            None
-                        } else {
-                            Some(values[1].clone())
-                        },
-                        directory: Some(values[2].clone()),
+                        host: if local { None } else { Some(values[1].clone()) },
+                        directory: Some(directory),
                         agent: None,
                         executable: std::env::current_exe()?.display().to_string(),
                         project_host: true,
@@ -6183,6 +6205,7 @@ impl Controller for Workspace {
                 for terminal in self.terminals.values_mut() {
                     terminal.reset_native();
                 }
+                self.native_placeholders.clear();
                 self.native_layout_key = key;
             }
             for (pane, area) in panes {
@@ -6206,6 +6229,12 @@ impl Controller for Workspace {
                 } else {
                     native_terminal_rect(area, content, self.viewport)
                 };
+                if self
+                    .terminals
+                    .contains_key(&(self.config.workspace.clone(), pane))
+                {
+                    self.native_placeholders.remove(&stream);
+                }
                 if let Some(terminal) = self
                     .terminals
                     .get_mut(&(self.config.workspace.clone(), pane))
@@ -6254,6 +6283,30 @@ impl Controller for Workspace {
                             }
                         }
                         Err(error) => self.status = format!("Terminal resize: {error:#}"),
+                    }
+                } else if !frame_pending {
+                    // No terminal is attached (starting, or it failed to open).
+                    // Draw a blank pane; otherwise the presenter keeps showing
+                    // whatever the previous project left in this area.
+                    let message = self
+                        .health
+                        .get(&(self.config.workspace.clone(), pane))
+                        .and_then(|h| h["error"].as_str())
+                        .map(|e| {
+                            format!("Terminal unavailable: {e}. Right-click its tab and choose Recover to shell.")
+                        })
+                        .unwrap_or_default();
+                    let signature = format!("{}:{rect:?}:{message}", self.viewport.generation);
+                    if self.native_placeholders.get(&stream) != Some(&signature) {
+                        let frame = placeholder_frame(
+                            stream.clone(),
+                            self.viewport.generation,
+                            rect,
+                            &message,
+                            &self.appearance,
+                        );
+                        self.native_placeholders.insert(stream, signature);
+                        self.effects.push(ServerMessage::TerminalCells { frame });
                     }
                 }
             }
@@ -7018,12 +7071,18 @@ impl Controller for Workspace {
             self.note(format!("{e:#}"));
         }
     }
+    fn wake(&mut self) -> Option<crossbeam_channel::Receiver<()>> {
+        Some(crate::native_view::output_ready_receiver())
+    }
     fn tick_interval(&self) -> Duration {
         // Input wakes the session immediately; this tick paces terminal output.
         if self.desktop.is_some() || self.state.space == Space::Apps {
             Duration::from_millis(33)
         } else if self.recently_active(Duration::from_secs(2)) {
             Duration::from_millis(8)
+        } else if self.working_animation() {
+            // Keep the sidebar's working animation smooth.
+            Duration::from_millis(40)
         } else {
             // Idle: STAR/CORE lets a quiet session sleep this long between polls.
             Duration::from_millis(100)
@@ -7032,7 +7091,12 @@ impl Controller for Workspace {
     fn frame_interval(&self) -> Duration {
         // Live terminal/app frames have their own 60 Hz transport. Periodic
         // chrome follows SCREEN's cadence; input still requests an immediate scene.
-        Duration::from_millis(100)
+        // The sidebar's working animation needs 25 fps while it is visible.
+        if self.working_animation() {
+            Duration::from_millis(40)
+        } else {
+            Duration::from_millis(100)
+        }
     }
     #[cfg(feature = "lossless-canvas")]
     fn lossless_canvas(&self, stream: &str) -> bool {
@@ -7285,5 +7349,52 @@ mod native_terminal_tests {
         );
         assert!(u32::from(rect.x + rect.width) * 8 <= u32::from(canvas.x + canvas.width));
         assert!(u32::from(rect.y + rect.height) * 19 <= u32::from(canvas.y + canvas.height));
+    }
+}
+
+/// A blank terminal frame with an optional one-line message, for a pane whose
+/// terminal is not attached.
+fn placeholder_frame(
+    stream: String,
+    generation: u64,
+    rect: starcore::terminal_graphics::protocol::Rect,
+    message: &str,
+    theme: &crate::appearance::Appearance,
+) -> starcore::terminal_graphics::terminal_cells::Frame {
+    use starcore::terminal_graphics::terminal_cells::{Frame, Row, Run};
+    let rgb = |value: &str| -> [u8; 3] {
+        std::array::from_fn(|i| {
+            u8::from_str_radix(value.get(1 + i * 2..3 + i * 2).unwrap_or("00"), 16).unwrap_or(0)
+        })
+    };
+    let (fg, bg) = (rgb(&theme.muted), rgb(&theme.bg));
+    let width = usize::from(rect.width);
+    let rows = (0..rect.height)
+        .map(|index| {
+            let text: String = if index == 1 {
+                format!("  {message}").chars().take(width).collect()
+            } else {
+                String::new()
+            };
+            let used = text.chars().count();
+            Row {
+                index,
+                runs: vec![Run {
+                    text: text + &" ".repeat(width - used),
+                    columns: rect.width,
+                    foreground: fg,
+                    background: bg,
+                    attributes: 0,
+                }],
+            }
+        })
+        .collect();
+    Frame {
+        stream,
+        generation,
+        rect,
+        complete: true,
+        rows,
+        cursor: None,
     }
 }
