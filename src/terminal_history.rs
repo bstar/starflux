@@ -75,7 +75,9 @@ pub fn search_capture(
             matches.push(SearchMatch {
                 row: row + 1,
                 column: line[..start].chars().count() + 1,
-                excerpt: line[context_start..].chars().take(256).collect(),
+                // Native captures pad each row to the terminal width; the
+                // padding is layout, not output.
+                excerpt: line[context_start..].trim_end().chars().take(256).collect(),
             });
         });
     }
@@ -213,6 +215,15 @@ impl History {
             top
         };
         self.screen.set_scrollback(self.maximum.saturating_sub(top));
+    }
+    /// Scrolled back to the live end with nothing in progress, so a
+    /// wheel-opened review can hand the pane back to live output.
+    pub fn at_live_end(&self) -> bool {
+        !self.loading
+            && self.screen.scrollback() == 0
+            && self.editing.is_none()
+            && self.anchor.is_none()
+            && self.query.is_empty()
     }
     pub fn status(&self) -> Status<'_> {
         Status {

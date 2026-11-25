@@ -510,7 +510,7 @@ GLib.MainLoop().run()
                 host_config=tmp/'worktree-ssh-config'
                 host_config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n SetEnv '+ ' '.join(k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM') if k in env)+'\n')
                 if args.worktrees:
-                    config=json.loads((state/(name+'.json')).read_text());config.update(host='proof',ssh_config=str(host_config));(state/(name+'.json')).write_text(json.dumps(config))
+                    config=json.loads((state/(name+'.json')).read_text());config.update(host='proof',ssh_config=str(host_config),desktop_helper=str(app));(state/(name+'.json')).write_text(json.dumps(config))
         tmux('new-session','-d','-s','Fixture','-c',str(tmp),str(shell))
         tmux('new-window','-d','-t','Fixture','-c',str(tmp),str(shell))
         source_pid=int(tmux('display-message','-p','-t','Fixture','#{pane_pid}'))
@@ -1191,7 +1191,13 @@ GLib.MainLoop().run()
             for client in [a,b]:
                 subprocess.run([str(app),'--workspace',name,'--frontend',client.identity,'--close'],env=env,check=True,capture_output=True)
                 client.process.wait(timeout=5)
-            subprocess.run(['tmux','-L','starflux-'+name,'send-keys','-t','p0','AFTER_LAST_VIEW_CLOSED','Enter'],env=env,check=True,capture_output=True)
+            def pane_api(method,params,write=False):
+                request=dict(version=1,id='snapshot-handoff',method=method,params=params)
+                if write:request['operation_id']=secrets.token_hex(16)
+                result=json.loads(subprocess.check_output([str(app),'--api',json.dumps(request)],env=env,timeout=20));assert result['ok'],result
+                return result['result']
+            pane=pane_api('panes.get',dict(project=name,pane=1))['target']
+            pane_api('panes.send',dict(target=pane,text='AFTER_LAST_VIEW_CLOSED',submit=True),write=True)
             # Coverage expires 15 s after the last view, scans run every 5 s and a live pane
             # is recaptured after 10 s, so a handoff can legitimately take about 30 s.
             wait(lambda:'REPLY=AFTER_LAST_VIEW_CLOSED' in archive(),'collector did not take over after last view closed',timeout=60)
@@ -1332,8 +1338,7 @@ GLib.MainLoop().run()
                 subprocess.run([str(app),'--workspace',name,'--frontend',client.identity,'--close'],env=env,check=True,capture_output=True)
                 client.process.wait(timeout=5)
             old=archive(0)
-            if args.native_sources:stop_native_owner()
-            else:subprocess.run(['tmux','-L','starflux-'+name,'kill-server'],env=env,check=True)
+            stop_native_owner()
             wait(lambda:all(not alive(pid) for pid in owners),'private cold-start owners survived')
             markers=[tmp/('MUST_NOT_AUTORESTART_AGENT_'+str(pane)) for pane in range(2)]
             model=projects/(name+'.model.json');saved=json.loads(model.read_text())
@@ -1363,16 +1368,15 @@ GLib.MainLoop().run()
             # A cold runtime, retaining only durable data and per-view layouts.
             shutil.rmtree(runtime);runtime.mkdir(mode=0o700);state.mkdir(mode=0o700)
             a=Client('v-session-a',remote=args.ssh);b=Client('v-session-b')
-            if args.native_sources:
-                # Same-boot owner loss retains guarded references. Restore each
-                # shell through the real confirmation, without replaying the
-                # saved program or dropping its layout/history/conversation.
-                wait(lambda:a.scene and b.scene and len(a.snapshot().get('panes',[]))==2,'cold native layout missing')
-                for pane in range(2):
-                    wait(lambda:len(a.snapshot().get('panes',[]))>pane and a.snapshot()['panes'][pane].get('native_owner_recovery_available'),'cold native retirement proof unavailable')
-                    a.action('recover-terminal:'+str(pane));wait(lambda:a.snapshot().get('modal_open'),'cold native recovery confirmation missing')
-                    a.paste('RECOVER');a.accept()
-                    wait(lambda:not a.snapshot().get('modal_open'),'cold native recovery did not finish')
+            # Same-boot owner loss retains guarded references. Restore each
+            # shell through the real confirmation, without replaying the
+            # saved program or dropping its layout/history/conversation.
+            wait(lambda:a.scene and b.scene and len(a.snapshot().get('panes',[]))==2,'cold native layout missing')
+            for pane in range(2):
+                wait(lambda:len(a.snapshot().get('panes',[]))>pane and a.snapshot()['panes'][pane].get('native_owner_recovery_available'),'cold native retirement proof unavailable')
+                a.action('recover-terminal:'+str(pane));wait(lambda:a.snapshot().get('modal_open'),'cold native recovery confirmation missing')
+                a.paste('RECOVER');a.accept()
+                wait(lambda:not a.snapshot().get('modal_open'),'cold native recovery did not finish')
             wait(lambda:a.scene and b.scene and len(a.snapshot().get('panes',[]))==2 and all(p.get('pid') for p in a.snapshot()['panes']),'cold runtime did not recover layout')
             assert a.snapshot()['project_state']['pane_tree']==layout,'cold start changed split tree'
             assert all(p['pid'] not in owners for p in a.snapshot()['panes'])
@@ -2236,10 +2240,11 @@ GLib.MainLoop().run()
             a.action('machines:local');menu('Machine projects')
             assert any(i['action']=='machines:open:'+name for i in a.snapshot()['context_menu']['items'])
             a.action('machines:open:'+name);wait(lambda:a.snapshot().get('active_project')==name,'machine project navigation failed')
-            # A missing helper is reported separately from working SSH/Python/tmux.
+            # A missing helper is reported separately from working SSH, and it
+            # also rules out project terminals: their native owner is the helper.
             absent=api('machines.save',dict(label='Missing helper',target='proof',ssh_config=str(host_config),remote_executable=str(tmp/'missing-helper')),write=True)
             absent_check=api('machines.test',dict(machine=absent['id']))
-            assert absent_check['connected'] and absent_check['project_terminals_ready'] and not absent_check['workspace_api_ready'],absent_check
+            assert absent_check['connected'] and not absent_check['project_terminals_ready'] and not absent_check['workspace_api_ready'] and absent_check['workspace_error'],absent_check
             api('machines.remove',dict(machine=absent['id'],expected_revision=absent['revision']),write=True)
             # Input diagnostics, duplicate labels, serialization and output limits.
             valid=dict(label='Validation',target='proof',ssh_config=str(host_config),remote_executable=str(wrapper))
@@ -2360,7 +2365,10 @@ GLib.MainLoop().run()
             assert external['locked'] is None
             (external_path/'subdir').mkdir()
             existing='existing-tree';existing_config=json.loads((configs/(name+'.json')).read_text());existing_config.update(workspace=existing,label='Existing worktree',directory=str(external_path/'subdir'))
-            (configs/(existing+'.json')).write_text(json.dumps(existing_config));(configs/(existing+'.model.json')).write_text((configs/(name+'.model.json')).read_text())
+            (configs/(existing+'.json')).write_text(json.dumps(existing_config))
+            # The copied layout must not claim the source project's live terminals.
+            existing_model=json.loads((configs/(name+'.model.json')).read_text());existing_model.pop('native_sources',None)
+            (configs/(existing+'.model.json')).write_text(json.dumps(existing_model))
             current_target=next(t for t in api('worktrees.list',dict(project=existing))['worktrees'] if t['current'])
             assert api('worktrees.open',dict(project=existing,target=current_target),True)['project']==existing
             existing_reference=api('panes.get',dict(project=existing,pane=1))['target']
@@ -2481,7 +2489,7 @@ GLib.MainLoop().run()
                 assert bool(found['next_cursor']) is (not cursor),found
                 return found
             first_page=search_api(name)
-            assert first_page['source']=='tmux'
+            assert first_page['source']=='native'
             api_cursor=first_page['next_cursor']
             assert search_api(name,api_cursor)['matches'][0]['row']>first_page['matches'][0]['row']
 

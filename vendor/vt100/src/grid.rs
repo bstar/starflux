@@ -100,6 +100,30 @@ impl Grid {
             self.scroll_bottom = size.rows - 1;
         }
 
+        // Shrinking keeps the cursor's row on screen: rows above it move
+        // into scrollback, as in other terminals, instead of the newest rows
+        // being cut from the bottom.
+        let rows = usize::from(size.rows);
+        if rows < self.rows.len() {
+            let excess = (usize::from(self.pos.row) + 1).saturating_sub(rows);
+            for _ in 0..excess {
+                let removed = self.rows.remove(0);
+                if self.scrollback_len > 0 {
+                    self.scrollback.push_back(removed);
+                    while self.scrollback.len() > self.scrollback_len {
+                        self.scrollback.pop_front();
+                    }
+                    if self.scrollback_offset > 0 {
+                        self.scrollback_offset =
+                            self.scrollback.len().min(self.scrollback_offset + 1);
+                    }
+                }
+            }
+            let excess = u16::try_from(excess).unwrap_or(u16::MAX);
+            self.pos.row = self.pos.row.saturating_sub(excess);
+            self.saved_pos.row = self.saved_pos.row.saturating_sub(excess);
+        }
+
         self.size = size;
         for row in &mut self.rows {
             row.resize(size.cols, crate::Cell::new());

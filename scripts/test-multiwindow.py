@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Two private protocol frontends sharing fake terminal processes; no GUI or real agents."""
 import argparse
+import fcntl
 import base64
 import concurrent.futures
 import getpass
@@ -16,6 +17,7 @@ import queue
 import secrets
 import subprocess
 import tempfile
+import termios
 import threading
 import time
 
@@ -85,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
                 threading.Thread(target=decoded,daemon=True).start()
             command=[str(app),'--graphical-relay',workspace+'@'+identity]
             # This loopback host shares one backend installation. Preserve its
-            # tool PATH so SSH cannot select an incompatible system tmux.
+            # tool PATH so SSH runs this checkout's starflux and helpers.
             if ssh_args and identity.startswith('v-b'):
                 command=ssh_args+[shlex.join(['env',*[k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','SHELL','STAR_TERMINAL_RENDERER','PATH')],*command])]
             self.process=subprocess.Popen(command,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log)
@@ -169,9 +171,6 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
             result=predicate()
             if result:return result
             time.sleep(.02)
-        for project in (workspace,other):
-            debug=subprocess.run(['tmux','-L','starflux-'+project,'list-panes','-a','-F','#{pane_pid} #{pane_current_command} #{pane_start_command}'],env=env,capture_output=True,text=True)
-            print('Private fixture:',project,debug.stdout,debug.stderr,flush=True)
         for c in clients:print('Private client:',c.identity,'project',c.snapshot().get('active_project'),'terminals',c.snapshot().get('direct_terminals'),'history',c.snapshot().get('history'),flush=True)
         if args.pointer_latency:
             print('Decoded cursor frames:',b.cursor_frames[-8:],flush=True)
@@ -179,12 +178,30 @@ with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
             print('Private app geometry:',b.snapshot().get('apps'),flush=True)
         raise AssertionError(label+': '+repr([dict(frontend=c.identity,exit=c.process.poll(),active=c.snapshot().get('active'),tabs=tabs(c),status=c.snapshot().get('status'),stderr=(tmp/(c.identity+'.log')).read_text()) for c in clients])+(' sshd: '+(tmp/'sshd.log').read_text() if daemon else ''))
     def terminal_text(c,pane=0):return next((t['text'] for t in c.snapshot().get('direct_terminals',[]) if t['pane']==pane),'')
+    def supervisor(pane=0):
+        # Every view of this project reports the same native supervisor.
+        for c in clients:
+            for session in c.snapshot().get('sessions',[]):
+                if c.snapshot().get('active_project')==workspace and session.get('pane')==pane and (session.get('health') or {}).get('pid'):return session['health']['pid']
+    def fixture(pane=0):
+        # The supervisor's child is the fixture shell, which became cat.
+        owner=supervisor(pane)
+        if not owner:return None
+        try:children=[c for t in Path('/proc',str(owner),'task').iterdir() for c in (t/'children').read_text().split()]
+        except FileNotFoundError:return None
+        return children[0] if children else None
     def terminal_size(pane=0):
-        return tuple(map(int, subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{pane}:0.0','#{pane_width} #{pane_height}'],env=env,text=True).split()))
+        child=fixture(pane)
+        if not child:return None
+        try:
+            with open('/proc/'+child+'/fd/0','rb',buffering=0) as tty:
+                rows,columns=struct.unpack('HHHH',fcntl.ioctl(tty,termios.TIOCGWINSZ,bytes(8)))[:2]
+        except OSError:return None
+        return columns,rows
     def expected_size(c):
         return next((component['rect']['width'],component['rect']['height']) for component in c.scene['components'] if component['kind']=='terminal')
     def tabs(c):return c.snapshot().get('project_state',{}).get('terminals',[])
-    def pid():return subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_pid}'],env=env,text=True).strip()
+    def pid():return wait(fixture,'pane 0 fixture process')
     try:
         b_columns,b_rows=(230,72) if args.video else (130,44)
         a=Client('v-a'+secrets.token_hex(5),100,35);b=Client('v-b'+secrets.token_hex(5),b_columns,b_rows);clients=[a,b]
@@ -376,15 +393,22 @@ App().run([sys.argv[0]])
                 client.input(dict(kind='embedded',canvas='terminals',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='pointer',action=action,button=0,position=[80,80],modifiers=0))))
             for reader in clients:
                 wheel(reader)
-                def in_copy_mode():
-                    return subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1'
-                wait(in_copy_mode,'wheel must enter backend history after attaching to an existing plan')
-                for _ in range(75):
+                def review():
+                    status=reader.snapshot().get('terminal_review')
+                    return status if status and not status['loading'] else None
+                wait(review,'wheel must open retained history after attaching to an existing plan')
+                # All 200 plan rows predate this view; history must hold them.
+                assert review()['retained_rows']>200,review()
+                # The cursor row is absolute; within the first screen means
+                # the review shows the plan's first line.
+                def at_beginning():return review()['cursor'][0]<reader.scene['viewport']['rows']
+                for _ in range(150):
+                    if at_beginning():break
                     wheel(reader)
                     for c in clients:c.pump()
-                    if 'PLAN_HISTORY_0000' in terminal_text(reader):break
                     time.sleep(.025)
-                wait(lambda:'PLAN_HISTORY_0000' in terminal_text(reader),'scroll to plan beginning that predates attachment')
+                wait(at_beginning,'scroll to plan beginning that predates attachment')
+                top=review()['offset']
                 # Write only to the private fake process's PTY, simulating continued
                 # generation without delivering any input to the approval prompt.
                 with open('/proc/'+first_pid+'/fd/1','wb',buffering=0) as output:
@@ -392,11 +416,17 @@ App().run([sys.argv[0]])
                 stable_until=time.monotonic()+.5
                 while time.monotonic()<stable_until:
                     for c in clients:c.pump()
-                    assert 'PLAN_HISTORY_0000' in terminal_text(reader),'new output displaced the plan being read'
+                    assert review() and review()['offset']==top,'new output displaced the plan being read'
                     time.sleep(.03)
                 assert pid()==first_pid
-                for _ in range(80):wheel(reader,'scroll_down')
-                wait(lambda:not in_copy_mode(),'wheel down returns to the live approval prompt')
+                def wheel_down_until(client,done,label):
+                    for _ in range(150):
+                        if done():break
+                        wheel(client,'scroll_down')
+                        for c in clients:c.pump()
+                        time.sleep(.02)
+                    wait(done,label)
+                wheel_down_until(reader,lambda:not reader.snapshot().get('terminal_review'),'wheel down returns to the live approval prompt')
                 wait(lambda:all('SHARED_TERMINAL_READY' in terminal_text(c) for c in clients),'return to untouched approval prompt')
         assert a.scene['viewport']['columns']==100 and b.scene['viewport']['columns']==b_columns
         a.input(dict(kind='paste',text='SHARED_FROM_FIRST_WINDOW'))
@@ -424,7 +454,7 @@ App().run([sys.argv[0]])
         assert not b.snapshot()['project_state']['split'],'split leaked across views'
         # A new pane must fill a tall split even when another frontend learns
         # about the new tab while keeping it hidden. Hidden 80x24 attachments
-        # previously became tmux's latest client and produced dotted margins.
+        # previously became the latest client and produced dotted margins.
         a.input(dict(kind='resize',viewport=dict(columns=250,rows=100,width=2500,height=2000,generation=2)))
         wait(lambda:a.scene['viewport']['columns']==250,'large split viewport')
         def visible_sizes(c):
@@ -442,10 +472,13 @@ App().run([sys.argv[0]])
             left=a.snapshot()['project_state']['split_panes'][0]
             assert left!=active
             wheel(a)
-            wait(lambda:subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='1','wheel targets the hovered split, not the keyboard-focused pane')
+            def left_review():return next((t.get('reviewing') for t in a.snapshot().get('direct_terminals',[]) if t['pane']==left),None)
+            wait(left_review,'wheel targets the hovered split, not the keyboard-focused pane')
+            assert not a.snapshot().get('terminal_review'),'the keyboard-focused pane entered history'
             assert a.snapshot()['active']==active,'scrolling moved keyboard focus'
-            for _ in range(80):wheel(a,'scroll_down')
-            wait(lambda:subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t',f'p{left}:0.0','#{pane_in_mode}'],env=env,text=True).strip()=='0','split wheel returns to live output')
+            # Wheel-down is ignored until the retained history has loaded.
+            time.sleep(.5)
+            wheel_down_until(a,lambda:left_review() is False,'split wheel returns to live output')
         stable_until=time.monotonic()+1.5
         while time.monotonic()<stable_until:
             for c in clients:c.pump()
@@ -483,7 +516,12 @@ App().run([sys.argv[0]])
         assert a.snapshot()['project_state']['split'] and not b.snapshot()['project_state']['split']
         assert pid()==first_pid,'second window restarted the terminal'
         # Exit only our private fake cat process. Both views must remove that shared tab.
-        subprocess.run(['tmux','-L','starflux-'+workspace,'send-keys','-t','p0:0.0','C-d','C-d'],env=env,check=True)
+        b.action('terminal:0')
+        wait(lambda:b.snapshot().get('active')==0,'select the shared tab before exiting it')
+        # Terminal keys arrive as embedded canvas events, like a real window's.
+        for _ in range(2):
+            for phase in ('press','release'):
+                b.input(dict(kind='embedded',canvas='terminals',event=dict(timestamp_ns=time.monotonic_ns(),sequence=time.monotonic_ns(),kind=dict(kind='key',code='char:d',modifiers=2,phase=phase))))
         wait(lambda:all(0 not in tabs(c) for c in clients),'shared exit removal')
         a.action('terminal:new')
         wait(lambda:all(0 in tabs(c) for c in clients),'safe slot reuse')
@@ -529,8 +567,18 @@ App().run([sys.argv[0]])
         # Controllers are private to this temporary runtime; leave actual workspaces alone.
         for descriptor in state.glob('*.frontend.json'):
             identity=json.loads(descriptor.read_text())['id'];(state/(identity+'.close')).touch()
-        for name in (workspace,other):
-            subprocess.run(['tmux','-L','starflux-'+name,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Native owners and supervisors outlive their views. Stop only this
+        # test's: the owner it recorded, and supervisors running in its tmp.
+        doomed=[]
+        try:doomed.append(json.loads((tmp/'data/starflux/native-sources/owner.json').read_text())['owner']['pid'])
+        except (OSError,ValueError,KeyError,TypeError):pass
+        for proc in Path('/proc').iterdir():
+            try:
+                if proc.name.isdigit() and b'--native-source-supervisor' in (proc/'cmdline').read_bytes() and Path(os.readlink(proc/'cwd'))==tmp:doomed.append(int(proc.name))
+            except OSError:pass
+        for owner in doomed:
+            try:os.kill(owner,9)
+            except OSError:pass
         # GTK portals can mount FUSE inside this disposable runtime. Detach only
         # this test's mount before TemporaryDirectory attempts to traverse it.
         for portal in ('doc','gvfs'):

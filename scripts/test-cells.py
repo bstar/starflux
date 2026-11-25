@@ -48,8 +48,10 @@ os.write(1, '\\x1b[?2004hCELLS_READY café 世界\\r\\nhttps://example.invalid/v
 os.write(1, '\\x1b]8;id=host;https://example.invalid/hidden-target?q=1;2#osc8\\x1b\\\\HIDDEN_LABEL_界\\x1b]8;;\\x1b\\\\\\r\\n'.encode())
 with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as out:
     while True:
-        cwd=Path(sys.argv[1])/('cwd-'+str(os.getpid()))
-        if cwd.exists():os.chdir(cwd.read_text())
+        # A native pane reports its supervisor, the fixture's parent.
+        for owner in (os.getpid(),os.getppid()):
+            cwd=Path(sys.argv[1])/('cwd-'+str(owner))
+            if cwd.exists():os.chdir(cwd.read_text())
         if not select.select([0],[],[],.1)[0]:continue
         data=os.read(0,65536)
         if not data: break
@@ -341,8 +343,12 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
         wait(lambda: not snapshot().get('modal_open'), 'recovery did not cancel')
         assert inputs()==before and snapshot()['panes'][0]['pid']==backend_pid
         attachment=snapshot()['direct_terminals'][0]['attachment_pid']
+        reconnects=snapshot().get('history',[]).count('Terminal reconnected')
         command('--action','reconnect-terminal:0')
-        wait(lambda: snapshot()['direct_terminals'] and snapshot()['direct_terminals'][0]['attachment_pid']!=attachment, 'pane did not reconnect')
+        # Native panes have no attach process to replace; the controller
+        # records the reconnect in its status history instead.
+        if attachment is None:wait(lambda: snapshot().get('history',[]).count('Terminal reconnected')>reconnects, 'pane did not reconnect')
+        else:wait(lambda: snapshot()['direct_terminals'] and snapshot()['direct_terminals'][0]['attachment_pid']!=attachment, 'pane did not reconnect')
         assert snapshot()['panes'][0]['pid']==backend_pid, 'reconnect replaced the running program'
         write(b'\x1b[<0;2;22M\x1b[<0;2;22m')
         wait(lambda: snapshot().get('modal_open'), 'bottom Add project button did not open the dialog')

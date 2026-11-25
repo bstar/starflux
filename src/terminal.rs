@@ -256,6 +256,9 @@ pub struct Terminal {
     selection: Option<((u16, u16), (u16, u16))>,
     review: Option<crate::terminal_history::History>,
     review_token: u64,
+    // The review was opened by the wheel, so wheeling past its live end
+    // closes it again.
+    wheel_review: bool,
     history_request: Option<u64>,
     mouse_button: Option<u8>,
     clipboard: Option<String>,
@@ -372,6 +375,7 @@ impl Terminal {
             selection: None,
             review: None,
             review_token: 0,
+            wheel_review: false,
             history_request: None,
             mouse_button: None,
             clipboard: None,
@@ -436,6 +440,7 @@ impl Terminal {
             selection: None,
             review: None,
             review_token: 0,
+            wheel_review: false,
             history_request: None,
             mouse_button: None,
             clipboard: None,
@@ -1047,6 +1052,7 @@ impl Terminal {
             self.native_review_memory = self.native_memory.clone();
         }
         self.review_images = None;
+        self.wheel_review = false;
         self.review = Some(crate::terminal_history::History::new(
             self.parser.screen(),
             search,
@@ -1245,6 +1251,7 @@ impl Terminal {
                 || modifiers & 1 != 0)
         {
             self.history_request = Some(self.review(false));
+            self.wheel_review = true;
         }
         let screen = self.parser.screen();
         let x = ((point[0] - f64::from(self.padding[0])).max(0.) / f64::from(self.cell_size()[0]))
@@ -1253,6 +1260,18 @@ impl Terminal {
         let y = ((point[1] - f64::from(self.padding[1])).max(0.) / f64::from(self.cell_size()[1]))
             as u16
             + 1;
+        if self.wheel_review
+            && action == "scroll_down"
+            && self.review.as_ref().is_some_and(|h| h.at_live_end())
+        {
+            self.review = None;
+            #[cfg(target_os = "linux")]
+            {
+                self.native_review_memory = None;
+            }
+            self.mouse_button = None;
+            return Ok(());
+        }
         if let Some(history) = self.review.as_mut() {
             if action == "down" && button == 0 {
                 self.mouse_button = Some(0);

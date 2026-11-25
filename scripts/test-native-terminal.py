@@ -120,8 +120,11 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
                     if recovery_stage==0:
                         recovery_pid=metadata['panes'][0]['pid']
                         recovery_attachment=metadata['direct_terminals'][0]['attachment_pid']
+                        recovery_reconnects=metadata.get('history',[]).count('Terminal reconnected')
                         action('reconnect-terminal:0');recovery_stage=1
-                    elif recovery_stage==1 and metadata['direct_terminals'][0]['attachment_pid']!=recovery_attachment:
+                    # Native panes have no attach process to replace; the
+                    # controller records the reconnect in its history instead.
+                    elif recovery_stage==1 and (metadata['direct_terminals'][0]['attachment_pid']!=recovery_attachment if recovery_attachment is not None else metadata.get('history',[]).count('Terminal reconnected')>recovery_reconnects):
                         assert metadata['panes'][0]['pid']==recovery_pid,'Reconnect replaced the backend'
                         action('recover-terminal:0');recovery_stage=2
                     elif recovery_stage==2 and metadata.get('modal_open'):

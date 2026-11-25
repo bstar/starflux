@@ -487,9 +487,11 @@ fn history_bytes(screen: &mut vt100::Screen, maximum: usize) -> Result<Vec<u8>> 
         let mut last = None;
         let mut last_link = None;
         for column in 0..columns {
-            let cell = screen
-                .cell(local, column)
-                .context("Native history row unavailable")?;
+            // Rows scrolled off before a resize keep their old width; a
+            // narrower row simply ends here.
+            let Some(cell) = screen.cell(local, column) else {
+                break;
+            };
             if cell.is_wide_continuation() {
                 continue;
             }
@@ -704,6 +706,32 @@ mod tests {
         restored.screen_mut().set_scrollback(usize::MAX);
         assert!(restored.screen().contents().contains("ABCDEFGHIJ"));
         assert_eq!(parser.screen().contents_formatted(), original);
+    }
+    #[test]
+    fn shrinking_a_full_screen_keeps_the_newest_rows_and_the_cursor_line() {
+        let mut parser = vt100::Parser::new(4, 10, 20);
+        parser.process(b"one\r\ntwo\r\nthree\r\nfour");
+        parser.screen_mut().set_size(2, 10);
+        assert_eq!(parser.screen().contents(), "three\nfour");
+        assert_eq!(parser.screen().cursor_position(), (1, 4));
+        parser.process(b"!");
+        assert_eq!(parser.screen().contents(), "three\nfour!");
+        parser.screen_mut().set_scrollback(usize::MAX);
+        assert_eq!(parser.screen().scrollback(), 2);
+        assert_eq!(parser.screen().contents(), "one\ntwo");
+    }
+    #[test]
+    fn history_export_survives_rows_retained_before_a_wider_resize() {
+        let mut parser = vt100::Parser::new(3, 10, 20);
+        parser.process(b"first\r\nsecond\r\nthird\r\nfourth\r\n");
+        parser.screen_mut().set_size(3, 20);
+        parser.process(b"wider than before\r\n");
+        let mut copy = parser.screen().retained_snapshot(20);
+        let bytes = history_bytes(&mut copy, 20).unwrap();
+        let mut restored = vt100::Parser::new(3, 20, 20);
+        restored.process(&bytes);
+        restored.screen_mut().set_scrollback(usize::MAX);
+        assert!(restored.screen().contents().contains("first"));
     }
     #[test]
     fn history_export_keeps_hidden_targets_on_wide_wrapped_labels_and_closes_them() {
