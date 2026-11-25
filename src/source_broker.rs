@@ -1446,6 +1446,12 @@ impl Broker {
                 continue;
             }
             let revision = source.revision;
+            // Another view can shrink the shared grid after this one started
+            // watching. Render the part that still exists; the view sees the
+            // smaller rect and re-watches at the new size, without an error.
+            let mut size = w.size.clone();
+            size.rows = size.rows.min(source.size.rows);
+            size.columns = size.columns.min(source.size.columns);
             let Some(sequence) = w.sequence.checked_add(1) else {
                 self.remove_watch(&key);
                 continue;
@@ -1463,7 +1469,7 @@ impl Broker {
             let result = self.begin_render(
                 target,
                 w.source.clone(),
-                w.size.clone(),
+                size,
                 w.palette.clone(),
                 w.base.clone(),
             );

@@ -345,7 +345,7 @@ while True:
             closing_view=Client();closing_id=str(uuid.uuid4());closing_view.call(dict(op='watch',source=second,view=closing_id,epoch=1,generation=1,focused=True,size=size,palette=palette));closing_initial=closing_view.event()
             b.call(dict(op='resize',source=second,size=dict(rows=10,columns=40,cell=[8,16])))
             closing_view.call(dict(op='ack',view=closing_id,epoch=1,sequence=closing_initial['sequence']))
-            error=closing_view.event();assert error['event']=='view_error' and error['epoch']==1
+            clipped=closing_view.event();assert clipped['event']=='cells' and clipped['epoch']==1 and clipped['frame']['complete'] and clipped['frame']['rect']['width']==40 and clipped['frame']['rect']['height']==10 and clipped['source_grid']==[10,40],'shrinking the grid did not clip the other view'
             closing_view.no_event()
             closing_view.call(dict(op='watch',source=second,view=closing_id,epoch=2,generation=2,focused=True,size=dict(rows=10,columns=40,cell=[8,16]),palette=palette))
             resized=closing_view.event();assert resized['frame']['complete'] and resized['frame']['rect']['width']==40
