@@ -395,7 +395,6 @@ pub(crate) fn import_snapshot(session: &str, snapshot: Value) -> Result<Config> 
             label: Some(label.clone()),
             collection: Some(collection.clone()),
             agent_mux: Some(source),
-            tmux: None,
             adopted: Default::default(),
             native_terminals: false,
             theme: crate::appearance::default_theme(),

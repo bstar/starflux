@@ -87,7 +87,6 @@ mod source_broker;
 mod terminal;
 mod terminal_history;
 mod terminal_links;
-mod tmux_source;
 mod ui;
 mod worktrees;
 use anyhow::{Context, Result, ensure};
@@ -830,7 +829,6 @@ fn run() -> Result<()> {
         label: None,
         collection: None,
         agent_mux: None,
-        tmux: None,
         adopted: Default::default(),
         native_terminals: a.native_terminals,
         theme: a.theme.clone().unwrap_or_else(appearance::default_theme),
@@ -1160,7 +1158,6 @@ mod workspace_tests {
             label: None,
             collection: None,
             agent_mux: None,
-            tmux: None,
             adopted: Default::default(),
             native_terminals: false,
             theme: appearance::default_theme(),

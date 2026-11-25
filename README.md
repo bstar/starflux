@@ -20,7 +20,7 @@ help, and **Ctrl+B** starts project, session, tab, pane and history commands.
 The pane menu exposes [agent health and registered conversation recovery](docs/agent-lifecycle.md).
 Terminals support [nested right/down splits, zoom, rearrangement and guarded termination](docs/panes.md).
 Use [history search and keyboard copy mode](docs/terminal-history.md) to review retained terminal output while the program continues running.
-The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing tmux/agent-multiplexer sessions and acknowledged per-window navigation.
+The [JSON Lines automation API](docs/automation.md) supports headless local/SSH control, guarded prompt delivery, lifecycle waits, resumable event streams, imports of existing agent-multiplexer sessions and acknowledged per-window navigation.
 
 On Omarchy, the optional [bar widget](docs/omarchy.md) lists running agents, puts the ones waiting on you first and opens an agent's workspace when you click it.
 
@@ -73,8 +73,8 @@ Click to type; returning to the STAR/FLUX window restores input to the selected 
 Terminals use a PTY cell stream over local/SSH connections and are drawn directly
 by the presenting terminal. They do not require a virtual desktop, terminal
 screenshots, or video encoding. STAR/FLUX owns every terminal itself, so terminals
-keep running when STAR/FLUX closes; tmux is optional and only needed to import tmux
-sessions. See [native terminals](docs/native-sources.md).
+keep running when STAR/FLUX closes; tmux is only needed to move terminals left on
+tmux by older versions. See [native terminals](docs/native-sources.md).
 
 Drag with the left mouse button to select text in Codex or a terminal; releasing copies it to your local clipboard, including over SSH. In a split terminal view, **Close pane** dismisses the focused half and keeps its session available in its tab. **Unsplit** also returns to one pane without ending sessions.
 

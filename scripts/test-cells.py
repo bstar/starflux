@@ -514,8 +514,6 @@ with open(Path(sys.argv[1])/('input-'+str(os.getpid())), 'ab', buffering=0) as o
                 process.wait(timeout=5)
         if master is not None:
             os.close(master)
-        for project in [name, *created_projects]:
-            subprocess.run(['tmux', '-L', 'starflux-' + project, 'kill-server'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if sshd:
             sshd.terminate()
             sshd.wait(timeout=5)

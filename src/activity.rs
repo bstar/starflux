@@ -377,11 +377,7 @@ pub fn inspect(projects: &[Config]) -> BTreeMap<String, Activity> {
                     .is_some_and(|h| h.panes.contains_key(id))
             })
         {
-            let value = if pane == 0
-                && let Some(source) = &project.tmux
-            {
-                source.inspect().ok()
-            } else if let Some(terminal) = project.adopted_terminal(pane) {
+            let value = if let Some(terminal) = project.adopted_terminal(pane) {
                 terminal.observe(pane).ok()
             } else if matches!(crate::native_backend::reference(project, pane), Ok(Some(_))) {
                 // Native terminals answer over the backend's socket; spawning a

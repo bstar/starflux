@@ -1,7 +1,6 @@
 """One-shot host helper. Payload is base64 JSON, file bytes use stdin."""
 import base64, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, termios, time
 
-import stat as file_stat
 
 def boot_id():
     return pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
@@ -76,17 +75,6 @@ def main():
     if not re.fullmatch(r'starflux-[a-zA-Z0-9_-]{1,88}',server):raise ValueError('Invalid terminal server')
     target=pane+':0.0'
     tm=['tmux','-L',server,'-f','/dev/null']
-    if req.get('source_socket'):
-        if req['action'] not in ('inspect','input') or not os.path.isabs(req['source_socket']) or not re.fullmatch(r'\$[0-9]+',req.get('source_session','')):
-            raise ValueError('Invalid imported tmux operation')
-        def socket_identity():
-            current=os.lstat(req['source_socket'])
-            if not file_stat.S_ISSOCK(current.st_mode) or current.st_uid!=os.getuid():
-                raise ValueError('Imported tmux socket is unavailable')
-            return (current.st_dev,current.st_ino)
-        source_socket=socket_identity()
-        tm=['tmux','-u','-N','-S',req['source_socket']]
-        target=req['source_session']
     def shell_command(argv):
         # The AppImage's tools are private to its controller. Project commands
         # must find the host's Python, codecs and audio configuration.
@@ -122,7 +110,7 @@ def main():
     # tmux is optional. Without it no tmux terminal can exist on this host, and
     # STAR/FLUX opens native terminals instead.
     has_tmux=shutil.which('tmux') is not None
-    def exists():return has_tmux and subprocess.run(tm+['has-session','-t',target if req.get('source_socket') else pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
+    def exists():return has_tmux and subprocess.run(tm+['has-session','-t',pane],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
     action=req['action']
     if action=='capabilities':
         print(json.dumps({'tmux':has_tmux}));return
@@ -352,7 +340,7 @@ def main():
             if alive(process):os.kill(process,signal.SIGKILL)
         # The last migrated session ends the project's tmux server; remove the
         # socket it leaves so nothing mistakes the project for a tmux one.
-        if not req.get('source_socket') and subprocess.run(tm+['list-sessions'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+        if subprocess.run(tm+['list-sessions'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
             stale=pathlib.Path(os.environ.get('TMUX_TMPDIR','/tmp'))/('tmux-'+str(os.getuid()))/server
             if stale.is_socket():stale.unlink()
         print(json.dumps({'migrated':True,'cwd':cwd,'shell':shell,'claude':claude,'history':str(history) if history else None}))
@@ -422,45 +410,6 @@ def main():
             raise ValueError('Input contains control characters')
         if ('\n' in text or '\t' in text) and fields[4]!='1':
             raise ValueError('Multiline/tab input requires bracketed paste support')
-        if req.get('source_socket'):
-            pane_id,server_pid=fields[5:7]
-            if not re.fullmatch(r'%[0-9]+',pane_id) or not server_pid.isdecimal():
-                raise ValueError('Imported tmux pane identity is unavailable')
-            source_agent=pathlib.Path('/proc')/str(agent_pid)/'stat' if agent_pid else None
-            name='starflux-'+os.urandom(8).hex()
-            actions=[]
-            if text:actions.append(f'paste-buffer -b {name} -d -p -t {pane_id}')
-            if submit:actions.append(f'send-keys -t {pane_id} Enter')
-            actions.append('display-message -p delivered')
-            guards=[f'#{{==:#{{pane_id}},{pane_id}}}',f'#{{==:#{{pid}},{server_pid}}}',
-                    f'#{{==:#{{pane_pid}},{pid}}}','#{==:#{pane_dead},0}','#{==:#{pane_in_mode},0}']
-            if '\n' in text or '\t' in text:guards.append('#{==:#{bracket_paste_flag},1}')
-            guard=guards[0]
-            for check in guards[1:]:guard=f'#{{&&:{guard},{check}}}'
-            if socket_identity()!=source_socket:
-                raise ValueError('Imported tmux socket changed; input rejected')
-            try:
-                if text:run('load-buffer','-b',name,'-',input=text.encode())
-                if socket_identity()!=source_socket:
-                    raise ValueError('Imported tmux socket changed; input rejected')
-                identity=source_process.read_text().rsplit(')',1)[1].split()
-                if int(identity[19])!=ticks or identity[5]!=process_identity[5]:
-                    raise ValueError('Imported tmux foreground changed; input rejected')
-                if foreground_agent(str(pid),tty,command)!=(agent,agent_pid):
-                    raise ValueError('Imported tmux agent changed; input rejected')
-                if source_agent and int(source_agent.read_text().rsplit(')',1)[1].split()[19])!=agent_ticks:
-                    raise ValueError('Imported tmux agent changed; input rejected')
-                reply=run('if-shell','-F','-t',target,guard,' ; '.join(actions),'display-message -p stale').strip()
-                if reply==b'stale':
-                    print(json.dumps({'delivered':False}))
-                    return
-                if reply!=b'delivered':
-                    raise ValueError('Imported tmux did not acknowledge input')
-            finally:
-                if text and socket_identity()==source_socket:
-                    subprocess.run(tm+['delete-buffer','-b',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            print(json.dumps({'delivered':True,'submitted':submit,'bytes':len(text.encode())}))
-            return
         if text:
             name='starflux-'+os.urandom(8).hex()
             run('load-buffer','-b',name,'-',input=text.encode())

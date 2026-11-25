@@ -20,12 +20,6 @@ with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
         framed=call('inspect',include_screen=True)
         frame=framed['saved_screen'];assert frame['rows']>0 and frame['columns']>0
         assert len(base64.b64decode(frame['ansi_base64']))<=1024*1024
-        socket_path=subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0','#{socket_path}'],env=env,text=True).strip()
-        source_session=subprocess.check_output(['tmux','-L','starflux-'+workspace,'display-message','-p','-t','p0','#{session_id}'],env=env,text=True).strip()
-        imported=call('inspect',source_socket=socket_path,source_session=source_session,include_screen=True)
-        assert imported['pid']==first['pid'] and imported['saved_screen']['rows']==frame['rows']
-        rejected=call('stop',check=False,source_socket=socket_path,source_session=source_session)
-        assert rejected.returncode!=0 and call('inspect')['pid']==first['pid'],'source inspection allowed a write'
         rejected=call('terminate',check=False,expected_boot_id=first['boot_id'],expected_pid=first['pid'],expected_start_ticks=first['pid_start_ticks']+1)
         assert rejected.returncode!=0 and call('inspect')['pid']==first['pid'],'stale process identity terminated a shell'
         for boot in [None,str(uuid.uuid4())]:

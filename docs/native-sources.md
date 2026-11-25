@@ -3,7 +3,7 @@
 Every STAR/FLUX terminal is a native terminal. STAR/FLUX owns its PTY, parses
 its output and keeps its screen and history; the graphical frontend sends the
 resulting text cells to Kitty, which draws them, and cells mode draws them in
-the parent terminal. tmux is used only to import existing tmux sessions.
+the parent terminal. tmux is used only to migrate terminals from older builds.
 
 ## Lifetime
 
@@ -41,8 +41,9 @@ A migration records its plan on the host before it stops anything, so a native
 launch that fails afterwards is retried from the plan the next time the pane
 opens or `--migrate-terminals` runs.
 
-The Arch package lists tmux under optional dependencies; the AppImage and the
-Nix wrapper do not carry it.
+The Arch package lists tmux under optional dependencies for this migration; the
+AppImage and the Nix wrapper do not carry it. STAR/FLUX does not import or attach
+to other tmux sessions.
 
 ## Processes and identity
 

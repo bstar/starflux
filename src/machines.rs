@@ -527,7 +527,6 @@ pub fn create_project(
         label: None,
         collection,
         agent_mux: None,
-        tmux: None,
         adopted: Default::default(),
         native_terminals: false,
         theme: theme.into(),

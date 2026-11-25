@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless native-PTY proof using a private fake shell and isolated tmux server.
+"""Headless native-PTY proof using a private fake shell.
 
 No Kitty windows, display server, real agents, or existing workspace are used.
 """
@@ -207,5 +207,3 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
         except subprocess.TimeoutExpired:
             process.terminate()
             process.wait(timeout=3)
-        subprocess.run(['tmux', '-L', 'starflux-' + name, 'kill-server'],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)

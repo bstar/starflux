@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private sessions, independent views, live tmux/agent-multiplexer imports and scoped deletion."""
+"""Private sessions, independent views, live multiplexer imports and scoped deletion."""
 from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import argparse
 import base64
@@ -270,9 +270,7 @@ os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
     for extra in ['extra-a','extra-b']:
         (state/(extra+'.json')).write_text(json.dumps(dict(workspace=extra,label=extra,collection='base',host=None,directory=str(tmp),agent=None,executable=str(app),project_host=True,**native_config)))
     processes=[];clients=[];daemon=None;agent_mux=None;ssh_args=[]
-    socket_root=tmp/'tmux'/('tmux-'+str(os.getuid()));socket_root.mkdir(parents=True,mode=0o700);source_socket=socket_root/'fixture'
-    def tmux(*arguments):
-        return subprocess.check_output(['tmux','-S',str(source_socket),*arguments],env=env,text=True).strip()
+    (tmp/'tmux').mkdir(mode=0o700)
     def alive(pid):
         try:return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[0]!='Z'
         except OSError:return False
@@ -511,10 +509,6 @@ GLib.MainLoop().run()
                 host_config.write_text(f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n SetEnv '+ ' '.join(k+'='+env[k] for k in ('XDG_RUNTIME_DIR','XDG_DATA_HOME','XDG_CONFIG_HOME','TMUX_TMPDIR','SHELL','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM') if k in env)+'\n')
                 if args.worktrees:
                     config=json.loads((state/(name+'.json')).read_text());config.update(host='proof',ssh_config=str(host_config),desktop_helper=str(app));(state/(name+'.json')).write_text(json.dumps(config))
-        tmux('new-session','-d','-s','Fixture','-c',str(tmp),str(shell))
-        tmux('new-window','-d','-t','Fixture','-c',str(tmp),str(shell))
-        source_pid=int(tmux('display-message','-p','-t','Fixture','#{pane_pid}'))
-        source_topology=tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')
         if args.agent_mux:
             config=tmp/('config/'+PROGRAM);config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env[(ENV+'_CONFIG_PATH')]=str(config/'config.toml')
             agent_mux=subprocess.Popen([MUX,'server'],env=env,stdout=(tmp/(PROGRAM+'.log')).open('w'),stderr=subprocess.STDOUT)
@@ -807,8 +801,7 @@ GLib.MainLoop().run()
             wait(lambda:a.snapshot().get('direct_terminals'),'retried terminal did not attach')
             a.paste('AFTER_STARTUP_RETRY');a.key('enter')
             wait(lambda:'REPLY=AFTER_STARTUP_RETRY' in a.snapshot()['direct_terminals'][0]['text'],'retried terminal input did not work')
-            assert alive(source_pid),'retry changed an unrelated terminal'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,startup_failure_visible=True,automatic_retry=True,input_restored=True,source_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,startup_failure_visible=True,automatic_retry=True,input_restored=True)))
             raise SystemExit(0)
         if args.plugin_popups_ui:
             exec(compile((root/'scripts/test-plugin-popups-ui.py').read_text(),str(root/'scripts/test-plugin-popups-ui.py'),'exec'),globals())
@@ -1172,9 +1165,8 @@ GLib.MainLoop().run()
             copied.unlink()
             assert str(Path('/proc',str(controller),'exe').readlink()).endswith(' (deleted)')
             picker(a,external=True)
-            wait(lambda:any('Fixture' in str(row) for row in a.snapshot()['session_manager']['rows']),'source discovery failed after loaded executable was unlinked')
-            assert a.snapshot()['controller_pid']==controller and alive(original_pid) and alive(source_pid)
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,loaded_executable_unlinked=True,source_discovery_retained=True,controller_not_restarted=True,terminal_processes_preserved=True)))
+            assert a.snapshot()['controller_pid']==controller and alive(original_pid)
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,loaded_executable_unlinked=True,controller_not_restarted=True,terminal_processes_preserved=True)))
             raise SystemExit(0)
         if args.snapshot_service:
             namespace=hashlib.sha256(os.fsencode(str(tmp/'data/starflux/projects'))).hexdigest()[:16]
@@ -1227,29 +1219,15 @@ GLib.MainLoop().run()
             api('panes.send',dict(target=target,text='PAUSED_BACKGROUND',submit=True),True);time.sleep(7)
             assert not saved(name,1),'paused background capture recreated a screen'
             a.action('screen-saving:on');wait(lambda:'PAUSED_BACKGROUND' in saved(name,1).get('formatted',''),'background saver did not resume',timeout=25)
-            source_session=tmux('display-message','-p','-t','Fixture','#{session_id}')
-            imported='background-'+secrets.token_hex(4)
             projects=tmp/'data/starflux/projects';config=json.loads((projects/(name+'.json')).read_text())
-            config.update(workspace=imported,label='Background tmux',tmux=dict(socket=str(source_socket),session=source_session))
-            (projects/(imported+'.json')).write_text(json.dumps(config))
             model=json.loads((projects/(name+'.model.json')).read_text());model.update(terminal=1,split=False,pane_tree=None)
-            # This is a new project with one imported tmux pane. Native source
-            # identities remain bound to the original project and cannot be
-            # transplanted by copying fixture metadata.
+            # Native source identities stay bound to the original project and
+            # cannot be transplanted by copying fixture metadata.
             model.pop('native_sources',None)
-            (projects/(imported+'.model.json')).write_text(json.dumps(model))
-            (projects/'catalog-version').write_bytes(os.urandom(16))
-            wait(lambda:imported in a.snapshot().get('project_navigation',{}).get('visible',[]),'background source project did not enter catalog')
-            a.action('project:'+imported);wait(lambda:a.snapshot().get('active_project')==imported and any(t['pane']==1 for t in a.snapshot().get('direct_terminals',[])),'background source project did not open its owned pane')
-            tmux('send-keys','-t','Fixture','UNOPENED_TMUX_界','Enter')
-            wait(lambda:'UNOPENED_TMUX_界' in saved(imported,0).get('formatted',''),'unattached imported tmux pane did not save',timeout=25)
-            assert all(t['pane']!=0 for t in a.snapshot().get('direct_terminals',[]))
-            assert alive(source_pid) and saved(imported,0)['pid']==source_pid
-            assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
             if args.agent_mux:
                 hp=snapshot['panes'][0];hidden='background-mux-'+secrets.token_hex(3)
                 source=dict(session='default',workspace_id=hp['workspace_id'],order=0,executable=shutil.which(MUX),panes={'0':dict(terminal_id=hp['terminal_id'],pane_id=hp['pane_id'],tab_id=hp['tab_id'],label=('Hidden '+DISPLAY),cwd=str(tmp),agent=None)})
-                config.update({KEY:source},workspace=hidden,label=('Background '+DISPLAY),tmux=None)
+                config.update({KEY:source},workspace=hidden,label=('Background '+DISPLAY))
                 (projects/(hidden+'.json')).write_text(json.dumps(config));(projects/(hidden+'.model.json')).write_text(json.dumps(model))
                 (projects/'catalog-version').write_bytes(os.urandom(16))
                 wait(lambda:hidden in a.snapshot().get('project_navigation',{}).get('visible',[]),('hidden '+DISPLAY+' project did not enter catalog'))
@@ -1262,7 +1240,7 @@ GLib.MainLoop().run()
                     raise
                 assert all(t['pane']!=0 for t in a.snapshot().get('direct_terminals',[]))
                 assert all(alive(pid) for pid in agent_mux_pids)
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_never_attached=True,imported_tmux_never_attached=True,imported_agent_mux_never_attached=args.agent_mux,unicode_preserved=True,source_identity=True,pause_clear_resume=True,no_renderer_spawned=True,source_processes_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_never_attached=True,imported_agent_mux_never_attached=args.agent_mux,unicode_preserved=True,source_identity=True,pause_clear_resume=True,no_renderer_spawned=True,source_processes_preserved=True)))
             raise SystemExit(0)
         if args.panel_focus:
             def typed():return (tmp/'panel-input').read_bytes() if (tmp/'panel-input').exists() else b''
@@ -1445,7 +1423,6 @@ GLib.MainLoop().run()
             resumed=a.snapshot()['project_state']['terminal'];new_receipt=screens/('p'+str(resumed)+'.launch.json')
             wait(lambda:new_receipt.exists(),'cold resume did not consume its launch intent')
             assert new_receipt.stat().st_mode&0o777==0o600
-            assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'cold recovery changed imported source'
             print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,native_source_recovery_confirmed=args.native_sources,cold_runtime_restored=True,split_layout_restored=True,styled_unicode_screen=True,previous_process_screen=True,archived_cursor_restored=True,clock_correction_safe=True,saved_commands_not_restarted=True,consumed_intents_not_replayed=True,cold_conversation_resume=True,invalid_archive_reported=True,corrupt_current_repaired=True,metadata_only_preview_changes=True,pause_clear_resume=True,review_is_read_only=True,independent_frontends=True,new_shell_input=True,unrelated_source_preserved=True)))
             raise SystemExit(0)
         if args.narrow:
@@ -2450,14 +2427,8 @@ GLib.MainLoop().run()
             assert deleted['deleted'] and api('sessions.delete',deletion,True,operation=delete_operation)==deleted
             wait(lambda:not alive(doomed_pid),'session deletion did not stop its owned terminal')
             assert not any(item['id']==doomed['session'] for item in api('sessions.list',{})['sessions'])
-            external=next(item for item in api('sessions.external',{})['sources']
-                          if item['source']=='tmux' and item['name']=='Fixture')
-            imported=api('sessions.import',dict(reference=external['reference']),True)
-            api('sessions.delete',dict(session=imported['session'],expected_projects=[imported['project']],
-                                       fallback_project=name,confirm='DELETE'),True)
-            assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
             assert alive(original_pid),'session deletion stopped the fallback terminal'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,api_changes_shared=True,session_rename_guarded=True,session_rename_replay=True,session_picker_rename=True,session_delete_guarded=True,session_delete_replay=True,imported_source_preserved=True,independent_focus_preserved=True,guarded_pane_input=True,guarded_termination=True,original_process_preserved=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,api_changes_shared=True,session_rename_guarded=True,session_rename_replay=True,session_picker_rename=True,session_delete_guarded=True,session_delete_replay=True,independent_focus_preserved=True,guarded_pane_input=True,guarded_termination=True,original_process_preserved=True)))
             raise SystemExit(0)
         if args.terminal_history:
             def review():return a.snapshot().get('terminal_review') or {}
@@ -2541,16 +2512,6 @@ GLib.MainLoop().run()
             a.action('pane-target:0:search-history');wait(lambda:review().get('editing'),'hidden tab history search did not open')
             a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and not review().get('loading'),'history predating attachment was lost')
             a.key('escape');wait(lambda:not review(),'reattached history did not close')
-            tmux('send-keys','-t','Fixture','-l','HISTORY');tmux('send-keys','-t','Fixture','Enter')
-            wait(lambda:'ROW 119' in tmux('capture-pane','-p','-t','Fixture'),'tmux source history fixture missing')
-            picker(a,external=True);choose(a,'Fixture')
-            wait(lambda:a.snapshot().get('panes') and a.snapshot()['panes'][0].get('pid')==source_pid,'history tmux import did not attach')
-            assert search_api(a.snapshot()['active_project'])['source']=='tmux'
-            a.shortcut('char:/');wait(lambda:review().get('editing'),'imported tmux search did not open')
-            a.paste('NEEDLE 界é');a.key('enter');wait(lambda:review().get('matches')==2 and review().get('source')=='tmux','imported tmux retained history missing')
-            assert tmux('display-message','-p','-t','Fixture','#{pane_in_mode}')=='0','read-only search changed tmux copy mode'
-            a.key('enter');wait(lambda:a.clipboards[-1:] == ['NEEDLE 界é'] and not review(),'imported history did not copy')
-            assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
             if args.agent_mux:
                 picker(a,external=True);choose(a,'default')
                 wait(lambda:a.snapshot().get('collection')==(COLLECTION+'-default') and a.snapshot().get('direct_terminals'),(DISPLAY+' history import missing'))
@@ -2567,7 +2528,7 @@ GLib.MainLoop().run()
                 agent_mux.wait(timeout=5)
                 search_api(agent_mux_project,unavailable=True)
                 assert not (tmp/('config/'+PROGRAM+'/'+PROGRAM+'.sock')).exists(),'history capture started the stopped source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,headless_styled_history_search=True,ignore_case_search=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_tmux_history=True,imported_agent_mux_history=args.agent_mux,guarded_agent_mux_history_api=args.agent_mux)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,search_retained_history=True,headless_styled_history_search=True,ignore_case_search=True,unicode_search_and_copy=True,match_navigation=True,cross_page_selection=True,frozen_during_output=True,independent_frontends=True,terminal_input_preserved=True,pre_attachment_history=True,imported_agent_mux_history=args.agent_mux,guarded_agent_mux_history_api=args.agent_mux)))
             raise SystemExit(0)
         if args.pane_layouts:
             def leaves(client=None):return (client or a).snapshot().get('pane_layout',{}).get('panes',[])
@@ -3081,17 +3042,6 @@ GLib.MainLoop().run()
         assert not (tmp/'data/starflux/projects'/(created+'.json')).exists()
         assert json.loads((tmp/'data/starflux/sessions/default-session').read_text()) is None,'deleting the default left a stale preference'
         assert alive(original_pid) and b.snapshot()['active_project']==name
-        picker(a,external=True);choose(a,'Fixture')
-        imported=wait(lambda:(s if (s:=a.snapshot()).get('session_id') not in ('base',created_group) and s.get('panes') and s['panes'][0].get('pid')==source_pid else None),'tmux source did not attach')
-        a=restart(a)
-        assert a.snapshot()['active_project']==imported['active_project'] and a.snapshot()['panes'][0]['pid']==source_pid,'Cross-session reattachment lost selection or replaced the source'
-        a.paste('IMPORTED_INPUT')
-        if args.cells:a.input(dict(kind='key',code='enter',modifiers=0))
-        else:a.input(dict(kind='embedded',canvas='terminals',event=dict(timestamp_ns=time.monotonic_ns(),sequence=1,kind=dict(kind='key',code='enter',modifiers=0,phase='press'))))
-        wait(lambda:'REPLY=IMPORTED_INPUT' in tmux('capture-pane','-p','-t','Fixture'),'tmux input did not reach the original process')
-        assert tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology
-        delete(a,'tmux / Fixture')
-        assert alive(source_pid) and tmux('list-panes','-s','-t','Fixture','-F','#{pane_id} #{pane_pid}')==source_topology,'Deleting import killed or changed original tmux'
         if args.agent_mux:
             picker(a,external=True);choose(a,'default')
             wait(lambda:a.snapshot().get('collection')==(COLLECTION+'-default') and len(a.snapshot().get('project_order',[]))>=2,(DISPLAY+' projects did not import'))
@@ -3115,8 +3065,7 @@ GLib.MainLoop().run()
         wait(lambda:not alive(original_pid) and b.process.poll() is not None,'deleting the launch session did not close its other view')
         a=restart(a)
         assert a.snapshot()['active_project']==kept['active_project'] and a.snapshot()['panes'][0]['pid']==kept['panes'][0]['pid'],'Deleting the old launch session broke reattachment'
-        assert alive(source_pid),'Deleting an owned session killed the tmux source'
-        print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,list_select_create_delete=True,default_startup=True,explicit_workspace_overrides_default=True,drag_order_persists=True,closed_project_keeps_order=True,cancel_preserves_process=True,independent_views=True,cross_session_reattach=True,delete_launch_session=True,tmux_import_preserves_pids_and_topology=True,agent_mux_import_preserves_pids=args.agent_mux)))
+        print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,list_select_create_delete=True,default_startup=True,explicit_workspace_overrides_default=True,drag_order_persists=True,closed_project_keeps_order=True,cancel_preserves_process=True,independent_views=True,cross_session_reattach=True,delete_launch_session=True,agent_mux_import_preserves_pids=args.agent_mux)))
     finally:
         if args.native_launch_race:(gate/'release').touch()
         for path in state.glob('v-*.state.json'):path.with_name(path.name.removesuffix('.state.json')+'.close').touch()
@@ -3184,7 +3133,6 @@ GLib.MainLoop().run()
             deadline=time.monotonic()+3
             while any(map(collector_alive,collectors)) and time.monotonic()<deadline:time.sleep(.05)
         assert not any(map(collector_alive,collectors)),'private collectors did not retire before fixture cleanup'
-        subprocess.run(['tmux','-S',str(source_socket),'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for path in (tmp/'data/starflux/projects').glob('*.model.json'):
             workspace=path.name.removesuffix('.model.json')
             subprocess.run(['tmux','-L','starflux-'+workspace,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

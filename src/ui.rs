@@ -3349,7 +3349,6 @@ impl Workspace {
                         label: None,
                         collection: self.config.collection.clone(),
                         agent_mux: None,
-                        tmux: None,
                         adopted: Default::default(),
                         native_terminals: false,
                         theme: self.config.theme.clone(),

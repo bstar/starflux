@@ -83,18 +83,8 @@ pub fn inspect(config: &Config, pane: usize) -> Result<Value> {
     }
     let mut request = config.request(pane, "inspect");
     request["include_screen"] = json!(true);
-    if pane == 0
-        && let Some(source) = &config.tmux
-    {
-        request["source_socket"] = json!(source.socket);
-        request["source_session"] = json!(source.session);
-    }
     let mut health: Value =
         serde_json::from_slice(&output(config.command(pane, &request, false))?)?;
-    if pane == 0 && config.tmux.is_some() {
-        health["source"] = json!("tmux");
-        health["source_preserved"] = json!(true);
-    }
     if let Some(terminal) = config.adopted_terminal(pane) {
         let mut original = terminal.observe(pane)?;
         original["pid_start_ticks"] = json!(crate::agent_state::process_start(terminal.pid));

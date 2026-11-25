@@ -135,7 +135,7 @@ for cols,rows in [(70,24),(40,12),(12,6),(100,35)]:
     wait(lambda:sizes.exists() and sizes.read_text().splitlines()[-1]==str(rect['width'])+'x'+str(rect['height']),'popup PTY did not receive its resized geometry')
 close(identifier);wait(lambda:group_stopped(call),'closing popup left its program or child alive')
 check_membership()
-assert alive(original_pid) and alive(source_pid),'popup cleanup stopped an unrelated terminal'
+assert alive(original_pid),'popup cleanup stopped an unrelated terminal'
 a.key('f:1');wait(lambda:menu().get('title')=='Keyboard shortcuts','underlying UI focus was not restored')
 response=api('plugins.panes.open',request(),write=True)
 assert response['presentation']['status']=='rejected' and response['presentation']['error']['code']=='frontend_busy',response
@@ -180,7 +180,7 @@ assert api('plugins.popups.get',dict(id=identifier))['alive']
 assert b'--plugin-popup-worker' in Path('/proc',str(supervisor),'cmdline').read_bytes().split(b'\0')
 os.kill(supervisor,signal.SIGKILL)
 wait(lambda:not popup() and group_stopped(call),'supervisor death left popup descendants alive')
-assert alive(original_pid) and alive(source_pid),'supervisor cleanup stopped an unrelated terminal'
+assert alive(original_pid),'supervisor cleanup stopped an unrelated terminal'
 # Test abrupt owner death independently of graceful teardown. Its exact private
 # PID is verified before signalling; no live user controller is involved.
 identifier=opening();call=mark_ready(identifier,7);controller=a.snapshot()['controller_pid']
@@ -193,7 +193,7 @@ a.process.wait(timeout=8)
 a=Client(a.identity,remote=args.ssh)
 wait(lambda:a.scene and a.snapshot().get('panes') and a.snapshot()['panes'][0].get('pid'),'view did not reopen after abrupt death')
 assert not popup() and len(calls())==7,'owner death replayed transient popup'
-check_membership();assert alive(original_pid) and alive(source_pid),'owner death killed another terminal'
+check_membership();assert alive(original_pid),'owner death killed another terminal'
 identifier=opening();call=mark_ready(identifier,8);close(identifier)
 wait(lambda:group_stopped(call),'session lease could not be reused after owner death')
 assert not api('plugins.panes.list')['panes']

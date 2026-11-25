@@ -299,7 +299,6 @@ fn repository_origin(config: &Config) -> Result<String> {
     );
     root.agent = None;
     root.agent_mux = None;
-    root.tmux = None;
     root.adopted.clear();
     root.project_host = true;
     save(&Link {
@@ -370,7 +369,6 @@ pub fn open(config: &Config, target: &Value) -> Result<Config> {
         );
         destination.agent = None;
         destination.agent_mux = None;
-        destination.tmux = None;
         destination.adopted.clear();
         destination.project_host = true;
         let association = Link {

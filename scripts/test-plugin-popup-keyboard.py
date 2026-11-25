@@ -42,5 +42,5 @@ assert not controls(),'disabled shortcut opened popup controls'
 close(identifier);wait(lambda:group_stopped(call),'API close after disabling shortcut failed')
 settings.unlink();a.action('keyboard:reload-keys');check_membership()
 wait(lambda:a.snapshot().get('popup_controls_shortcut')=='Shift+F6','default popup shortcut did not reload')
-assert alive(original_pid) and alive(source_pid),'popup keyboard controls changed another process'
+assert alive(original_pid),'popup keyboard controls changed another process'
 print(json.dumps(dict(result='PASS',ssh=args.ssh,cells=args.cells,popup_keyboard_controls=True,escape_returns_to_program=True,enter_closes_owned_group=True,controls_do_not_leak_keys=True,ordinary_f6_passthrough=True,resize_preserves_focus=True,configurable_shortcut=True,disabled_passthrough=True,other_processes_preserved=True)))

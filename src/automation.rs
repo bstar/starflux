@@ -401,11 +401,7 @@ fn pane(config: &Config, state: &ProjectState, pane: u8) -> Result<usize> {
 }
 fn inspect(config: &Config, id: usize) -> Result<Value> {
     let request = config.request(id, "inspect");
-    let mut health = if id == 0 && config.tmux.is_some() {
-        config.guarded_tmux_call(&request)?
-    } else {
-        config.call(id, &request)?
-    };
+    let mut health = config.call(id, &request)?;
     agent_state::enrich(config, id, &mut health);
     if !config.remote(id)
         && let Some(pid) = health["pid"].as_u64().and_then(|p| u32::try_from(p).ok())
@@ -488,7 +484,7 @@ fn observed(config: &Config, state: &ProjectState, id: usize, health: &Value) ->
     let input_available = input_transport_available(health, config.adopted_terminal(id).is_some());
     let retirement = health["backend"] != "native" || health["native_retirement_available"] == true;
     let mut result = json!({"project":config.workspace,"pane":id+1,"epoch":state.terminal_epochs.get(&id),"label":state.terminal_labels.get(&id),"target":target,"saved_conversation":saved_conversation(health),
-        "capabilities":{"input":guardable && (!config.externally_owned(id) || (id == 0 && config.tmux.is_some())) && input_available,"terminate":guardable && !config.externally_owned(id) && retirement},"status":public});
+        "capabilities":{"input":guardable && !config.externally_owned(id) && input_available,"terminate":guardable && !config.externally_owned(id) && retirement},"status":public});
     if health["backend"] == "native" {
         result["capabilities"]["recover"] =
             json!(retirement && state.terminal_epochs.contains_key(&id));
@@ -929,7 +925,6 @@ fn dispatch(request: &Request) -> Result<Value> {
                 label: Some(p.label),
                 collection: Some(p.session),
                 agent_mux: None,
-                tmux: None,
                 adopted: Default::default(),
                 native_terminals: false,
                 theme: "system".into(),
@@ -1258,8 +1253,7 @@ fn dispatch(request: &Request) -> Result<Value> {
             let config = project(&t.project)?;
             let _lock = project_sync::transaction(&config)?;
             let (config, _, id, health) = guarded(&t)?;
-            let imported_tmux = id == 0 && config.tmux.is_some();
-            if config.externally_owned(id) && !imported_tmux {
+            if config.externally_owned(id) {
                 return Err(fault(
                     "unsupported_capability",
                     "Imported terminals retain their source input ownership",
@@ -1284,18 +1278,7 @@ fn dispatch(request: &Request) -> Result<Value> {
                 req["expected_terminal_key"] = json!(terminal.key);
                 req["expected_proxy"] = json!(terminal.proxy);
             }
-            if imported_tmux {
-                let response = config.guarded_tmux_call(&req)?;
-                if response["delivered"] == false {
-                    return Err(fault(
-                        "source_input_rejected",
-                        "Imported tmux pane changed or is in copy mode",
-                    ));
-                }
-                Ok(response)
-            } else {
-                config.call(id, &req)
-            }
+            config.call(id, &req)
         }
         "panes.recover" => {
             #[derive(Deserialize)]

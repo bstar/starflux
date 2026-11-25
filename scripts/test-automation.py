@@ -18,7 +18,6 @@ import time
 import uuid
 
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');parser.add_argument('--without-tmux',action='store_true',help='hide tmux from PATH; terminals must open natively');args=parser.parse_args()
-if args.without_tmux and args.session_imports:parser.error('--without-tmux cannot import tmux sessions')
 if args.agent_mux and not args.session_imports:parser.error('--agent-mux requires --session-imports')
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
 with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
@@ -56,7 +55,7 @@ while True:
                 if name!='tmux' and not link.exists() and os.access(os.path.join(folder,name),os.X_OK):link.symlink_to(os.path.join(folder,name))
         env['PATH']=str(hidden);assert shutil.which('tmux',path=env['PATH']) is None
     env.update(XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),TMUX_TMPDIR=str(tmp/'tmux'),SHELL=str(shell))
-    clients=[];daemon=None;ssh_args=[];agent_mux=None;agent_mux_named=None;source_socket=None
+    clients=[];daemon=None;ssh_args=[];agent_mux=None;agent_mux_named=None
     if args.agent_mux:
         config=tmp/('config/'+PROGRAM);config.mkdir(parents=True);(config/'config.toml').write_text('onboarding = false\n');env[(ENV+'_CONFIG_PATH')]=str(config/'config.toml')
     else:env['STARFLUX_AGENT_MUX']=str(tmp/(PROGRAM+'-not-installed'))
@@ -187,66 +186,7 @@ while True:
                                   transitions_retained=True,durable_replay=True,error_cursor_replay=True,fallback_preserved=True)))
             raise SystemExit(0)
         if args.session_imports:
-            sockets=tmp/'tmux'/('tmux-'+str(os.getuid()));sockets.mkdir(parents=True,exist_ok=True,mode=0o700);source_socket=sockets/'original'
-            def tmux(*arguments):return subprocess.check_output(['tmux','-S',str(source_socket),*arguments],env=env,text=True).strip()
-            source_directory=tmp/'import café space ';source_directory.mkdir()
-            tmux('new-session','-d','-s','Original café','-c',str(source_directory),str(shell))
-            tmux('new-window','-d','-t','Original café','-c',str(tmp),str(shell))
-            def topology():return tmux('list-panes','-a','-F','#{session_id} #{window_id} #{pane_id} #{pane_pid}')
-            before=topology()
-            def source():return next(s for s in c.call('sessions.external')['sources'] if s['source']=='tmux' and s['name']=='Original café')
-            initial=source();assert initial==source(),'discovery reference was not stable'
-            assert c.call('sessions.import',dict(reference={**initial['reference'],'fingerprint':'invalid'}),str(uuid.uuid4()),ok=False)['code']=='invalid_params'
-            operation=str(uuid.uuid4());params=dict(reference=initial['reference'])
-            other=Client();first_id=c.send('sessions.import',params,operation);second_id=other.send('sessions.import',params,str(uuid.uuid4()))
-            first=c.take();second=other.take();assert first['id']==first_id and second['id']==second_id and first['ok'] and second['ok'],(first,second)
-            imported=first['result'];assert second['result']['project']==imported['project'],'concurrent imports duplicated the source'
-            assert c.write('sessions.import',params,operation)==imported,'operation replay duplicated import'
-            assert c.write('sessions.import',params)['project']==imported['project'],'a second operation duplicated source membership'
-            assert len(c.call('projects.list')['projects'])==1 and topology()==before
-            assert c.call('projects.list')['projects'][0]['directory']==str(source_directory),'import changed the source working directory'
-            assert c.call('frontends.list',dict(project=imported['project']))['frontends']==[],'headless import opened a presentation'
-            pane_scope=dict(project=imported['project'],pane=1)
-            imported_pane=c.call('panes.get',pane_scope)
-            assert imported_pane['status']['source']=='tmux'
-            assert imported_pane['capabilities']==dict(input=True,terminate=False),imported_pane
-            selection=tmux('display-message','-p','-t','Original café','#{window_id} #{pane_id}').split()
-            def capture():return tmux('capture-pane','-p','-t',selection[1])
-            wait(lambda:'API_READY' in capture(),'imported pane did not become ready')
-            send=dict(target=imported_pane['target'],text='imported café 界',submit=False)
-            input_operation=str(uuid.uuid4())
-            assert c.write('panes.send',send,input_operation)==c.write('panes.send',send,input_operation)
-            wait(lambda:'PASTE 1' in capture(),'imported pane did not receive its paste')
-            assert 'SUBMIT' not in capture(),'imported paste implicitly submitted'
-            c.write('panes.send',dict(target=send['target'],text='',submit=True))
-            wait(lambda:"SUBMIT 1 'imported café 界'" in capture(),'explicit submit missed the imported pane')
-            assert 'PASTE 2' not in capture(),'operation replay delivered another paste'
-            tmux('copy-mode','-t',selection[1])
-            error=c.call('panes.send',dict(target=send['target'],text='COPY_MODE',submit=True),str(uuid.uuid4()),ok=False)
-            assert error['code']=='source_input_rejected' and error['outcome']=='not_applied',error
-            tmux('send-keys','-t',selection[1],'-X','cancel')
-            assert 'COPY_MODE' not in capture()
-            other_window=next(window for window in tmux('list-windows','-t','Original café','-F','#{window_id}').splitlines() if window!=selection[0])
-            tmux('select-window','-t',other_window)
-            denied=c.call('panes.send',dict(target=send['target'],text='WRONG_PANE',submit=True),str(uuid.uuid4()),ok=False)
-            assert denied['code']=='stale_target',denied
-            assert 'WRONG_PANE' not in tmux('capture-pane','-p','-t',other_window)
-            tmux('select-window','-t',selection[0])
-            assert topology()==before
-            tmux('rename-session','-t','Original café','Renamed source')
-            assert c.call('sessions.import',params,str(uuid.uuid4()),ok=False)['code']=='stale_source'
-            assert c.write('sessions.import',params,operation)==imported,'replay re-ran an import against a changed source'
-            tmux('rename-session','-t','Renamed source','Original café')
-            changed=source();tmux('new-window','-d','-t','Original café','-c',str(tmp),str(shell))
-            assert c.call('sessions.import',dict(reference=changed['reference']),str(uuid.uuid4()),ok=False)['code']=='stale_source'
-            assert c.write('sessions.import',dict(reference=source()['reference']))['project']==imported['project']
-            assert len(c.call('projects.list')['projects'])==1
-            obsolete=source()['reference'];old_socket=source_socket.stat().st_ino
-            tmux('kill-server')
-            assert c.call('sessions.import',dict(reference=obsolete),str(uuid.uuid4()),ok=False)['code']=='source_unavailable'
-            tmux('new-session','-d','-s','Original café','-c',str(tmp),str(shell))
-            assert c.call('sessions.import',dict(reference=obsolete),str(uuid.uuid4()),ok=False)['code']=='stale_source','a replaced source server accepted an old reference'
-            assert c.write('sessions.import',dict(reference=source()['reference']))['project']==imported['project']
+            assert all(s['source']==SOURCE for s in c.call('sessions.external')['sources']),'discovery listed a source other than the multiplexer'
             if args.agent_mux:
                 original=agent_mux_cli('api','snapshot')['result']['snapshot'];panes=original['panes']
                 pids=[agent_mux_cli('pane','process-info','--pane',p['pane_id'])['result']['process_info']['shell_pid'] for p in panes]
@@ -295,12 +235,11 @@ while True:
                 except OSError:return False
             wait(lambda:all(not query_alive(pid) for pid in query_pids),'cancelled discovery left read helpers running',timeout=.6)
             assert delayed.call('capabilities')['version']==1,'cancellation broke the API connection'
-            retained=topology();began=time.monotonic()
-            assert any(s['source']=='tmux' for s in delayed.call('sessions.external')['sources'])
+            began=time.monotonic()
+            delayed.call('sessions.external')
             assert time.monotonic()-began<5.8,'source watchdog did not bound a slow CLI'
             query_pids=json.loads(record.read_text());wait(lambda:all(not query_alive(pid) for pid in query_pids),'source timeout left read helpers running',timeout=.6)
-            assert topology()==retained,'query cleanup changed the original source'
-            print(json.dumps(dict(result='PASS',ssh=args.ssh,agent_mux=args.agent_mux,agent_mux_read_only_identity=args.agent_mux,headless_import=True,guarded_tmux_input=True,stable_discovery=True,guarded_source_identity=True,stale_topology_rejected=True,replaced_server_rejected=True,idempotent_import=True,source_processes_and_topology_preserved=True,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
+            print(json.dumps(dict(result='PASS',ssh=args.ssh,agent_mux=args.agent_mux,agent_mux_read_only_identity=args.agent_mux,headless_import=args.agent_mux,stable_discovery=args.agent_mux,stale_topology_rejected=args.agent_mux,replaced_server_rejected=args.agent_mux,idempotent_import=args.agent_mux,source_processes_preserved=args.agent_mux,json_stdout_clean=True,cancelled_query_cleanup=True,source_watchdog_cleanup=True)))
             raise SystemExit(0)
         caps=c.call('capabilities');assert caps['version']==1 and caps['operation_replay']
         c.process.stdin.write(b'{invalid\n');c.process.stdin.flush();assert c.take()['error']['code']=='invalid_request'
@@ -390,7 +329,6 @@ while True:
                 client.process.terminate()
                 try:client.process.wait(timeout=3)
                 except subprocess.TimeoutExpired:client.process.kill();client.process.wait()
-        if source_socket:subprocess.run(['tmux','-S',str(source_socket),'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         if agent_mux:agent_mux.terminate();agent_mux.wait(timeout=5)
         if agent_mux_named:agent_mux_named.terminate();agent_mux_named.wait(timeout=5)
         for model in (tmp/'data/starflux/projects').glob('*.model.json'):

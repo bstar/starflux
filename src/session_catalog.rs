@@ -26,8 +26,6 @@ pub struct Entry {
     pub source: String,
     pub is_default: bool,
     pub project: Option<String>,
-    #[serde(skip)]
-    pub tmux: Option<crate::tmux_source::Source>,
 }
 pub fn group(config: &Config) -> String {
     config
@@ -203,7 +201,6 @@ pub fn list() -> Result<Vec<Entry>> {
             source: "starflux".into(),
             is_default: default.as_deref() == Some(id.as_str()),
             project: Some(config.workspace.clone()),
-            tmux: None,
         });
     }
     for entry in fs::read_dir(root()?)? {
@@ -231,14 +228,6 @@ pub fn list() -> Result<Vec<Entry>> {
     Ok(entries)
 }
 pub fn create(name: &str, directory: &str, theme: &str) -> Result<Config> {
-    create_with_source(name, directory, theme, None)
-}
-fn create_with_source(
-    name: &str,
-    directory: &str,
-    theme: &str,
-    tmux: Option<crate::tmux_source::Source>,
-) -> Result<Config> {
     project_state::validate_label(name)?;
     let directory = fs::canonicalize(directory).context("Choose an existing project directory")?;
     ensure!(directory.is_dir(), "Choose a directory");
@@ -251,7 +240,6 @@ fn create_with_source(
         label: Some(name.into()),
         collection: Some(id.clone()),
         agent_mux: None,
-        tmux,
         adopted: Default::default(),
         native_terminals: false,
         theme: theme.into(),
@@ -264,12 +252,7 @@ fn create_with_source(
         desktop_helper: runtime::default_desktop_helper(),
     };
     config.validate()?;
-    let state = if config.tmux.is_none() {
-        ProjectState::new_owned()
-    } else {
-        ProjectState::default()
-    };
-    state.save(&config)?;
+    ProjectState::new_owned().save(&config)?;
     starcore::fs::write_private(
         &runtime::config_path(&config.workspace)?,
         &serde_json::to_vec_pretty(&config)?,
@@ -283,61 +266,6 @@ fn create_with_source(
 }
 pub fn external() -> Vec<Entry> {
     let mut entries = Vec::new();
-    let mut sockets = BTreeSet::new();
-    let temp = std::env::var_os("TMUX_TMPDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    if let Ok(files) = fs::read_dir(temp.join(format!("tmux-{}", unsafe { libc::getuid() }))) {
-        for file in files.flatten() {
-            if !file.file_name().to_string_lossy().starts_with("starflux-")
-                && !file.file_name().to_string_lossy().starts_with("starmux-")
-            {
-                sockets.insert(file.path());
-            }
-        }
-    }
-    if let Some(socket) = std::env::var("TMUX")
-        .ok()
-        .and_then(|v| v.split(',').next().map(PathBuf::from))
-    {
-        sockets.insert(socket);
-    }
-    for socket in sockets {
-        let mut command = crate::host_env::command("tmux");
-        command.args([
-            "-u",
-            "-S",
-            &socket.to_string_lossy(),
-            "list-sessions",
-            "-F",
-            "#{session_id}\t#{session_name}\t#{session_windows}",
-        ]);
-        let Ok(out) = crate::read_query::output(command) else {
-            continue;
-        };
-        for line in String::from_utf8_lossy(&out).lines() {
-            let fields = line.split('\t').collect::<Vec<_>>();
-            if fields.len() != 3 {
-                continue;
-            }
-            let source = crate::tmux_source::Source {
-                socket: socket.clone(),
-                session: fields[0].into(),
-            };
-            if source.validate().is_err() {
-                continue;
-            }
-            entries.push(Entry {
-                id: format!("tmux-{}", entries.len()),
-                name: fields[1].into(),
-                detail: format!("{} windows · {}", fields[2], socket.display()),
-                source: "tmux".into(),
-                is_default: false,
-                project: None,
-                tmux: Some(source),
-            });
-        }
-    }
     let Some(agent_mux) = crate::agent_mux::executable() else {
         return entries;
     };
@@ -356,7 +284,6 @@ pub fn external() -> Vec<Entry> {
                     source: crate::agent_mux::SOURCE.into(),
                     is_default: false,
                     project: None,
-                    tmux: None,
                 });
             }
         }
@@ -382,34 +309,7 @@ pub(crate) fn import_prepared(
         })?;
         return Ok(config);
     }
-    let source = entry
-        .tmux
-        .clone()
-        .context("Select a live tmux or multiplexer session")?;
-    source.inspect()?;
-    if let Some(config) = projects().into_iter().find(|p| {
-        p.tmux
-            .as_ref()
-            .is_some_and(|s| s.socket == source.socket && s.session == source.session)
-    }) {
-        return Ok(config);
-    }
-    let output = crate::read_query::output(source.command(&[
-        "display-message",
-        "-p",
-        "-t",
-        &source.session,
-        "#{pane_current_path}",
-    ]))?;
-    let output = String::from_utf8(output).context("tmux project directory is not UTF-8")?;
-    let directory = output.strip_suffix('\n').unwrap_or(&output).to_owned();
-    let config = create_with_source(
-        &format!("tmux / {}", entry.name),
-        &directory,
-        &crate::appearance::default_theme(),
-        Some(source),
-    )?;
-    Ok(config)
+    anyhow::bail!("Select a live multiplexer session")
 }
 pub fn delete(id: &str, presenting: &str, fallback: &Config) -> Result<()> {
     delete_checked(id, presenting, fallback, None)

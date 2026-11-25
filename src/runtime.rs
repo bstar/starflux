@@ -32,8 +32,6 @@ pub struct Config {
     pub collection: Option<String>,
     #[serde(flatten, with = "crate::agent_mux::saved")]
     pub agent_mux: Option<crate::agent_mux::Source>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tmux: Option<crate::tmux_source::Source>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub adopted: std::collections::BTreeMap<usize, crate::adoption::Terminal>,
     #[serde(default)]
@@ -67,11 +65,9 @@ pub fn fresh_agent_command(command: &str) -> String {
 }
 impl Config {
     pub fn externally_owned(&self, pane: usize) -> bool {
-        (pane == 0 && self.tmux.is_some())
-            || self
-                .agent_mux
-                .as_ref()
-                .is_some_and(|h| h.panes.keys().any(|id| self.canonical_pane(*id) == pane))
+        self.agent_mux
+            .as_ref()
+            .is_some_and(|h| h.panes.keys().any(|id| self.canonical_pane(*id) == pane))
     }
     pub fn terminal_identity(&self, pane: usize, health: &Value) -> Result<(u32, u64, uuid::Uuid)> {
         ensure!(
@@ -111,7 +107,7 @@ impl Config {
         config.validate()?;
         ensure!(
             !config.externally_owned(pane),
-            "Imported tmux/agent-multiplexer terminals remain owned by their source"
+            "Imported agent-multiplexer terminals remain owned by their source"
         );
         let state = crate::project_state::ProjectState::load(&config)?;
         ensure!(
@@ -155,9 +151,6 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<()> {
-        if let Some(source) = &self.tmux {
-            source.validate()?;
-        }
         for terminal in self.adopted.values() {
             terminal.validate()?;
         }
@@ -241,23 +234,7 @@ impl Config {
         let agent_mux_identity = agent_mux
             .map(|source| source.history_identity(pane))
             .transpose()?;
-        let (mut command, source) = if pane == 0
-            && let Some(source) = &self.tmux
-        {
-            (
-                source.command(&[
-                    "capture-pane",
-                    "-p",
-                    "-e",
-                    "-J",
-                    "-t",
-                    &source.session,
-                    "-S",
-                    "-4000",
-                ]),
-                "tmux",
-            )
-        } else if let Some(source) = agent_mux {
+        let (mut command, source) = if let Some(source) = agent_mux {
             (
                 source.command(&[
                     "pane",
@@ -316,12 +293,6 @@ impl Config {
             return command;
         }
 
-        if pane == 0
-            && request["action"] == "capture"
-            && let Some(source) = &self.tmux
-        {
-            return source.command(&["capture-pane", "-p", "-e", "-t", &source.session]);
-        }
         if let Some(source) = self
             .agent_mux
             .as_ref()
@@ -362,26 +333,11 @@ impl Config {
             c
         }
     }
-    pub(crate) fn guarded_tmux_call(&self, request: &Value) -> Result<Value> {
-        let source = self.tmux.as_ref().context("No imported tmux source")?;
-        source.validate()?;
-        let mut request = request.clone();
-        request["source_socket"] = json!(source.socket);
-        request["source_session"] = json!(source.session);
-        let mut result = self.host_call(0, &request)?;
-        result["source"] = json!("tmux");
-        Ok(result)
-    }
     pub fn call(&self, pane: usize, request: &Value) -> Result<Value> {
         if let Some(result) = crate::native_backend::call(self, pane, request)? {
             return Ok(result);
         }
 
-        if pane == 0
-            && let Some(source) = &self.tmux
-        {
-            return source.call(request);
-        }
         if request["action"] == "inspect"
             && let Some(terminal) = self.adopted_terminal(pane)
         {
@@ -464,12 +420,6 @@ impl Config {
             return Ok(());
         }
         let _worktree = crate::worktrees::ensure_allowed(self)?;
-        if pane == 0
-            && let Some(source) = &self.tmux
-        {
-            source.inspect()?;
-            return Ok(());
-        }
         if let Some(source) = self
             .agent_mux
             .as_ref()
@@ -524,10 +474,6 @@ impl Config {
         let _transaction = crate::project_sync::transaction(self)?;
         let saved = crate::project_state::data_root()?.join(format!("{}.json", self.workspace));
         let mut config: Self = serde_json::from_slice(&fs::read(saved)?)?;
-        ensure!(
-            pane != 0 || config.tmux.is_none(),
-            "Imported tmux sessions stay owned by tmux; open a new terminal tab for a fresh shell"
-        );
         let mut state = crate::project_state::ProjectState::load(&config)?;
         ensure!(
             state.terminal_ids().contains(&pane),
@@ -613,11 +559,6 @@ impl Config {
         pane
     }
     pub fn paste(&self, pane: usize, text: &str) -> Result<()> {
-        if pane == 0
-            && let Some(source) = &self.tmux
-        {
-            return source.paste(text);
-        }
         let socket = crate::terminal::socket(&self.workspace, self.canonical_pane(pane))?;
         if socket.exists() {
             return crate::terminal::paste(&socket, text);
@@ -693,11 +634,6 @@ impl Config {
         self.attach_argv_with_shell(pane, false)
     }
     pub fn attach_argv_with_shell(&self, pane: usize, ensure_shell: bool) -> Vec<String> {
-        if pane == 0
-            && let Some(source) = &self.tmux
-        {
-            return source.attach_argv();
-        }
         if let Some(source) = self
             .agent_mux
             .as_ref()
@@ -1069,7 +1005,6 @@ mod tests {
             label: None,
             collection: None,
             agent_mux: None,
-            tmux: None,
             adopted: Default::default(),
             native_terminals: false,
             theme: crate::appearance::default_theme(),

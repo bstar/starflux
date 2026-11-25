@@ -660,7 +660,7 @@ pub fn targets(config: &Config, category: &str, project: &str) -> Result<Value> 
     for record in crate::agent_state::records(&member)? {
         let observed = api("panes.get", json!({"project":project,"pane":record.pane+1}))?;
         if observed["target"]["run_id"] == record.report.run_id {
-            choices.push(json!({"pane":record.pane+1,"target":observed["target"],"conversation":record.report.conversation_id,"native_queue":record.report.harness=="codex" && member.agent_mux.is_none() && member.tmux.is_none(),"provider":record.report.harness,"state":record.report.state}));
+            choices.push(json!({"pane":record.pane+1,"target":observed["target"],"conversation":record.report.conversation_id,"native_queue":record.report.harness=="codex" && member.agent_mux.is_none(),"provider":record.report.harness,"state":record.report.state}));
         }
     }
     Ok(json!({"targets":choices}))
