@@ -80,7 +80,9 @@ impl View {
             .process_group(0)
             .spawn()?;
         let start = Instant::now();
-        while !path.exists() {
+        // The socket file appears at bind, slightly before the server listens;
+        // wait until it accepts so the first connect is never refused.
+        while !crate::socket_active(&path)? {
             if let Some(status) = child.try_wait()? {
                 anyhow::bail!(
                     "Frontend exited during startup ({status}); see {}",

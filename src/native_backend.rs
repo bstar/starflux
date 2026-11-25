@@ -543,12 +543,7 @@ fn dispatch(request: Value) -> Result<Value> {
         "reattach" => {
             let target: Pane = serde_json::from_value(request["target"].clone())?;
             target.validate()?;
-            let record = service::reattach_slot(
-                &target.namespace,
-                &target.binding.project,
-                target.binding.pane,
-                &target.binding.terminal_epoch,
-            )?;
+            let record = reattach_when_opened(&target)?;
             ensure!(
                 record.owner == target.binding.owner
                     && record.source_id == target.binding.source_id
@@ -1097,6 +1092,44 @@ pub fn open_command(
     _: PathBuf,
 ) -> Result<()> {
     anyhow::bail!("Native terminals need Linux")
+}
+/// Another frontend can still be opening a pending pane when this one
+/// reattaches. Wait for that launch to finish instead of failing; a launch
+/// that never resolves still reports its outcome as unavailable.
+#[cfg(target_os = "linux")]
+fn reattach_when_opened(target: &Pane) -> Result<crate::native_protocol::Binding> {
+    use crate::source_broker::{self, service};
+    let binding = &target.binding;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let error = match service::reattach_slot(
+            &target.namespace,
+            &binding.project,
+            binding.pane,
+            &binding.terminal_epoch,
+        ) {
+            Ok(record) => return Ok(record),
+            Err(error) => error,
+        };
+        if binding.source.is_some() || std::time::Instant::now() >= deadline {
+            return Err(error);
+        }
+        let pending = service::existing(&target.namespace, &binding.owner)
+            .and_then(|handle| handle.connect())
+            .and_then(|mut connection| {
+                connection.call(source_broker::Action::ResolveLaunch {
+                    id: binding.source_id.clone(),
+                    epoch: binding.source_epoch.clone(),
+                    digest: binding.launch_digest.clone(),
+                    seal: false,
+                })
+            })
+            .is_ok_and(|status| status["status"] == "opening" || status["status"] == "not_started");
+        if !pending {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 /// Every STAR/FLUX terminal is a native source. A terminal that predates this
 /// and still runs in tmux keeps that session until it ends.
