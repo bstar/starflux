@@ -12,10 +12,18 @@ approves anything or dismisses attention. Everything it shows comes from the
 
 ## Install
 
-Install STAR/FLUX first and make sure `starflux` is on `PATH`. Packaged builds
-are on the [releases page](https://github.com/bstar/starflux/releases), and the
-Arch package installs with `sudo pacman -U ./starflux-*-x86_64.pkg.tar.zst`.
-Then add the plugin from this repository:
+Install STAR/FLUX first and make sure `starflux` is on `PATH`. On Arch Linux
+and Omarchy, add the signed [star] package repository once (its
+[setup page](https://github.com/bstar/star-packages) has the steps), and
+STAR/FLUX then updates with `pacman -Syu` and `omarchy update`:
+
+```sh
+sudo pacman -S starflux
+```
+
+Other packaged builds are on the
+[releases page](https://github.com/bstar/starflux/releases). Then add the
+plugin from this repository:
 
 ```sh
 omarchy plugin add https://github.com/bstar/starflux.git --enable
@@ -27,6 +35,12 @@ start STAR/FLUX. To update the widget:
 
 ```sh
 omarchy plugin update bstar.starflux
+```
+
+To remove the widget, which leaves STAR/FLUX and its workspaces untouched:
+
+```sh
+omarchy plugin remove bstar.starflux
 ```
 
 ## What it shows
