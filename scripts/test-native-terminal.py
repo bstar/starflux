@@ -117,21 +117,24 @@ with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
                 if args.pane_recovery:
                     def action(value):
                         subprocess.run([str(root/'scripts/run-local.sh'),'--workspace',name,'--action',value],env=env,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                    if recovery_stage==0:
-                        recovery_pid=metadata['panes'][0]['pid']
+                    # The saved state can be written before the pane's process
+                    # is recorded; wait for a pid before each stage reads it.
+                    pane_pid=(metadata.get('panes') or [{}])[0].get('pid')
+                    if recovery_stage==0 and pane_pid:
+                        recovery_pid=pane_pid
                         recovery_attachment=metadata['direct_terminals'][0]['attachment_pid']
                         recovery_reconnects=metadata.get('history',[]).count('Terminal reconnected')
                         action('reconnect-terminal:0');recovery_stage=1
                     # Native panes have no attach process to replace; the
                     # controller records the reconnect in its history instead.
-                    elif recovery_stage==1 and (metadata['direct_terminals'][0]['attachment_pid']!=recovery_attachment if recovery_attachment is not None else metadata.get('history',[]).count('Terminal reconnected')>recovery_reconnects):
-                        assert metadata['panes'][0]['pid']==recovery_pid,'Reconnect replaced the backend'
+                    elif recovery_stage==1 and pane_pid and (metadata['direct_terminals'][0]['attachment_pid']!=recovery_attachment if recovery_attachment is not None else metadata.get('history',[]).count('Terminal reconnected')>recovery_reconnects):
+                        assert pane_pid==recovery_pid,'Reconnect replaced the backend'
                         action('recover-terminal:0');recovery_stage=2
                     elif recovery_stage==2 and metadata.get('modal_open'):
                         send(dict(type='input',id=2,revision=latest_scene['revision'],generation=1,input=dict(kind='paste',text='RECOVER')))
                         send(dict(type='input',id=3,revision=latest_scene['revision'],generation=1,input=dict(kind='key',code='enter',modifiers=2)))
                         recovery_stage=3
-                    elif recovery_stage==3 and not metadata.get('modal_open') and metadata['panes'][0]['pid']!=recovery_pid and metadata['direct_terminals'] and 'NATIVE_PTY_PROOF' in metadata['direct_terminals'][0]['text']:
+                    elif recovery_stage==3 and not metadata.get('modal_open') and pane_pid and pane_pid!=recovery_pid and metadata['direct_terminals'] and 'NATIVE_PTY_PROOF' in metadata['direct_terminals'][0]['text']:
                         assert metadata['project_state']['terminals']==[0]
                         assert 'NATIVE_PTY_PROOF' in metadata['direct_terminals'][0]['text']
                         recovery_stage=4;break
