@@ -2522,12 +2522,14 @@ impl Workspace {
         if !code.eq_ignore_ascii_case("char:v") {
             return false;
         }
-        if self.clipboard_key_held {
+        // Text terminals report no releases, so a new press always counts.
+        if self.clipboard_key_held && *phase != KeyPhase::Press {
             if *phase == KeyPhase::Release {
                 self.clipboard_key_held = false;
             }
             return true;
         }
+        self.clipboard_key_held = false;
         if *phase != KeyPhase::Press
             || modifiers & 7 != 2
             || self.state.space != Space::Terminals
