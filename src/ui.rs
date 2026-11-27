@@ -302,6 +302,9 @@ pub struct Workspace {
     chrome_hits: Vec<HitRegion>,
     graphical_cache: crate::graphical::Cache,
     desktop: Option<Desktop>,
+    /// A Ctrl+V that pasted a clipboard image is held: its repeats and
+    /// release are not forwarded.
+    clipboard_key_held: bool,
     terminals: BTreeMap<(String, usize), crate::terminal::Terminal>,
     frames: LiveFrames,
     rx: Receiver<Event>,
@@ -562,6 +565,7 @@ impl Workspace {
             chrome_hits: vec![],
             graphical_cache: Default::default(),
             desktop,
+            clipboard_key_held: false,
             terminals: BTreeMap::new(),
             frames: LiveFrames::default(),
             rx,
@@ -2422,6 +2426,11 @@ impl Workspace {
             self.direct_input(kind);
             return;
         }
+        // Terminals shown through the desktop get keys from it, not from
+        // direct input, so a screenshot paste is taken here first.
+        if self.clipboard_image_key(&kind) {
+            return;
+        }
         match kind {
             EmbeddedKind::Pointer {
                 action,
@@ -2496,41 +2505,64 @@ impl Workspace {
             EmbeddedKind::ReleaseAll => self.release(),
         }
     }
-    fn direct_input(&mut self, kind: EmbeddedKind) {
-        // Ctrl+V with a screenshot on the clipboard: the pane's program may
-        // have no desktop session (an owner started from a console, an SSH
-        // host), so deliver the image as a staged file, like a dropped one.
-        if let EmbeddedKind::Key {
+    /// Ctrl+V with a screenshot on the clipboard: the pane's program may have
+    /// no desktop session (an owner started from a console or an SSH login,
+    /// an SSH host), so deliver the image as a staged file, like a dropped
+    /// one. Returns whether the key was taken; its repeats and release are
+    /// taken too, so no stray Ctrl+V reaches the program.
+    fn clipboard_image_key(&mut self, kind: &EmbeddedKind) -> bool {
+        let EmbeddedKind::Key {
             code,
             phase,
-            modifiers: 2,
-        } = &kind
-            && *phase != KeyPhase::Release
-            && code.eq_ignore_ascii_case("char:v")
-            && self.state.space == Space::Terminals
-            && self.transfer.is_none()
-            && let Some((data, extension)) = crate::clipboard_image::read()
-        {
-            let pane = self.config.canonical_pane(self.state.selected());
-            let staged = tempfile::Builder::new()
-                .prefix("starflux-clipboard-")
-                .tempdir()
-                .and_then(|stage| {
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or_default();
-                    let path = stage.path().join(format!("clipboard-{stamp}.{extension}"));
-                    fs::write(&path, data)?;
-                    Ok((stage, path))
-                });
-            match staged {
-                Ok((stage, path)) => {
-                    self.drop_stage = Some(stage);
-                    self.deliver(pane, vec![path]);
-                }
-                Err(error) => self.note(format!("Clipboard image: {error:#}")),
+            modifiers,
+        } = kind
+        else {
+            return false;
+        };
+        if !code.eq_ignore_ascii_case("char:v") {
+            return false;
+        }
+        if self.clipboard_key_held {
+            if *phase == KeyPhase::Release {
+                self.clipboard_key_held = false;
             }
+            return true;
+        }
+        if *phase != KeyPhase::Press
+            || modifiers & 7 != 2
+            || self.state.space != Space::Terminals
+            || self.transfer.is_some()
+        {
+            return false;
+        }
+        let Some((data, extension)) = crate::clipboard_image::read() else {
+            return false;
+        };
+        self.clipboard_key_held = true;
+        let pane = self.config.canonical_pane(self.state.selected());
+        let staged = tempfile::Builder::new()
+            .prefix("starflux-clipboard-")
+            .tempdir()
+            .and_then(|stage| {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or_default();
+                let path = stage.path().join(format!("clipboard-{stamp}.{extension}"));
+                fs::write(&path, data)?;
+                Ok((stage, path))
+            });
+        match staged {
+            Ok((stage, path)) => {
+                self.drop_stage = Some(stage);
+                self.deliver(pane, vec![path]);
+            }
+            Err(error) => self.note(format!("Clipboard image: {error:#}")),
+        }
+        true
+    }
+    fn direct_input(&mut self, kind: EmbeddedKind) {
+        if self.clipboard_image_key(&kind) {
             return;
         }
         if let EmbeddedKind::Pointer {
