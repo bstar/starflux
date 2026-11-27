@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Registered application catalog and launch checks using disposable local/SSH desktops."""
-import getpass,json,os,pathlib,shlex,socket,subprocess,tempfile,time,uuid
+import getpass,json,os,pathlib,shlex,socket,subprocess,time,uuid
 repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh';runtime=pathlib.Path(os.environ['XDG_RUNTIME_DIR'])/'starflux'
 out=repo/'target/app-picker-proof';out.mkdir(parents=True,exist_ok=True)
 local='shelf-'+uuid.uuid4().hex[:8];remote='shelf-ssh-'+uuid.uuid4().hex[:8];names=[local,remote];children=[]
@@ -22,7 +22,8 @@ def screenshot(name):
     c=wait(lambda:next((c for c in clients() if c['class']=='starflux-shelf-proof' or c['pid']==kitty.pid),None),'Outer Kitty missing')
     time.sleep(.6)
     x,y=c['at'];w,h=c['size'];subprocess.run(['grim','-g',f'{x},{y} {w}x{h}',str(out/name)],check=True)
-with tempfile.TemporaryDirectory(prefix='starflux-shelf-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-shelf-') as tmp:
     tmp=pathlib.Path(tmp)
     try:
         for key in ['host','client']:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(tmp/key)],check=True)

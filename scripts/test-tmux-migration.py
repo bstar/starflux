@@ -13,7 +13,6 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 
 app = Path(os.environ.get('STARFLUX_TEST_APP', str(Path(__file__).resolve().parents[1] / 'scripts/run-local.sh'))).resolve()
@@ -35,7 +34,8 @@ while True:
     time.sleep(1)
 '''
 
-with tempfile.TemporaryDirectory(prefix='sf-mig-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='sf-mig-') as directory:
     tmp = Path(directory)
     runtime = tmp / 'runtime'; runtime.mkdir(mode=0o700)
     home = tmp / 'home'; home.mkdir()

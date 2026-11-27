@@ -8,13 +8,13 @@ import json
 import os
 import secrets
 import subprocess
-import tempfile
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 app = Path(os.environ.get('STARFLUX_TEST_APP', str(root / 'scripts/run-local.sh'))).resolve()
 
-with tempfile.TemporaryDirectory(prefix='starflux-project-api-', dir='/tmp') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-project-api-', dir='/tmp') as directory:
     tmp = Path(directory)
     work = tmp / 'work'
     work.mkdir()

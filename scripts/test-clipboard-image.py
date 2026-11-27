@@ -33,7 +33,8 @@ def png(width, height):
             + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
-with tempfile.TemporaryDirectory(prefix='starflux-clip-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-clip-') as directory:
     tmp = Path(directory)
     processes = []
     logs = []

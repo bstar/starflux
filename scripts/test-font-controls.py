@@ -4,7 +4,7 @@
 --ssh exercises the terminal-owned Rust helper over a private SSH TTY/bridge.
 No user agents, Kitty configuration, or existing Kitty windows are changed.
 """
-import argparse, getpass, json, os, pathlib, secrets, shlex, shutil, socket, subprocess, tempfile, time
+import argparse, getpass, json, os, pathlib, secrets, shlex, shutil, socket, subprocess, time
 from kitty_font_bridge import augment
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--ssh',action='store_true');p.add_argument('--reload',action='store_true',help='Upgrade watcher callbacks in the existing Kitty window');args=p.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[1];app=repo/'scripts/run-local.sh'
@@ -20,7 +20,8 @@ def wait(fn,label,timeout=30):
         time.sleep(.05)
     raise AssertionError(label)
 
-with tempfile.TemporaryDirectory(prefix='starflux-font-proof-') as td:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-font-proof-') as td:
     tmp=pathlib.Path(td);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     name='font-'+secrets.token_hex(5);shell=tmp/'shell';shell.write_text('#!/bin/sh\nprintf "FONT_RENDER_PROOF\\r\\n"\nexec cat\n');shell.chmod(0o700)
     (state/(name+'.json')).write_text(json.dumps(dict(workspace=name,collection=name,host=None,directory=str(tmp),agent=None,executable=str(app),project_host=True)))

@@ -12,7 +12,6 @@ import shlex
 import shutil
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -20,7 +19,8 @@ import uuid
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--session-imports',action='store_true');parser.add_argument('--agent-mux',action='store_true');parser.add_argument('--session-events',action='store_true');parser.add_argument('--without-tmux',action='store_true',help='hide tmux from PATH; terminals must open natively');args=parser.parse_args()
 if args.agent_mux and not args.session_imports:parser.error('--agent-mux requires --session-imports')
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(Path(__file__).resolve().parents[1]/'scripts/run-local.sh'))).resolve()
-with tempfile.TemporaryDirectory(prefix='sf-api-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='sf-api-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith((ENV+'_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     shell=tmp/'agent'

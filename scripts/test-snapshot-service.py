@@ -2,12 +2,13 @@
 """Read-only collection with no controller, isolated metadata and cold namespaces."""
 from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
 import os
-import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,signal,subprocess,tempfile,time,uuid
+import argparse,base64,concurrent.futures,fcntl,getpass,hashlib,json,os,shlex,shutil,socket,signal,subprocess,time,uuid
 from pathlib import Path
 
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--upgrade',action='store_true');parser.add_argument('--previous-executable',type=Path);args=parser.parse_args()
 root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
-with tempfile.TemporaryDirectory(prefix='sf-snap-service-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='sf-snap-service-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     shell=tmp/'fake-shell';shell.write_text("#!/usr/bin/python3\nimport os,sys\nprint('SNAPSHOT_READY',flush=True)\nfor line in sys.stdin:print('\\x1b[1;31mSAVED_'+line.strip()+'\\x1b[0m',flush=True)\n");shell.chmod(0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}

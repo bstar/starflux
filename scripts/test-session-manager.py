@@ -21,7 +21,6 @@ import subprocess
 import sys
 import struct
 import termios
-import tempfile
 import threading
 import time
 import tty
@@ -91,21 +90,9 @@ if provider_resume:
     assert provider_resume[0]=='bwrap' and '--unshare-net' in provider_resume
 claude_resume=json.loads(os.environ.get('STARFLUX_TEST_CLAUDE_RESUME','null')) if args.agent_lifecycle else None
 
+from proof_directory import ProofDirectory
 # Unix socket paths are limited to about 108 bytes, and the second controller's
 # tmux socket sits several levels deep. Nix shells set a long TMPDIR, so use /tmp.
-class ProofDirectory(tempfile.TemporaryDirectory):
-    """Detached services (such as the plugin service) may write briefly after a
-    test ends; retry removal instead of failing a passing run."""
-    def cleanup(self):
-        self._finalizer.detach()
-        for _ in range(50):
-            try:
-                shutil.rmtree(self.name);return
-            except FileNotFoundError:
-                return
-            except OSError:
-                time.sleep(.1)
-        shutil.rmtree(self.name,ignore_errors=True)
 with ProofDirectory(prefix='starflux-session-proof-',dir='/tmp' if os.path.isdir('/tmp') else None) as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     name='sessions-'+secrets.token_hex(4)
@@ -3140,7 +3127,8 @@ GLib.MainLoop().run()
             subprocess.run([MUX,'server','stop'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
             if agent_mux.poll() is None:agent_mux.terminate();agent_mux.wait(timeout=3)
         try:
-            if args.native_sources:
-                stop_native_owner()
+            # Every backend can start a native source owner that outlives its
+            # frontends by design; retire it whether or not this run tested it.
+            stop_native_owner()
         finally:
             if daemon:daemon.terminate();daemon.wait(timeout=3)

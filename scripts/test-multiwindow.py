@@ -16,7 +16,6 @@ from pathlib import Path
 import queue
 import secrets
 import subprocess
-import tempfile
 import termios
 import threading
 import time
@@ -42,7 +41,8 @@ assert not args.video or args.apps,'--video requires --apps'
 assert not args.pointer_latency or args.video,'--pointer-latency requires --video'
 root=Path(__file__).resolve().parents[1]
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
-with tempfile.TemporaryDirectory(prefix='starflux-multiwindow-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-multiwindow-') as tmp:
     tmp=Path(tmp); runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
     state=runtime/'starflux';state.mkdir(mode=0o700)
     workspace='multi-'+secrets.token_hex(4)

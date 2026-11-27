@@ -13,7 +13,6 @@ import shlex
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -22,7 +21,8 @@ parser.add_argument('--startup-error', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 app = args.app or root / 'scripts/run-local.sh'
-with tempfile.TemporaryDirectory(prefix='starflux-bridge-history-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-bridge-history-') as directory:
     tmp = Path(directory)
     runtime = tmp / 'runtime'
     runtime.mkdir(mode=0o700)

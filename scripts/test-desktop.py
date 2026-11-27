@@ -5,7 +5,7 @@ Creates private test windows, keys and an SSH daemon. Injects mouse input only
 when --inject-host-mouse is explicitly supplied. Does not edit desktop config.
 Optional --codex tests attachment in an existing real Codex TUI.
 """
-import argparse,base64,fcntl,getpass,hashlib,json,os,pathlib,shlex,socket,struct,subprocess,sys,tempfile,time,uuid,zlib
+import argparse,base64,fcntl,getpass,hashlib,json,os,pathlib,shlex,socket,struct,subprocess,sys,time,uuid,zlib
 if '--uinput-helper' in sys.argv:
     fd=os.open('/dev/uinput',os.O_WRONLY|os.O_NONBLOCK)
     for ev in [0,1,2]:fcntl.ioctl(fd,0x40045564,ev)
@@ -50,7 +50,8 @@ def position(c,x,y,w,h):
     for expr in [f'hl.dsp.window.float({{action="set",window="address:{addr}"}})',f'hl.dsp.window.resize({{x={w},y={h},relative=false,window="address:{addr}"}})',f'hl.dsp.window.move({{x={x},y={y},relative=false,window="address:{addr}"}})']:
         subprocess.run(['hyprctl','eval','hl.dispatch('+expr+')'],check=True,stdout=subprocess.DEVNULL)
     return addr
-with tempfile.TemporaryDirectory(prefix='starflux-desktop-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-desktop-') as tmp:
     tmp=pathlib.Path(tmp);files=tmp/'drop-source';files.mkdir();image=files/a.name
     width=height=192
     raw=b''.join(b'\x00'+b''.join(bytes((20,210,80)) if 40<=x<152 and 40<=y<152 else bytes((250,250,250)) for x in range(width)) for y in range(height))

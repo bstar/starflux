@@ -12,7 +12,6 @@ import queue
 import secrets
 import shlex
 import subprocess
-import tempfile
 import termios
 import threading
 import time
@@ -22,7 +21,8 @@ root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_
 spec=importlib.util.spec_from_file_location('adopt',root/'scripts/adopt-pty.py')
 adopt=importlib.util.module_from_spec(spec);spec.loader.exec_module(adopt)
 # Leave room for AF_UNIX names when Nix adds its own temporary-directory prefix.
-with tempfile.TemporaryDirectory(prefix='starflux-xfer-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-xfer-') as directory:
     tmp=Path(directory);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);state=runtime/'starflux';state.mkdir(mode=0o700)
     (tmp/'tmux').mkdir(mode=0o700)
     name='terminate-'+secrets.token_hex(4);server='starflux-adoptproof-'+secrets.token_hex(4);frontend='v-transfer-proof'

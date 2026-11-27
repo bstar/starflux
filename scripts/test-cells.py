@@ -16,7 +16,6 @@ import signal
 import socket
 import struct
 import subprocess
-import tempfile
 import termios
 import threading
 import time
@@ -33,7 +32,8 @@ app = Path(os.environ.get('STARFLUX_TEST_APP', str(root / 'scripts/run-local.sh'
 report = root / 'target/cells-proof'
 report.mkdir(parents=True, exist_ok=True)
 (report / ('ssh.log' if args.ssh else 'local.log')).write_bytes(b'')
-with tempfile.TemporaryDirectory(prefix='starflux-cells-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-cells-') as directory:
     tmp = Path(directory)
     runtime = tmp / 'runtime'
     runtime.mkdir(mode=0o700)

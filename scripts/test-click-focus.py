@@ -12,7 +12,6 @@ from pathlib import Path
 import queue
 import secrets
 import subprocess
-import tempfile
 import threading
 import time
 
@@ -20,7 +19,8 @@ root = Path(__file__).resolve().parents[1]
 app = Path(os.environ.get('STARFLUX_TEST_APP', str(root / 'scripts/run-local.sh'))).resolve()
 COLS, ROWS = 160, 48
 
-with tempfile.TemporaryDirectory(prefix='starflux-click-focus-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-click-focus-') as tmp:
     tmp = Path(tmp)
     runtime = tmp / 'runtime'
     runtime.mkdir(mode=0o700)

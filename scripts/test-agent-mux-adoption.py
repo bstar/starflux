@@ -12,12 +12,12 @@ import secrets
 import shlex
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 
 root=Path(__file__).resolve().parents[1];app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
-with tempfile.TemporaryDirectory(prefix='starflux-live-adopt-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-live-adopt-') as tmp:
     tmp=Path(tmp);config=tmp/('config/'+PROGRAM);config.mkdir(parents=True)
     runtime=tmp/'runtime';runtime.mkdir(mode=0o700)
     config.joinpath('config.toml').write_text('onboarding = false\n')

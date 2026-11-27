@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Private plugin commands, hooks and worker failure tests, optionally over SSH."""
 from agent_mux import COLLECTION, DISPLAY, ENV, KEY, MUX, PROGRAM, SOURCE
-import argparse,concurrent.futures,getpass,json,os,shlex,shutil,signal,socket,subprocess,tempfile,time,uuid
+import argparse,concurrent.futures,getpass,json,os,shlex,shutil,signal,socket,subprocess,time,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ssh',action='store_true');parser.add_argument('--capacity',action='store_true');parser.add_argument('--packages',action='store_true');parser.add_argument('--links',action='store_true');parser.add_argument('--panes',action='store_true');args=parser.parse_args()
 root=Path(__file__).resolve().parents[1]
 app=Path(os.environ.get('STARFLUX_TEST_APP',str(root/'scripts/run-local.sh'))).resolve()
-with tempfile.TemporaryDirectory(prefix='sf-plugins-') as temporary:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='sf-plugins-') as temporary:
     tmp=Path(temporary);runtime=tmp/'runtime';runtime.mkdir(mode=0o700);(tmp/'tmux').mkdir(mode=0o700)
     env={k:v for k,v in os.environ.items() if not k.startswith(((ENV+'_'),'BASH_FUNC_','STARFLUX_')) and k not in ('TMUX','SSH_CONNECTION','SSH_TTY')}
     env.update(TMUX_TMPDIR=str(tmp/'tmux'),XDG_RUNTIME_DIR=str(runtime),XDG_DATA_HOME=str(tmp/'data'),XDG_CONFIG_HOME=str(tmp/'config'),STARFLUX_SNAPSHOT_SERVICE='off',STARFLUX_AGENT_MUX=str(tmp/('no-'+PROGRAM)))

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Exercise real isolated tmux persistence and atomic, checked attachment delivery."""
-import base64, fcntl, hashlib, json, os, pathlib, pty, signal, subprocess, tempfile, termios, time, uuid
+import base64, fcntl, hashlib, json, os, pathlib, pty, signal, subprocess, termios, time, uuid
 root=pathlib.Path(__file__).resolve().parents[1]
 helper=root/'scripts/host.py'; workspace='test-'+uuid.uuid4().hex[:10]
-with tempfile.TemporaryDirectory(prefix='starflux-host-') as tmp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-host-') as tmp:
     env={**os.environ,'XDG_DATA_HOME':tmp}
     def call(action,pane='p0',data=None,check=True,**kw):
         req={'action':action,'workspace':workspace,'pane':pane,**kw}

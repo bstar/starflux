@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Private retained native-PTY broker acceptance; never opens a real project/agent."""
 import concurrent.futures,queue,threading
-import argparse,base64,getpass,json,os,select,secrets,shlex,shutil,signal,socket,subprocess,tempfile,time,uuid
+import argparse,base64,getpass,json,os,select,secrets,shlex,shutil,signal,socket,subprocess,time,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--executable',type=Path,required=True)
@@ -17,7 +17,8 @@ def wait(f,label,timeout=12):
         if value:return value
         time.sleep(.02)
     raise AssertionError(label)
-with tempfile.TemporaryDirectory(prefix='sf-source-') as directory:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='sf-source-') as directory:
     root=Path(directory);sock=root/'broker.sock';receipts=root/'receipts';token=secrets.token_hex(32);key=root/'key';key.write_text(token);key.chmod(0o600)
     daemon=None;worker=None;worker_pid=None;worker_start=None;worker_fd=None;ssh=[];clients=[];references=[];extra_references=[]
     data=root/'managed-data'/('namespace-'+'x'*60)/('deep-'+'y'*60)

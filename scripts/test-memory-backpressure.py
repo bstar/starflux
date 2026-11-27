@@ -6,11 +6,11 @@ from pathlib import Path
 import secrets
 import socket
 import subprocess
-import tempfile
 import time
 
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='starflux-memory-proof-') as temporary:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-memory-proof-') as temporary:
     temporary = Path(temporary)
     runtime = temporary / 'runtime'
     state = runtime / 'starflux'

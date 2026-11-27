@@ -10,7 +10,6 @@ from pathlib import Path
 import secrets
 import socket
 import subprocess
-import tempfile
 import time
 
 parser=argparse.ArgumentParser(description=__doc__)
@@ -22,7 +21,8 @@ parser.add_argument('--render-cache',action='store_true')
 parser.add_argument('--app-capabilities',action='store_true')
 args=parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='starflux-native-proof-') as temp:
+from proof_directory import ProofDirectory
+with ProofDirectory(prefix='starflux-native-proof-') as temp:
     temp = Path(temp)
     runtime = temp / 'runtime'
     runtime.mkdir(mode=0o700)
