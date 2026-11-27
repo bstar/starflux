@@ -193,10 +193,12 @@ fn choice_dialog(footer: &str) -> bool {
             .iter()
             .any(|hint| footer.contains(hint)))
 }
-/// Work that outlives Claude Code's turn: background shells, sub-agents and
-/// tasks, listed on the status line (`⏵⏵ … · 1 shell, 2 agents · ↓ to manage`)
-/// and on the finished line (`✻ Cooked for 3m · done 9:33 AM · 1 shell still
-/// running`). A monitor alone waits on events indefinitely, so it is not work.
+/// Agent work that outlives Claude Code's turn: sub-agents, tasks and
+/// teammates, listed on the status line (`⏵⏵ … · 1 shell, 2 agents · ↓ to
+/// manage`) and on the finished line (`✻ Cooked for 3m · done 9:33 AM · 1 agent
+/// still running`). A background shell is not: it may be a server, a game or a
+/// stuck command that runs for days after the agent has finished, and a monitor
+/// only waits on events.
 fn background_work(footer: &str) -> bool {
     footer
         .lines()
@@ -213,9 +215,7 @@ fn background_work(footer: &str) -> bool {
             count.parse::<u32>().is_ok_and(|n| n > 0)
                 && matches!(
                     kind.trim(),
-                    "shell"
-                        | "shells"
-                        | "agent"
+                    "agent"
                         | "agents"
                         | "local agent"
                         | "local agents"
@@ -508,12 +508,12 @@ mod tests {
         }
     }
     #[test]
-    fn claude_background_shells_and_agents_are_working() {
-        let finished = "✻ Cooked for 1h 38m 8s · done 12:14 AM · 1 shell still running\n\n──────\n❯ \n──────\n  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage";
-        assert_eq!(screen_state(finished), "working");
+    fn claude_background_agents_are_working_and_shells_are_not() {
+        let agent = "✻ Cooked for 1h 38m 8s · done 12:14 AM · 1 agent still running\n\n──────\n❯ \n──────\n  ⏵⏵ bypass permissions on · 1 agent · ↓ to manage";
+        assert_eq!(screen_state(agent), "working");
         for status in [
             "  ⏵⏵ bypass permissions on · 2 agents · ↓ to manage",
-            "  ⏵⏵ accept edits on · 1 shell, 1 monitor · ↓ to manage",
+            "  ⏵⏵ accept edits on · 1 shell, 1 local agent · ↓ to manage",
             "  1 local agent · ↓ to manage",
         ] {
             assert_eq!(
@@ -525,6 +525,11 @@ mod tests {
         for idle in [
             // A monitor waits on events; on its own it is not work.
             "✻ Worked for 2m\n❯ \n  ⏵⏵ bypass permissions on · 1 monitor · ↓ to manage",
+            // A finished turn whose background shell (a server, a stuck
+            // command) keeps running is idle; the agent is not working.
+            "✻ Cooked for 1h 38m 8s · done 12:14 AM · 1 shell still running\n\n──────\n❯ \n──────\n  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage",
+            "✻ Baked for 2m 10s · done 10:07 PM · 1 shell still running\n──────\n❯ please run the game so I can see the progress\n──────\n  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage",
+            "✻ Worked for 2m\n❯ \n  ⏵⏵ accept edits on · 2 shells, 1 monitor · ↓ to manage",
             "✻ Brewed for 36m 13s · done 12:03 AM\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)",
             "  Ran 2 shell commands\n❯ ",
         ] {
