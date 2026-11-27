@@ -19,9 +19,9 @@ const LIMIT: usize = 32 * 1024 * 1024;
 /// spreadsheet cell, a web page selection) keeps Ctrl+V's ordinary meaning.
 pub fn image_offer(types: &str) -> Option<(&'static str, &'static str)> {
     let types: Vec<&str> = types.lines().map(str::trim).collect();
-    let text = types.iter().any(|t| {
-        t.starts_with("text/plain") || matches!(*t, "UTF8_STRING" | "STRING" | "TEXT")
-    });
+    let text = types
+        .iter()
+        .any(|t| t.starts_with("text/plain") || matches!(*t, "UTF8_STRING" | "STRING" | "TEXT"));
     if text {
         return None;
     }
@@ -73,7 +73,11 @@ pub fn read() -> Option<(Vec<u8>, &'static str)> {
     std::env::var_os("WAYLAND_DISPLAY").filter(|v| !v.is_empty())?;
     let types = wl_paste(&["--list-types"], 64 * 1024, Duration::from_millis(500))?;
     let (mime, extension) = image_offer(&String::from_utf8_lossy(&types))?;
-    let data = wl_paste(&["--no-newline", "--type", mime], LIMIT, Duration::from_secs(3))?;
+    let data = wl_paste(
+        &["--no-newline", "--type", mime],
+        LIMIT,
+        Duration::from_secs(3),
+    )?;
     (!data.is_empty()).then_some((data, extension))
 }
 
@@ -90,7 +94,10 @@ mod tests {
         );
         assert_eq!(image_offer("text/plain;charset=utf-8\nimage/png\n"), None);
         assert_eq!(image_offer("UTF8_STRING\nimage/png"), None);
-        assert_eq!(image_offer("text/html\nimage/webp"), Some(("image/webp", "webp")));
+        assert_eq!(
+            image_offer("text/html\nimage/webp"),
+            Some(("image/webp", "webp"))
+        );
         assert_eq!(image_offer(""), None);
         assert_eq!(image_offer("application/x-kde-cutselection"), None);
     }

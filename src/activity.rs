@@ -256,7 +256,9 @@ fn claude_working(line: &str, footer: &str) -> bool {
         || word.len() > 40
         || word.split(' ').count() > 4
         || word.contains("  ")
-        || !word.chars().all(|c| c.is_alphabetic() || c == '-' || c == ' ')
+        || !word
+            .chars()
+            .all(|c| c.is_alphabetic() || c == '-' || c == ' ')
     {
         return false;
     }
@@ -476,7 +478,10 @@ mod tests {
             screen_state("✻ Compacting conversation… (34s · esc to interrupt)\n❯ "),
             "working"
         );
-        assert_eq!(screen_state("✢ Running PreCompact hooks… (2s)\n❯ "), "working");
+        assert_eq!(
+            screen_state("✢ Running PreCompact hooks… (2s)\n❯ "),
+            "working"
+        );
         assert_eq!(screen_state("● Read the notes for this…\n❯ "), "idle");
         for idle in [
             "✻ Worked for 5m 1s\n❯ ",
