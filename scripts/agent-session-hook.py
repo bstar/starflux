@@ -53,7 +53,7 @@ def resume_template(argv):
 # Provider hook events after SessionStart and the lifecycle state each reports.
 LIFECYCLE = (
     "UserPromptSubmit", "Notification", "PermissionRequest", "SubagentStart", "SubagentStop",
-    "Stop", "SessionEnd",
+    "PreCompact", "PostCompact", "Stop", "SessionEnd",
 )
 # Tools that stop and wait for the user; only these run the hook around tool use.
 ASKING_TOOLS = "AskUserQuestion|ExitPlanMode"
@@ -61,8 +61,12 @@ ASKING_TOOLS = "AskUserQuestion|ExitPlanMode"
 
 def lifecycle_state(event, subagents_running=False):
     name = event.get("hook_event_name")
-    if name in ("UserPromptSubmit", "SubagentStart"):
+    if name in ("UserPromptSubmit", "SubagentStart", "PreCompact"):
         return "working"
+    if name == "PostCompact":
+        # Automatic compaction happens inside a turn that goes on working; a
+        # manual /compact is the whole request, and no Stop follows it.
+        return "working" if event.get("trigger") == "auto" else "completed"
     if name == "PreToolUse":
         return "needs_input" if event.get("tool_name") in ASKING_TOOLS.split("|") else None
     if name == "PostToolUse":

@@ -12,14 +12,16 @@ use std::path::Path;
 /// Session start registers the conversation; the others report its lifecycle
 /// (working, needs input or approval, completed, stopped) to agent status and
 /// the attention inbox. Sub-agent events keep a turn that ends with sub-agents
-/// still running reported as working.
-const EVENTS: [&str; 8] = [
+/// still running reported as working, and compaction reports as working too.
+const EVENTS: [&str; 10] = [
     "SessionStart",
     "UserPromptSubmit",
     "Notification",
     "PermissionRequest",
     "SubagentStart",
     "SubagentStop",
+    "PreCompact",
+    "PostCompact",
     "Stop",
     "SessionEnd",
 ];

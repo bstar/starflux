@@ -83,6 +83,12 @@ elif "--agent-report" in argv:
         ({"hook_event_name": "Notification", "message": "Claude has a question"}, "needs_input"),
         ({"hook_event_name": "SubagentStop", "agent_id": "a2"}, None),
         ({"hook_event_name": "Stop"}, "completed"),
+        # Automatic compaction inside a turn, then a manual /compact on its own.
+        ({"hook_event_name": "PreCompact", "trigger": "auto"}, "working"),
+        ({"hook_event_name": "PostCompact", "trigger": "auto"}, None),
+        ({"hook_event_name": "Stop"}, "completed"),
+        ({"hook_event_name": "PreCompact", "trigger": "manual"}, "working"),
+        ({"hook_event_name": "PostCompact", "trigger": "manual"}, "completed"),
         ({"hook_event_name": "Notification", "notification_type": "idle_prompt",
           "message": "Claude is waiting for your input"}, None),
         ({"hook_event_name": "SessionEnd", "reason": "exit"}, "stopped"),

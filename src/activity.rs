@@ -250,7 +250,14 @@ fn claude_working(line: &str, footer: &str) -> bool {
     else {
         return false;
     };
-    if word.is_empty() || word.len() > 40 || !word.chars().all(|c| c.is_alphabetic() || c == '-') {
+    // A verb (`Cogitating…`) or a short phrase: Claude shows compaction as
+    // `Compacting conversation…` and its hooks as `Running PreCompact hooks…`.
+    if word.is_empty()
+        || word.len() > 40
+        || word.split(' ').count() > 4
+        || word.contains("  ")
+        || !word.chars().all(|c| c.is_alphabetic() || c == '-' || c == ' ')
+    {
         return false;
     }
     match tail {
@@ -464,6 +471,13 @@ mod tests {
         let screen = "● Checking the build\n\n✽ Jitterbugging… (5m 1s · ↓ 11.4k tokens)\n  ⎿  Tip: Use /btw to ask a side question without interrupting Claude\n\n──────\n❯ f\n──────\n  ⏵⏵ auto mode on (shift+tab to cycle)";
         assert_eq!(screen_state(screen), "working");
         assert_eq!(screen_state("✻ Cogitating… (12s)\n❯ "), "working");
+        // Compaction runs on the same busy line, under a phrase.
+        assert_eq!(
+            screen_state("✻ Compacting conversation… (34s · esc to interrupt)\n❯ "),
+            "working"
+        );
+        assert_eq!(screen_state("✢ Running PreCompact hooks… (2s)\n❯ "), "working");
+        assert_eq!(screen_state("● Read the notes for this…\n❯ "), "idle");
         for idle in [
             "✻ Worked for 5m 1s\n❯ ",
             "✽ Jitterbugging… (soon · tip)\n❯ ",
