@@ -567,15 +567,8 @@ GLib.MainLoop().run()
                     screen_record=tmp/'data/starflux/screens'/name/'p0.screen.json'
                     referenced=lambda:sidecar.exists() and screen_record.exists() and json.loads(screen_record.read_text()).get('images_digest')
                     wait(referenced,'saved screen did not archive and reference its images',timeout=40)
-                    # A terminal that reattaches or resizes closes an open review, so a slow
-                    # runner may lose the first request; report it and ask once more.
-                    shown=lambda:any(c.get('planes',{}).get('above') for c in a.images)
                     a.images=[];a.action('terminal:saved-current')
-                    try:wait(shown,'saved screen did not show its archived images')
-                    except AssertionError:
-                        print(json.dumps(dict(warning='saved screen retried',terminals=[{k:t.get(k) for k in ('pane','attachment_pid','exited','reviewing')} for t in a.snapshot().get('direct_terminals',[])],review=a.snapshot().get('terminal_review'),status=a.snapshot().get('status'))),flush=True)
-                        a.images=[];a.action('terminal:saved-current')
-                        wait(shown,'saved screen did not show its archived images: '+json.dumps(dict(sidecar=sidecar.exists(),digest=bool(json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text()).get('images_digest')),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images],review={k:v for k,v in a.snapshot().items() if 'review' in k or 'history' in k or 'saved' in k})))
+                    wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'saved screen did not show its archived images: '+json.dumps(dict(sidecar=sidecar.exists(),digest=bool(json.loads((tmp/'data/starflux/screens'/name/'p0.screen.json').read_text()).get('images_digest')),status=a.snapshot().get('status'),ops=[c.get('op') for c in a.images],review={k:v for k,v in a.snapshot().items() if 'review' in k or 'history' in k or 'saved' in k})))
                     a.images=[];a.key('escape')
                     wait(lambda:any(c.get('planes',{}).get('above') for c in a.images),'leaving the saved screen did not restore live images')
                     a.images=[];a.action('view:apps')

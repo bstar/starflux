@@ -250,10 +250,11 @@ fn images_path(project: &str, pane: usize, previous: bool) -> Result<PathBuf> {
     )))
 }
 /// Attach the sidecar images when they match the screen's recorded digest; a
-/// missing or mismatched sidecar leaves the screen without images.
-fn attach_images(screen: &mut Screen, previous: bool) {
+/// missing or mismatched sidecar leaves the screen without images. Returns
+/// whether the screen has the images it records.
+fn attach_images(screen: &mut Screen, previous: bool) -> bool {
     let Some(expected) = screen.images_digest.clone() else {
-        return;
+        return true;
     };
     let loaded = (|| -> Result<Images> {
         let file = open_archive(&images_path(&screen.project, screen.pane, previous)?)?;
@@ -266,6 +267,7 @@ fn attach_images(screen: &mut Screen, previous: bool) {
         Ok(images)
     })();
     screen.images = loaded.ok();
+    screen.images.is_some()
 }
 fn read_screen(path: &std::path::Path) -> Result<Vec<u8>> {
     let file = open_archive(path).context("No saved screen is available yet")?;
@@ -288,10 +290,19 @@ fn open_archive(path: &std::path::Path) -> std::io::Result<fs::File> {
     Ok(file)
 }
 pub fn load(project: &str, pane: usize, previous: bool) -> Result<Screen> {
-    let bytes = read_screen(&path(project, pane, previous)?)?;
-    let mut screen = decode_screen(&bytes, project, pane)?;
-    attach_images(&mut screen, previous);
-    Ok(screen)
+    // A save writes the sidecar and then the screen naming it. A read between
+    // those writes, or across a whole save, finds the screen's images replaced;
+    // reading both again finds the matching pair.
+    let mut attempt = 0;
+    loop {
+        let bytes = read_screen(&path(project, pane, previous)?)?;
+        let mut screen = decode_screen(&bytes, project, pane)?;
+        attempt += 1;
+        if attach_images(&mut screen, previous) || attempt == 4 {
+            return Ok(screen);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
 }
 /// Write a screen and its image sidecar. The sidecar is written first and the
 /// screen records its digest, so a reader never pairs a screen with other images.
