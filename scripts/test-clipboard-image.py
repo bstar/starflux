@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='starflux-clip-') as directory:
             assert sway, 'Need a headless compositor: set STARFLUX_TEST_WAYLAND or put sway on PATH'
             # The socket path must fit a sockaddr_un, so it lives in a short directory.
             sockets = Path(tempfile.mkdtemp(prefix='sfclip-', dir='/tmp'))
-            (tmp / 'sway.conf').write_text('output HEADLESS-1 resolution 800x600\n')
+            (tmp / 'sway.conf').write_text('output HEADLESS-1 resolution 800x600\nxwayland disable\n')
             log = (report / 'sway.log').open('w')
             logs.append(log)
             compositor_env = {k: v for k, v in os.environ.items() if k not in (
@@ -53,9 +53,13 @@ with tempfile.TemporaryDirectory(prefix='starflux-clip-') as directory:
                                   WLR_LIBINPUT_NO_DEVICES='1', WLR_RENDERER='pixman')
             processes.append(subprocess.Popen([sway, '-c', str(tmp / 'sway.conf')], env=compositor_env,
                                               stdout=log, stderr=log, start_new_session=True))
-            deadline = time.monotonic() + 10
+            # A cold runner builds sway's font cache on its first start.
+            deadline = time.monotonic() + 60
             while not any(sockets.glob('wayland-*[0-9]')):
-                assert processes[-1].poll() is None and time.monotonic() < deadline, 'headless sway did not start'
+                if processes[-1].poll() is not None or time.monotonic() >= deadline:
+                    log.flush()
+                    raise AssertionError('headless sway did not start (exit %s):\n%s' % (
+                        processes[-1].poll(), (report / 'sway.log').read_text()[-4000:]))
                 time.sleep(.05)
             wayland = str(next(p for p in sockets.glob('wayland-*') if not p.name.endswith('.lock')))
         clip_env = {**os.environ, 'WAYLAND_DISPLAY': wayland}
