@@ -49,8 +49,12 @@ with tempfile.TemporaryDirectory(prefix='starflux-clip-') as directory:
             logs.append(log)
             compositor_env = {k: v for k, v in os.environ.items() if k not in (
                 'WAYLAND_DISPLAY', 'DISPLAY', 'SWAYSOCK', 'HYPRLAND_INSTANCE_SIGNATURE')}
+            # Without a bus address Nix's sway wrapper starts dbus-run-session,
+            # which fails (exit 127) where dbus-daemon is not on PATH. The test
+            # needs no bus, and must not join the desktop's.
             compositor_env.update(XDG_RUNTIME_DIR=str(sockets), WLR_BACKENDS='headless',
-                                  WLR_LIBINPUT_NO_DEVICES='1', WLR_RENDERER='pixman')
+                                  WLR_LIBINPUT_NO_DEVICES='1', WLR_RENDERER='pixman',
+                                  DBUS_SESSION_BUS_ADDRESS='disabled:')
             processes.append(subprocess.Popen([sway, '-c', str(tmp / 'sway.conf')], env=compositor_env,
                                               stdout=log, stderr=log, start_new_session=True))
             # A cold runner builds sway's font cache on its first start.
