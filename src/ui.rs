@@ -3446,6 +3446,9 @@ impl Workspace {
             }
             Ok(())
         })();
+        if result.is_ok() && matches!(modal.kind, Prompt::Project) {
+            self.focus_terminals();
+        }
         if let Err(e) = result {
             let mut modal = modal;
             modal.error = format!("{e:#}");
@@ -5462,6 +5465,463 @@ impl Workspace {
         scene
     }
 }
+impl Workspace {
+    fn handle_input(&mut self, input: Input) {
+        crate::latency_trace::mark("0 ui-input");
+        if self.popup_input(&input) {
+            return;
+        }
+        if self.terminal_link_input(&input) {
+            return;
+        }
+        if self.keyboard_input(&input) {
+            return;
+        }
+        if self.panel_input(&input) {
+            return;
+        }
+        if self.terminal_review_input(&input) {
+            return;
+        }
+        // A canvas may retain capture while an overlay opens. Its keys must
+        // navigate the overlay rather than disappear or reach the program.
+        let input = if self.modal.is_some() || self.context_menu.is_some() || self.git_open {
+            match input {
+                Input::Embedded { event, .. } => match event.kind {
+                    EmbeddedKind::Key {
+                        code,
+                        modifiers,
+                        phase,
+                    } if phase != KeyPhase::Release => Input::Key { code, modifiers },
+                    EmbeddedKind::Text { text } => Input::Paste { text },
+                    _ => return,
+                },
+                other => other,
+            }
+        } else {
+            input
+        };
+        if let Input::Notice { message } = &input {
+            if self.font_notice(message) {
+                return;
+            }
+            if matches!(
+                message.as_str(),
+                "window-focus:lost" | "window-focus:gained" | "focus-canvas:terminals"
+            ) {
+                self.notification_focused = message != "window-focus:lost";
+                if message == "window-focus:lost" {
+                    self.release();
+                } else if self.state.space == Space::Apps {
+                    self.app_keyboard_released = true;
+                }
+                self.publish_notification_focus();
+                if message.starts_with("window-focus:") {
+                    return;
+                }
+            }
+            if message == "local-return-available" {
+                self.local_return_available = true;
+                return;
+            }
+            if let Some(machines) = message.strip_prefix("local-machines:") {
+                self.local_machines = machine_ui::LocalMachine::parse(machines);
+                return;
+            }
+            if message == "require-graphical" {
+                self.require_graphical();
+                return;
+            }
+            if message == "terminal-repaint-key" {
+                if self.cells && self.cell_ui.terminal_focus && !self.cells_overlay() {
+                    self.direct_input(EmbeddedKind::Key {
+                        code: "char:l".into(),
+                        modifiers: 2,
+                        phase: KeyPhase::Press,
+                    });
+                }
+                return;
+            }
+        }
+        match &input {
+            Input::Pointer {
+                action,
+                pixel,
+                x,
+                y,
+                ..
+            } if action == "move" => {
+                let point = pixel.unwrap_or([
+                    u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
+                    u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+                ]);
+                self.sort_mode_hover = self.modal.is_none()
+                    && self.context_menu.is_none()
+                    && !self.git_open
+                    && self.chrome_hits.iter().any(|h| {
+                        h.action == "projects:sort:mode"
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    });
+                self.sort_hover = self.modal.is_none()
+                    && self.context_menu.is_none()
+                    && !self.git_open
+                    && self.chrome_hits.iter().any(|h| {
+                        h.action == "projects:sort:direction"
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    });
+                self.project_hover = self
+                    .chrome_hits
+                    .iter()
+                    .find(|h| {
+                        h.rect.x == 0
+                            && h.action.starts_with("project:")
+                            && h.rect.contains(point[0] as u16, point[1] as u16)
+                    })
+                    .and_then(|h| h.action.strip_prefix("project:"))
+                    .map(str::to_owned);
+            }
+            Input::CancelPointer | Input::Embedded { .. } => {
+                self.sort_hover = false;
+                self.sort_mode_hover = false;
+                self.project_hover = None;
+            }
+            _ => {}
+        }
+        if self.cells {
+            if let Err(error) = self.cells_input(input) {
+                self.note(format!("{error:#}"));
+            }
+            return;
+        }
+        if self.project_order_input(&input) {
+            return;
+        }
+        let result = (|| -> Result<()> {
+            // An overlay can also open via an action while a canvas owns keys.
+            // Normalize those keys before dispatch, never forwarding them to a PTY.
+            let input = match input {
+                Input::Embedded { event, .. }
+                    if self.git_open || self.context_menu.is_some() || self.modal.is_some() =>
+                {
+                    match event.kind {
+                        EmbeddedKind::Key {
+                            code,
+                            modifiers,
+                            phase,
+                        } if phase != KeyPhase::Release => Input::Key { code, modifiers },
+                        EmbeddedKind::Text { text } => Input::Paste { text },
+                        _ => return Ok(()),
+                    }
+                }
+                input => input,
+            };
+            if self
+                .context_menu
+                .as_ref()
+                .is_some_and(|m| m.title == "Attention inbox")
+                && matches!(&input,Input::Key{code,modifiers:0} if code=="char:/")
+            {
+                self.open_prompt(Prompt::AttentionSearch);
+                return Ok(());
+            }
+            if self.git_open {
+                match input {
+                    Input::Key { code, .. } => match code.as_str() {
+                        "escape" => self.git_open = false,
+                        "down" | "pagedown" => self.action("git:scroll:down")?,
+                        "up" | "pageup" => self.action("git:scroll:up")?,
+                        "char:r" => self.refresh_git(true),
+                        _ => {}
+                    },
+                    Input::Pointer {
+                        action,
+                        button,
+                        pixel,
+                        x,
+                        y,
+                        ..
+                    } => {
+                        if action == "scroll_up" || action == "scroll_down" {
+                            self.action(if action == "scroll_up" {
+                                "git:scroll:up"
+                            } else {
+                                "git:scroll:down"
+                            })?;
+                        } else if action == "down" && button == 0 {
+                            let point = pixel.unwrap_or([
+                                u32::from(x) * self.viewport.width
+                                    / u32::from(self.viewport.columns.max(1)),
+                                u32::from(y) * self.viewport.height
+                                    / u32::from(self.viewport.rows.max(1)),
+                            ]);
+                            let hit = self
+                                .chrome_hits
+                                .iter()
+                                .rev()
+                                .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
+                                .map(|h| h.action.clone());
+                            if let Some(hit) = hit.filter(|h| h.starts_with("git:")) {
+                                self.action(&hit)?;
+                            }
+                        }
+                    }
+                    Input::Notice { message } => {
+                        if let Some(action) = message.strip_prefix("action:") {
+                            self.action(action)?;
+                        }
+                    }
+                    Input::Osc72 { text } => self.drop_message(&text)?,
+                    _ => {}
+                }
+                return Ok(());
+            }
+            if self.context_menu.is_some() {
+                match &input {
+                    Input::Pointer { action, .. }
+                        if action == "scroll_up" || action == "scroll_down" =>
+                    {
+                        self.menu_key(if action == "scroll_up" {
+                            "pageup"
+                        } else {
+                            "pagedown"
+                        })?;
+                        return Ok(());
+                    }
+                    Input::Key { code, .. } => {
+                        self.menu_key(code)?;
+                        return Ok(());
+                    }
+                    Input::Embedded { .. } | Input::Paste { .. } => return Ok(()),
+                    Input::CancelPointer => {
+                        self.context_menu = None;
+                        self.release();
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            if self.modal.is_none()
+                && let Input::Pointer {
+                    action,
+                    button,
+                    pixel,
+                    x,
+                    y,
+                    ..
+                } = &input
+                && (self.context_menu.is_some() || (action == "down" && *button == 1))
+            {
+                let point = pixel.unwrap_or([
+                    u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
+                    u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+                ]);
+                let hit = self
+                    .chrome_hits
+                    .iter()
+                    .rev()
+                    .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
+                    .map(|h| h.action.clone());
+                if self.context_menu.is_some() {
+                    if action == "down" {
+                        if *button == 0 {
+                            if let Some(hit) = hit {
+                                self.action(&hit)?;
+                            }
+                        } else {
+                            self.context_menu = None;
+                        }
+                    } else if action == "move" {
+                        let selected = hit
+                            .as_deref()
+                            .and_then(|h| h.strip_prefix("menu:item:"))
+                            .and_then(|i| i.parse().ok());
+                        if let Some(menu) = &mut self.context_menu
+                            && selected.is_some()
+                        {
+                            menu.selected = selected;
+                        }
+                    }
+                } else {
+                    self.open_context_menu(hit.as_deref(), [point[0] as u16, point[1] as u16]);
+                }
+                return Ok(());
+            }
+            if self.modal.is_some() {
+                match input {
+                    Input::Key { code, modifiers } => self.modal_key(code, modifiers)?,
+                    Input::Paste { text } => {
+                        let modal = self.modal.as_mut().unwrap();
+                        if let Some(catalog) =
+                            modal.catalog.as_mut().filter(|c| c.visible && c.focused)
+                        {
+                            catalog.query.paste(&text);
+                            self.choose_application(0);
+                        } else {
+                            modal.fields[modal.selected].1.paste(&text)
+                        }
+                    }
+                    Input::Pointer {
+                        action,
+                        pixel,
+                        x,
+                        y,
+                        ..
+                    } if action == "down" => {
+                        let point = pixel.unwrap_or([
+                            u32::from(x) * self.viewport.width
+                                / u32::from(self.viewport.columns.max(1)),
+                            u32::from(y) * self.viewport.height
+                                / u32::from(self.viewport.rows.max(1)),
+                        ]);
+                        let action = self
+                            .chrome_hits
+                            .iter()
+                            .rev()
+                            .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
+                            .map(|h| h.action.clone());
+                        if let Some(action) = action {
+                            self.action(&action)?
+                        }
+                    }
+                    Input::Pointer { action, .. }
+                        if action == "scroll_up" || action == "scroll_down" =>
+                    {
+                        if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
+                            self.choose_session_row(if action == "scroll_up" { -1 } else { 1 });
+                        } else {
+                            self.action(if action == "scroll_up" {
+                                "modal:apps:up"
+                            } else {
+                                "modal:apps:down"
+                            })?;
+                        }
+                    }
+                    Input::Osc72 { text } => self.drop_message(&text)?,
+                    _ => {}
+                }
+                return Ok(());
+            }
+            match input {
+                Input::Embedded { event, .. } => self.embedded(event.kind),
+                Input::Osc72 { text } => self.drop_message(&text)?,
+                Input::Paste { text } => self.paste(text),
+                Input::Key { code, .. } => match code.as_str() {
+                    "char:q" => self.quit = true,
+                    "char:t" => self.cycle_theme()?,
+                    "char:1" => self.set_space(Space::Agent),
+                    "char:2" => self.set_space(Space::Terminals),
+                    "char:n" => self.action("terminal:new")?,
+                    "char:p" => self.open_prompt(Prompt::Project),
+                    "char:[" | "char:]" => {
+                        if let Some(index) = self
+                            .projects
+                            .iter()
+                            .position(|c| c.workspace == self.config.workspace)
+                        {
+                            let next = if code == "char:[" {
+                                (index + self.projects.len() - 1) % self.projects.len()
+                            } else {
+                                (index + 1) % self.projects.len()
+                            };
+                            let id = self.projects[next].workspace.clone();
+                            self.switch_project(&id)?;
+                        }
+                    }
+                    "escape" => self.action("cancel-transfer")?,
+                    _ => {}
+                },
+                Input::Pointer {
+                    action,
+                    pixel,
+                    x,
+                    y,
+                    ..
+                } if matches!(action.as_str(), "scroll_up" | "scroll_down") => {
+                    let point = pixel.unwrap_or([
+                        u32::from(x) * self.viewport.width
+                            / u32::from(self.viewport.columns.max(1)),
+                        u32::from(y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+                    ]);
+                    let layout = crate::shelf::Layout::new(
+                        self.viewport.width as u16,
+                        self.viewport.height as u16,
+                        self.state.space,
+                    );
+                    if point[0] < u32::from(layout.sidebar.width) {
+                        self.action(if action == "scroll_up" {
+                            "projects:scroll:up"
+                        } else {
+                            "projects:scroll:down"
+                        })?;
+                    }
+                }
+                Input::Pointer {
+                    action,
+                    pixel,
+                    x,
+                    y,
+                    ..
+                } if action == "down" => {
+                    let point = pixel.unwrap_or([
+                        u32::from(x) * self.viewport.width
+                            / u32::from(self.viewport.columns.max(1)),
+                        u32::from(y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
+                    ]);
+                    let action = self
+                        .chrome_hits
+                        .iter()
+                        .rev()
+                        .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
+                        .map(|h| h.action.clone());
+                    if let Some(action) = action {
+                        self.action(&action)?;
+                    }
+                }
+                Input::Notice { message } => {
+                    if message == "focus-canvas:terminals" && self.state.space != Space::Apps {
+                        self.desktop_send(DesktopCommand::FocusApp(app_id(
+                            &self.config.workspace,
+                            self.config.canonical_pane(self.state.selected()),
+                        )));
+                    } else if let Some(paths) = message.strip_prefix("drop:") {
+                        self.deliver(self.state.selected(), serde_json::from_str(paths)?)
+                    } else if let Some(action) = message.strip_prefix("action:") {
+                        self.action(action)?
+                    } else if let Some(error) = message.strip_prefix("clipboard-image:failed:") {
+                        self.note(format!("Clipboard image: {error}"))
+                    }
+                }
+                Input::CancelPointer => self.release(),
+                _ => {}
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            self.receiving = None;
+            self.osc("t=r:o=0:i=1", None);
+            self.note(format!("{e:#}"));
+        }
+    }
+    /// Typing goes to the terminals when a window opens, after a mouse click
+    /// outside them and after adding a project, unless something that takes
+    /// keys is open (a dialog, menu or panel). Keyboard navigation (Tab, F6,
+    /// Ctrl+Esc) keeps its own focus.
+    fn focus_terminals(&mut self) {
+        if !self.cells
+            && self.state.space != Space::Apps
+            && self.modal.is_none()
+            && self.context_menu.is_none()
+            && !self.git_open
+            && self.panel_focus.is_none()
+            && self.popup.is_none()
+            && self.project_drag.is_none()
+        {
+            self.effects.push(ServerMessage::FocusCanvas {
+                canvas: "terminals".into(),
+            });
+        }
+    }
+}
 impl Controller for Workspace {
     fn capabilities(
         &mut self,
@@ -5561,6 +6021,9 @@ impl Controller for Workspace {
             .and_then(|v| serde_json::from_value(v["terminal_typography"].clone()).ok())
             .filter(crate::terminal::FontMetrics::valid);
         self.refresh_kitty_fonts();
+        // A window opens already focused, so no activation hands the
+        // terminals the keyboard: ask for it once the frontend is known.
+        self.focus_terminals();
     }
     fn tick(&mut self) {
         crate::latency_trace::mark("t ui-tick");
@@ -6709,437 +7172,10 @@ impl Controller for Workspace {
         scene
     }
     fn input(&mut self, input: Input) {
-        crate::latency_trace::mark("0 ui-input");
-        if self.popup_input(&input) {
-            return;
-        }
-        if self.terminal_link_input(&input) {
-            return;
-        }
-        if self.keyboard_input(&input) {
-            return;
-        }
-        if self.panel_input(&input) {
-            return;
-        }
-        if self.terminal_review_input(&input) {
-            return;
-        }
-        // A canvas may retain capture while an overlay opens. Its keys must
-        // navigate the overlay rather than disappear or reach the program.
-        let input = if self.modal.is_some() || self.context_menu.is_some() || self.git_open {
-            match input {
-                Input::Embedded { event, .. } => match event.kind {
-                    EmbeddedKind::Key {
-                        code,
-                        modifiers,
-                        phase,
-                    } if phase != KeyPhase::Release => Input::Key { code, modifiers },
-                    EmbeddedKind::Text { text } => Input::Paste { text },
-                    _ => return,
-                },
-                other => other,
-            }
-        } else {
-            input
-        };
-        if let Input::Notice { message } = &input {
-            if self.font_notice(message) {
-                return;
-            }
-            if matches!(
-                message.as_str(),
-                "window-focus:lost" | "window-focus:gained" | "focus-canvas:terminals"
-            ) {
-                self.notification_focused = message != "window-focus:lost";
-                if message == "window-focus:lost" {
-                    self.release();
-                } else if self.state.space == Space::Apps {
-                    self.app_keyboard_released = true;
-                }
-                self.publish_notification_focus();
-                if message.starts_with("window-focus:") {
-                    return;
-                }
-            }
-            if message == "local-return-available" {
-                self.local_return_available = true;
-                return;
-            }
-            if let Some(machines) = message.strip_prefix("local-machines:") {
-                self.local_machines = machine_ui::LocalMachine::parse(machines);
-                return;
-            }
-            if message == "require-graphical" {
-                self.require_graphical();
-                return;
-            }
-            if message == "terminal-repaint-key" {
-                if self.cells && self.cell_ui.terminal_focus && !self.cells_overlay() {
-                    self.direct_input(EmbeddedKind::Key {
-                        code: "char:l".into(),
-                        modifiers: 2,
-                        phase: KeyPhase::Press,
-                    });
-                }
-                return;
-            }
-        }
-        match &input {
-            Input::Pointer {
-                action,
-                pixel,
-                x,
-                y,
-                ..
-            } if action == "move" => {
-                let point = pixel.unwrap_or([
-                    u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
-                    u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
-                ]);
-                self.sort_mode_hover = self.modal.is_none()
-                    && self.context_menu.is_none()
-                    && !self.git_open
-                    && self.chrome_hits.iter().any(|h| {
-                        h.action == "projects:sort:mode"
-                            && h.rect.contains(point[0] as u16, point[1] as u16)
-                    });
-                self.sort_hover = self.modal.is_none()
-                    && self.context_menu.is_none()
-                    && !self.git_open
-                    && self.chrome_hits.iter().any(|h| {
-                        h.action == "projects:sort:direction"
-                            && h.rect.contains(point[0] as u16, point[1] as u16)
-                    });
-                self.project_hover = self
-                    .chrome_hits
-                    .iter()
-                    .find(|h| {
-                        h.rect.x == 0
-                            && h.action.starts_with("project:")
-                            && h.rect.contains(point[0] as u16, point[1] as u16)
-                    })
-                    .and_then(|h| h.action.strip_prefix("project:"))
-                    .map(str::to_owned);
-            }
-            Input::CancelPointer | Input::Embedded { .. } => {
-                self.sort_hover = false;
-                self.sort_mode_hover = false;
-                self.project_hover = None;
-            }
-            _ => {}
-        }
-        if self.cells {
-            if let Err(error) = self.cells_input(input) {
-                self.note(format!("{error:#}"));
-            }
-            return;
-        }
-        if self.project_order_input(&input) {
-            return;
-        }
-        let result = (|| -> Result<()> {
-            // An overlay can also open via an action while a canvas owns keys.
-            // Normalize those keys before dispatch, never forwarding them to a PTY.
-            let input = match input {
-                Input::Embedded { event, .. }
-                    if self.git_open || self.context_menu.is_some() || self.modal.is_some() =>
-                {
-                    match event.kind {
-                        EmbeddedKind::Key {
-                            code,
-                            modifiers,
-                            phase,
-                        } if phase != KeyPhase::Release => Input::Key { code, modifiers },
-                        EmbeddedKind::Text { text } => Input::Paste { text },
-                        _ => return Ok(()),
-                    }
-                }
-                input => input,
-            };
-            if self
-                .context_menu
-                .as_ref()
-                .is_some_and(|m| m.title == "Attention inbox")
-                && matches!(&input,Input::Key{code,modifiers:0} if code=="char:/")
-            {
-                self.open_prompt(Prompt::AttentionSearch);
-                return Ok(());
-            }
-            if self.git_open {
-                match input {
-                    Input::Key { code, .. } => match code.as_str() {
-                        "escape" => self.git_open = false,
-                        "down" | "pagedown" => self.action("git:scroll:down")?,
-                        "up" | "pageup" => self.action("git:scroll:up")?,
-                        "char:r" => self.refresh_git(true),
-                        _ => {}
-                    },
-                    Input::Pointer {
-                        action,
-                        button,
-                        pixel,
-                        x,
-                        y,
-                        ..
-                    } => {
-                        if action == "scroll_up" || action == "scroll_down" {
-                            self.action(if action == "scroll_up" {
-                                "git:scroll:up"
-                            } else {
-                                "git:scroll:down"
-                            })?;
-                        } else if action == "down" && button == 0 {
-                            let point = pixel.unwrap_or([
-                                u32::from(x) * self.viewport.width
-                                    / u32::from(self.viewport.columns.max(1)),
-                                u32::from(y) * self.viewport.height
-                                    / u32::from(self.viewport.rows.max(1)),
-                            ]);
-                            let hit = self
-                                .chrome_hits
-                                .iter()
-                                .rev()
-                                .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
-                                .map(|h| h.action.clone());
-                            if let Some(hit) = hit.filter(|h| h.starts_with("git:")) {
-                                self.action(&hit)?;
-                            }
-                        }
-                    }
-                    Input::Notice { message } => {
-                        if let Some(action) = message.strip_prefix("action:") {
-                            self.action(action)?;
-                        }
-                    }
-                    Input::Osc72 { text } => self.drop_message(&text)?,
-                    _ => {}
-                }
-                return Ok(());
-            }
-            if self.context_menu.is_some() {
-                match &input {
-                    Input::Pointer { action, .. }
-                        if action == "scroll_up" || action == "scroll_down" =>
-                    {
-                        self.menu_key(if action == "scroll_up" {
-                            "pageup"
-                        } else {
-                            "pagedown"
-                        })?;
-                        return Ok(());
-                    }
-                    Input::Key { code, .. } => {
-                        self.menu_key(code)?;
-                        return Ok(());
-                    }
-                    Input::Embedded { .. } | Input::Paste { .. } => return Ok(()),
-                    Input::CancelPointer => {
-                        self.context_menu = None;
-                        self.release();
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            }
-            if self.modal.is_none()
-                && let Input::Pointer {
-                    action,
-                    button,
-                    pixel,
-                    x,
-                    y,
-                    ..
-                } = &input
-                && (self.context_menu.is_some() || (action == "down" && *button == 1))
-            {
-                let point = pixel.unwrap_or([
-                    u32::from(*x) * self.viewport.width / u32::from(self.viewport.columns.max(1)),
-                    u32::from(*y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
-                ]);
-                let hit = self
-                    .chrome_hits
-                    .iter()
-                    .rev()
-                    .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
-                    .map(|h| h.action.clone());
-                if self.context_menu.is_some() {
-                    if action == "down" {
-                        if *button == 0 {
-                            if let Some(hit) = hit {
-                                self.action(&hit)?;
-                            }
-                        } else {
-                            self.context_menu = None;
-                        }
-                    } else if action == "move" {
-                        let selected = hit
-                            .as_deref()
-                            .and_then(|h| h.strip_prefix("menu:item:"))
-                            .and_then(|i| i.parse().ok());
-                        if let Some(menu) = &mut self.context_menu
-                            && selected.is_some()
-                        {
-                            menu.selected = selected;
-                        }
-                    }
-                } else {
-                    self.open_context_menu(hit.as_deref(), [point[0] as u16, point[1] as u16]);
-                }
-                return Ok(());
-            }
-            if self.modal.is_some() {
-                match input {
-                    Input::Key { code, modifiers } => self.modal_key(code, modifiers)?,
-                    Input::Paste { text } => {
-                        let modal = self.modal.as_mut().unwrap();
-                        if let Some(catalog) =
-                            modal.catalog.as_mut().filter(|c| c.visible && c.focused)
-                        {
-                            catalog.query.paste(&text);
-                            self.choose_application(0);
-                        } else {
-                            modal.fields[modal.selected].1.paste(&text)
-                        }
-                    }
-                    Input::Pointer {
-                        action,
-                        pixel,
-                        x,
-                        y,
-                        ..
-                    } if action == "down" => {
-                        let point = pixel.unwrap_or([
-                            u32::from(x) * self.viewport.width
-                                / u32::from(self.viewport.columns.max(1)),
-                            u32::from(y) * self.viewport.height
-                                / u32::from(self.viewport.rows.max(1)),
-                        ]);
-                        let action = self
-                            .chrome_hits
-                            .iter()
-                            .rev()
-                            .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
-                            .map(|h| h.action.clone());
-                        if let Some(action) = action {
-                            self.action(&action)?
-                        }
-                    }
-                    Input::Pointer { action, .. }
-                        if action == "scroll_up" || action == "scroll_down" =>
-                    {
-                        if self.modal.as_ref().is_some_and(|m| m.sessions.is_some()) {
-                            self.choose_session_row(if action == "scroll_up" { -1 } else { 1 });
-                        } else {
-                            self.action(if action == "scroll_up" {
-                                "modal:apps:up"
-                            } else {
-                                "modal:apps:down"
-                            })?;
-                        }
-                    }
-                    Input::Osc72 { text } => self.drop_message(&text)?,
-                    _ => {}
-                }
-                return Ok(());
-            }
-            match input {
-                Input::Embedded { event, .. } => self.embedded(event.kind),
-                Input::Osc72 { text } => self.drop_message(&text)?,
-                Input::Paste { text } => self.paste(text),
-                Input::Key { code, .. } => match code.as_str() {
-                    "char:q" => self.quit = true,
-                    "char:t" => self.cycle_theme()?,
-                    "char:1" => self.set_space(Space::Agent),
-                    "char:2" => self.set_space(Space::Terminals),
-                    "char:n" => self.action("terminal:new")?,
-                    "char:p" => self.open_prompt(Prompt::Project),
-                    "char:[" | "char:]" => {
-                        if let Some(index) = self
-                            .projects
-                            .iter()
-                            .position(|c| c.workspace == self.config.workspace)
-                        {
-                            let next = if code == "char:[" {
-                                (index + self.projects.len() - 1) % self.projects.len()
-                            } else {
-                                (index + 1) % self.projects.len()
-                            };
-                            let id = self.projects[next].workspace.clone();
-                            self.switch_project(&id)?;
-                        }
-                    }
-                    "escape" => self.action("cancel-transfer")?,
-                    _ => {}
-                },
-                Input::Pointer {
-                    action,
-                    pixel,
-                    x,
-                    y,
-                    ..
-                } if matches!(action.as_str(), "scroll_up" | "scroll_down") => {
-                    let point = pixel.unwrap_or([
-                        u32::from(x) * self.viewport.width
-                            / u32::from(self.viewport.columns.max(1)),
-                        u32::from(y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
-                    ]);
-                    let layout = crate::shelf::Layout::new(
-                        self.viewport.width as u16,
-                        self.viewport.height as u16,
-                        self.state.space,
-                    );
-                    if point[0] < u32::from(layout.sidebar.width) {
-                        self.action(if action == "scroll_up" {
-                            "projects:scroll:up"
-                        } else {
-                            "projects:scroll:down"
-                        })?;
-                    }
-                }
-                Input::Pointer {
-                    action,
-                    pixel,
-                    x,
-                    y,
-                    ..
-                } if action == "down" => {
-                    let point = pixel.unwrap_or([
-                        u32::from(x) * self.viewport.width
-                            / u32::from(self.viewport.columns.max(1)),
-                        u32::from(y) * self.viewport.height / u32::from(self.viewport.rows.max(1)),
-                    ]);
-                    let action = self
-                        .chrome_hits
-                        .iter()
-                        .rev()
-                        .find(|h| h.rect.contains(point[0] as u16, point[1] as u16))
-                        .map(|h| h.action.clone());
-                    if let Some(action) = action {
-                        self.action(&action)?;
-                    }
-                }
-                Input::Notice { message } => {
-                    if message == "focus-canvas:terminals" && self.state.space != Space::Apps {
-                        self.desktop_send(DesktopCommand::FocusApp(app_id(
-                            &self.config.workspace,
-                            self.config.canonical_pane(self.state.selected()),
-                        )));
-                    } else if let Some(paths) = message.strip_prefix("drop:") {
-                        self.deliver(self.state.selected(), serde_json::from_str(paths)?)
-                    } else if let Some(action) = message.strip_prefix("action:") {
-                        self.action(action)?
-                    }
-                }
-                Input::CancelPointer => self.release(),
-                _ => {}
-            }
-            Ok(())
-        })();
-        if let Err(e) = result {
-            self.receiving = None;
-            self.osc("t=r:o=0:i=1", None);
-            self.note(format!("{e:#}"));
+        let click = matches!(&input, Input::Pointer { action, button: 0, .. } if action == "up");
+        self.handle_input(input);
+        if click {
+            self.focus_terminals();
         }
     }
     fn wake(&mut self) -> Option<crossbeam_channel::Receiver<()>> {

@@ -3612,7 +3612,7 @@ dependencies = [
 [[package]]
 name = "starcore"
 version = "0.25.4"
-source = "git+https://github.com/bstar/starcore?tag=v0.25.4#f80985cb2ad9f3ff093b3bcd19a72a699801e8db"
+source = "git+https://github.com/bstar/starcore?rev=ac724cb0d3abccc0bd5c7c8609da3fc6fa5773c0#ac724cb0d3abccc0bd5c7c8609da3fc6fa5773c0"
 dependencies = [
  "anyhow",
  "base64",

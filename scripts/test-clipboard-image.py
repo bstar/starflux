@@ -9,11 +9,16 @@ clipboard itself, so STAR/FLUX must stage the image and paste its path.
 
 Needs `wl-copy`/`wl-paste` and a headless compositor: set STARFLUX_TEST_WAYLAND
 to a running one's socket, or have `sway` on PATH (STARFLUX_TEST_SWAY overrides).
+With --ssh the project lives on an SSH host (a private sshd on 127.0.0.1): the
+image is staged on that host and its path pasted there.
 """
-import fcntl, json, os, pty, secrets, shlex, shutil, signal, struct, subprocess
-import tempfile, termios, threading, time, zlib
+import argparse, fcntl, getpass, json, os, pty, secrets, shlex, shutil, signal, socket
+import struct, subprocess, tempfile, termios, threading, time, zlib
 from pathlib import Path
 
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument('--ssh', action='store_true', help='Put the project on a private SSH host')
+args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 app = Path(os.environ.get('STARFLUX_TEST_APP', str(root / 'scripts/run-local.sh'))).resolve()
 report = root / 'target/clipboard-image-proof'
@@ -94,9 +99,51 @@ with open(Path(sys.argv[1])/'input', 'ab', buffering=0) as out:
                    XDG_CONFIG_HOME=str(tmp / 'config'), SHELL=str(shell), TERM='xterm',
                    STAR_TERMINAL_RENDERER='kitty-pixels', STARFLUX_KITTY=str(tmp / 'kitty-must-not-run'),
                    WAYLAND_DISPLAY=wayland)
-        (state / (name + '.json')).write_text(json.dumps(dict(
-            workspace=name, host=None, directory=str(tmp), agent=None,
-            executable=str(app), project_host=True)))
+        ssh_options = []
+        project = dict(workspace=name, host=None, directory=str(tmp), agent=None,
+                       executable=str(app), project_host=True)
+        if args.ssh:
+            for key in ('host', 'client'):
+                subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(tmp / key)], check=True)
+            (tmp / 'authorized_keys').write_text((tmp / 'client.pub').read_text())
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1', 0))
+                port = sock.getsockname()[1]
+            (tmp / 'known_hosts').write_text(f'[127.0.0.1]:{port} ' + (tmp / 'host.pub').read_text())
+            (tmp / 'sshd_config').write_text(
+                f'Port {port}\nListenAddress 127.0.0.1\nHostKey {tmp}/host\nPidFile {tmp}/sshd.pid\n'
+                f'AuthorizedKeysFile {tmp}/authorized_keys\nStrictModes no\nPasswordAuthentication no\n'
+                'KbdInteractiveAuthentication no\nUsePAM no\n'
+                'AcceptEnv XDG_RUNTIME_DIR XDG_DATA_HOME XDG_CONFIG_HOME SHELL\n'
+                f'AllowUsers {getpass.getuser()}\nPerSourcePenalties no\nLogLevel ERROR\n')
+            log = (report / 'sshd.log').open('w')
+            logs.append(log)
+            processes.append(subprocess.Popen(
+                [shutil.which('sshd') or '/usr/sbin/sshd', '-D', '-e', '-f', str(tmp / 'sshd_config')],
+                stderr=log, start_new_session=True))
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=.1):
+                        break
+                except OSError:
+                    assert processes[-1].poll() is None and time.monotonic() < deadline, 'private sshd did not start'
+                    time.sleep(.02)
+            # The window runs here with the desktop; the project's terminals
+            # run on the SSH host, whose sessions have no desktop.
+            remote_app = tmp / 'remote-starflux'
+            remote_app.write_text('#!/bin/sh\nexec ' + shlex.join(
+                ['env', *[k + '=' + env[k] for k in ('XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
+                                                    'SHELL', 'STAR_TERMINAL_RENDERER', 'PATH')],
+                 str(app)]) + ' "$@"\n')
+            remote_app.chmod(0o700)
+            (tmp / 'ssh_config').write_text(
+                f'Host proof\n HostName 127.0.0.1\n Port {port}\n User {getpass.getuser()}\n'
+                f' IdentityFile {tmp}/client\n IdentitiesOnly yes\n BatchMode yes\n'
+                f' StrictHostKeyChecking yes\n UserKnownHostsFile {tmp}/known_hosts\n')
+            ssh_options = ['--ssh', 'proof', '--ssh-config', str(tmp / 'ssh_config'),
+                           '--remote-executable', str(remote_app)]
+        (state / (name + '.json')).write_text(json.dumps(project))
         identity = 'v-clip-proof'
         tty_bytes = bytearray()
 
@@ -124,7 +171,7 @@ with open(Path(sys.argv[1])/'input', 'ab', buffering=0) as out:
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         log = (report / 'frontend.log').open('w')
         logs.append(log)
-        frontend = subprocess.Popen([str(app), '--cells', '--workspace', name, '--frontend', identity],
+        frontend = subprocess.Popen([str(app), '--cells', '--workspace', name, '--frontend', identity, *ssh_options],
                                     stdin=slave, stdout=slave, stderr=log, env=env, start_new_session=True)
         processes.append(frontend)
         os.close(slave)

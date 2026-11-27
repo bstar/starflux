@@ -40,8 +40,60 @@ static ANNOUNCE_LOCAL_MACHINES: Mutex<Option<String>> = Mutex::new(None);
 static REQUIRE_GRAPHICAL: AtomicBool = AtomicBool::new(false);
 static FOCUS_NOTICE: AtomicU8 = AtomicU8::new(0);
 static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The SSH host serving this window, which cannot read this computer's
+/// clipboard itself. Ctrl+V with an image copies it there.
+static REMOTE: Mutex<Option<crate::clipboard_image::Remote>> = Mutex::new(None);
+static SENDING: AtomicBool = AtomicBool::new(false);
+
+fn queue(message: String) {
+    let mut keys = KEYS.lock().unwrap();
+    if keys.len() < 32 {
+        keys.push(message);
+    }
+}
+
+/// Ctrl+V with only an image on the clipboard, in a window served over SSH:
+/// copy the image to the host and deliver it there like a dropped file.
+fn remote_clipboard_image(key: &starcore::crossterm::event::KeyEvent) -> Option<Input> {
+    if key.code != KeyCode::Char('v')
+        || key.modifiers != KeyModifiers::CONTROL
+        || key.kind != starcore::crossterm::event::KeyEventKind::Press
+    {
+        return None;
+    }
+    let remote = REMOTE.lock().unwrap();
+    let remote = remote.as_ref()?;
+    let (mime, extension) = crate::clipboard_image::offered()?;
+    if SENDING.swap(true, Ordering::AcqRel) {
+        // One image is already on its way; this press is part of it.
+        return Some(Input::Notice {
+            message: "clipboard-image:sending".into(),
+        });
+    }
+    let remote = crate::clipboard_image::Remote {
+        host: remote.host.clone(),
+        ssh_config: remote.ssh_config.clone(),
+        executable: remote.executable.clone(),
+    };
+    std::thread::spawn(move || {
+        let sent = crate::clipboard_image::send(&remote, mime, extension);
+        SENDING.store(false, Ordering::Release);
+        queue(match sent {
+            Ok(path) => format!("drop:{}", serde_json::json!([path])),
+            Err(error) => format!("clipboard-image:failed:{error:#}"),
+        });
+    });
+    Some(Input::Notice {
+        message: "clipboard-image:sending".into(),
+    })
+}
 
 pub fn event(event: &Event) -> Option<Input> {
+    if let Event::Key(key) = event
+        && let Some(input) = remote_clipboard_image(key)
+    {
+        return Some(input);
+    }
     match event {
         // CORE reserves Ctrl+L for repaint before dispatching custom input. Queue
         // the key as a reliable notice as well, so a focused shell receives it.
@@ -50,10 +102,7 @@ pub fn event(event: &Event) -> Option<Input> {
                 && key.modifiers == KeyModifiers::CONTROL
                 && key.kind == starcore::crossterm::event::KeyEventKind::Press =>
         {
-            let mut keys = KEYS.lock().unwrap();
-            if keys.len() < 32 {
-                keys.push("terminal-repaint-key".into());
-            }
+            queue("terminal-repaint-key".into());
             None
         }
         Event::Osc72(text) => {
@@ -107,6 +156,14 @@ fn preference(mode: Mode) -> PresentationPreference {
     }
 }
 pub fn run(launch: Launch, mode: Mode) -> Result<()> {
+    *REMOTE.lock().unwrap() = launch
+        .host
+        .clone()
+        .map(|host| crate::clipboard_image::Remote {
+            host,
+            ssh_config: launch.ssh_config.clone(),
+            executable: launch.executable.clone(),
+        });
     let _font_output = crate::font_frontend::LocalOutput::start()?;
     ANNOUNCE_LOCAL_RETURN.store(crate::refresh::has_local_return(), Ordering::Relaxed);
     *ANNOUNCE_LOCAL_MACHINES.lock().unwrap() = crate::refresh::local_machines_notice();

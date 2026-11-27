@@ -350,6 +350,16 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
+    if raw
+        .get(1)
+        .is_some_and(|arg| arg == "--receive-clipboard-image")
+    {
+        ensure!(
+            raw.len() == 3,
+            "Expected the clipboard image's file extension"
+        );
+        return clipboard_image::receive(&raw[2]);
+    }
     if raw.get(1).is_some_and(|arg| arg == "--prepare-pane-launch") {
         ensure!(
             (5..=6).contains(&raw.len()),
