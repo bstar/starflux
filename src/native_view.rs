@@ -724,7 +724,11 @@ fn run(
             let presentation_ready = Instant::now() >= retry;
             for state in &states {
                 let s = state.settings.lock().unwrap().clone();
-                let v = peers.get_mut(&state.id).unwrap();
+                // A view that closed after `states` was collected has already lost
+                // its peer above; it leaves `states` on the next pass.
+                let Some(v) = peers.get_mut(&state.id) else {
+                    continue;
+                };
                 if presentation_ready && s.epoch != v.epoch {
                     if !s.visible {
                         if v.watch {
