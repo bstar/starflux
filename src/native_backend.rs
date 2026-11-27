@@ -995,15 +995,28 @@ fn with_desktop_environment(
     if config.remote(pane) {
         return argv;
     }
+    let value = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.is_empty() && !value.contains('\0'))
+    };
     let assignments: Vec<String> = DESKTOP_ENVIRONMENT
         .iter()
-        .filter_map(|name| {
-            let value = std::env::var(name).ok()?;
-            (!value.is_empty() && !value.contains('\0')).then(|| format!("{name}={value}"))
-        })
+        .chain(&SSH_LOGIN)
+        .filter_map(|name| Some(format!("{name}={}", value(name)?)))
         .collect();
-    with_environment(argv, assignments)
+    // An owner started from an SSH login would otherwise mark every local
+    // terminal as remote: agents then refuse clipboard images ("no image
+    // over SSH") and other tools pick SSH behavior on the desktop.
+    let unset: Vec<&str> = SSH_LOGIN
+        .into_iter()
+        .filter(|name| value(name).is_none())
+        .collect();
+    with_environment_changes(argv, &unset, assignments)
 }
+/// An SSH login's markers. A local terminal is over SSH only when the
+/// process opening it is.
+const SSH_LOGIN: [&str; 3] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"];
 /// Agent hooks report status for exactly this project, pane and generation;
 /// without these a native agent's status is guessed from its screen.
 fn with_pane_identity(
@@ -1023,22 +1036,46 @@ fn with_pane_identity(
 }
 /// Run `argv` with extra `NAME=value` assignments, through one `env` call.
 fn with_environment(argv: Vec<String>, assignments: Vec<String>) -> Vec<String> {
-    if assignments.is_empty() {
+    with_environment_changes(argv, &[], assignments)
+}
+/// Run `argv` without the `unset` variables and with extra `NAME=value`
+/// assignments, through one `env` call. `env` reads its `-u` options before
+/// the first assignment, so unsets go first in an existing prefix.
+fn with_environment_changes(
+    argv: Vec<String>,
+    unset: &[&str],
+    assignments: Vec<String>,
+) -> Vec<String> {
+    if unset.is_empty() && assignments.is_empty() {
         return argv;
     }
-    if argv
+    let mut argv = if argv
         .first()
         .is_some_and(|program| program == "/usr/bin/env")
     {
-        let mut argv = argv;
-        let at = 1 + argv[1..].iter().take_while(|arg| arg.contains('=')).count();
-        argv.splice(at..at, assignments);
-        return argv;
+        argv
+    } else {
+        std::iter::once("/usr/bin/env".to_string())
+            .chain(argv)
+            .collect()
+    };
+    let mut at = 1;
+    while at < argv.len() {
+        if argv[at] == "-u" {
+            at += 2;
+        } else if argv[at].contains('=') {
+            at += 1;
+        } else {
+            break;
+        }
     }
-    std::iter::once("/usr/bin/env".to_string())
-        .chain(assignments)
-        .chain(argv)
-        .collect()
+    let at = at.min(argv.len());
+    argv.splice(at..at, assignments);
+    let options = unset
+        .iter()
+        .flat_map(|name| ["-u".to_string(), (*name).to_string()]);
+    argv.splice(1..1, options);
+    argv
 }
 #[cfg(target_os = "linux")]
 fn pending_command(
@@ -1681,6 +1718,19 @@ mod tests {
             argv("/usr/bin/env D=:0 P=2 E=3 claude --x")
         );
         assert_eq!(super::with_environment(argv("bash"), vec![]), argv("bash"));
+        // A stale SSH login is removed before any assignment, as env requires.
+        assert_eq!(
+            super::with_environment_changes(
+                argv("/usr/bin/env -u X D=:0 claude"),
+                &["SSH_TTY"],
+                argv("P=2")
+            ),
+            argv("/usr/bin/env -u SSH_TTY -u X D=:0 P=2 claude")
+        );
+        assert_eq!(
+            super::with_environment_changes(argv("bash"), &["SSH_CONNECTION"], vec![]),
+            argv("/usr/bin/env -u SSH_CONNECTION bash")
+        );
     }
 
     #[test]
