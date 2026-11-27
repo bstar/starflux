@@ -54,7 +54,7 @@
             install -Dm644 ${./packaging/starflux.svg} $out/share/icons/hicolor/scalable/apps/starflux.svg
             for program in starflux starflux-terminal-client; do
               wrapProgram $out/bin/$program \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.openssh pkgs.xwayland pkgs.pulseaudio pkgs.pipewire pkgs.kitty pkgs.libnotify ]} \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.openssh pkgs.xwayland pkgs.pulseaudio pkgs.pipewire pkgs.kitty pkgs.libnotify pkgs.wl-clipboard ]} \
                 --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath native} \
                 --set ALSA_PLUGIN_DIR ${alsaPluginDir} \
                 --set GST_PLUGIN_SYSTEM_PATH_1_0 ${pkgs.lib.concatMapStringsSep ":" (p: "${p}/lib/gstreamer-1.0") plugins}
@@ -79,7 +79,7 @@
           ${package}/bin/starflux-pty-proxy --help
         '';
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [ rustc cargo rustfmt clippy cargo-deny pkg-config python3 tmux openssh xwayland pulseaudio pipewire ];
+          packages = with pkgs; [ rustc cargo rustfmt clippy cargo-deny pkg-config python3 tmux openssh xwayland pulseaudio pipewire sway wl-clipboard ];
           buildInputs = native;
           ALSA_PLUGIN_DIR = alsaPluginDir;
           GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.concatMapStringsSep ":" (p: "${p}/lib/gstreamer-1.0") plugins;

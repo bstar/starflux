@@ -1328,6 +1328,9 @@ pub fn recover(
     };
     let _worktree = crate::worktrees::ensure_allowed(&config)?;
     let mut launch = launch_spec(&config, pane, None)?;
+    // A recovered shell is a new launch: it takes the desktop session from
+    // the STAR/FLUX process recovering it, as a first launch does.
+    launch.argv = with_desktop_environment(&config, pane, launch.argv);
     let mut sealed = false;
     let mut owner_lost = false;
     if target.binding.source.is_none() {

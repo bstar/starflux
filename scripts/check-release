@@ -139,6 +139,7 @@ python3 scripts/native/test-native-presenter.py
 python3 scripts/native/test-native-image-delivery.py
 python3 scripts/test-project-api.py
 python3 scripts/test-agent-session-hook.py
+python3 scripts/test-clipboard-image.py
 python3 scripts/test-native-terminal.py --app-capabilities
 python3 scripts/test-native-terminal.py --render-cache
 python3 scripts/test-native-terminal.py --font-controls

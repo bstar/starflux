@@ -18,6 +18,7 @@ mod categories;
 mod category_agent;
 mod category_agent_files;
 mod category_agent_runtime;
+mod clipboard_image;
 mod cold_start;
 mod compositor;
 mod features;

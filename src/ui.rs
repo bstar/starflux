@@ -2497,6 +2497,42 @@ impl Workspace {
         }
     }
     fn direct_input(&mut self, kind: EmbeddedKind) {
+        // Ctrl+V with a screenshot on the clipboard: the pane's program may
+        // have no desktop session (an owner started from a console, an SSH
+        // host), so deliver the image as a staged file, like a dropped one.
+        if let EmbeddedKind::Key {
+            code,
+            phase,
+            modifiers: 2,
+        } = &kind
+            && *phase != KeyPhase::Release
+            && code.eq_ignore_ascii_case("char:v")
+            && self.state.space == Space::Terminals
+            && self.transfer.is_none()
+            && let Some((data, extension)) = crate::clipboard_image::read()
+        {
+            let pane = self.config.canonical_pane(self.state.selected());
+            let staged = tempfile::Builder::new()
+                .prefix("starflux-clipboard-")
+                .tempdir()
+                .and_then(|stage| {
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or_default();
+                    let path = stage.path().join(format!("clipboard-{stamp}.{extension}"));
+                    fs::write(&path, data)?;
+                    Ok((stage, path))
+                });
+            match staged {
+                Ok((stage, path)) => {
+                    self.drop_stage = Some(stage);
+                    self.deliver(pane, vec![path]);
+                }
+                Err(error) => self.note(format!("Clipboard image: {error:#}")),
+            }
+            return;
+        }
         if let EmbeddedKind::Pointer {
             action, position, ..
         } = &kind
