@@ -148,14 +148,14 @@ BarWidget {
       id: markRow
       width: mark.width + (count.visible ? Style.spaceReal(4) + count.implicitWidth : 0)
       height: parent.height
-      x: Math.round((parent.width - width) / 2)
+      x: Math.floor((parent.width - width) / 2)
       scale: button.pressScale
 
       Mark {
         id: mark
         size: Style.bar.iconSize
         color: button.ink
-        y: Math.round((parent.height - height) / 2)
+        y: Math.floor((parent.height - height) / 2)
       }
 
       Text {
@@ -277,7 +277,7 @@ BarWidget {
             Mark {
               size: 12
               color: header.color
-              y: Math.round(header.topPadding + (header.height - header.topPadding - height) / 2)
+              y: Math.floor(header.topPadding + (header.height - header.topPadding - height) / 2)
             }
             SectionHeader { id: header; label: "STAR/FLUX · AGENTS"; foreground: root.ink; fontFamily: root.face }
           }

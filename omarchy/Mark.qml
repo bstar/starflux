@@ -1,17 +1,17 @@
 import QtQuick
 import QtQuick.Shapes
 
-// The STAR/FLUX mark: a terminal prompt in a square frame, the app icon cut
-// down for bar sizes. Drawn as whole pixels on a 12-unit grid, like a bitmap
-// terminal font, so it stays sharp at 12px; other sizes round to a whole
-// multiple of 12 for the same reason.
+// The STAR/FLUX mark: a terminal prompt, `>_`, from the app icon. Drawn as
+// whole pixels like a bitmap terminal font, 10 by 9 at the bar's 12px size,
+// so it stays sharp; other sizes scale by a whole number for the same reason.
+// The item is exactly the drawing, so centering the item centers the mark.
 Shape {
   id: mark
   property color color: "white"
   property real size: 12
   readonly property int unit: Math.max(1, Math.round(size / 12))
-  width: unit * 12
-  height: unit * 12
+  width: unit * 10
+  height: unit * 9
   preferredRendererType: Shape.GeometryRenderer
 
   ShapePath {
@@ -19,12 +19,11 @@ Shape {
     strokeColor: "transparent"
     strokeWidth: -1
     fillColor: mark.color
-    fillRule: ShapePath.OddEvenFill
     PathSvg {
-      // Frame, the prompt's chevron one step at a time, then its cursor.
-      path: "M0 0H12V12H0Z M1 1V11H11V1Z"
-        + " M3 3h1v1H3Z M4 4h1v1H4Z M5 5h1v2H5Z M4 7h1v1H4Z M3 8h1v1H3Z"
-        + " M7 8h2v1H7Z"
+      // The chevron, two pixels thick, one row at a time; then the cursor.
+      path: "M0 0h2v1H0Z M1 1h2v1H1Z M2 2h2v1H2Z M3 3h2v1H3Z M4 4h2v1H4Z"
+        + " M3 5h2v1H3Z M2 6h2v1H2Z M1 7h2v1H1Z M0 8h2v1H0Z"
+        + " M6 7h4v2H6Z"
     }
   }
 }
