@@ -23,7 +23,7 @@ Shape {
       // The chevron, two pixels thick, one row at a time; then the cursor.
       path: "M0 0h2v1H0Z M1 1h2v1H1Z M2 2h2v1H2Z M3 3h2v1H3Z M4 4h2v1H4Z"
         + " M3 5h2v1H3Z M2 6h2v1H2Z M1 7h2v1H1Z M0 8h2v1H0Z"
-        + " M7 8h5v1H7Z"
+        + " M7 7h5v2H7Z"
     }
   }
 }
