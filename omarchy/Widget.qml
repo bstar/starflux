@@ -125,13 +125,61 @@ BarWidget {
     function toggle(): void { root.popupOpen = !root.popupOpen }
   }
 
+  // The count beside the mark: what needs you first, else what is working.
+  readonly property string countText: root.unavailableText !== "" || root.apiState === "" ? ""
+    : root.waiting.length > 0 ? String(root.waiting.length)
+    : root.vertical || root.workingCount === 0 ? "" : String(root.workingCount)
+
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.unavailableText !== "" || root.apiState === "" ? "󱚣"
-      : root.waiting.length > 0 ? "󱚣 " + root.waiting.length
-      : root.vertical || root.workingCount === 0 ? "󱚣" : "󱚣 " + root.workingCount
+    // The mark is drawn below, not set in a font; the label stays hidden and
+    // the text only keeps the button visible.
+    text: "STAR/FLUX"
+    labelVisible: false
+    fixedWidth: root.vertical ? -1
+      : Math.max(Style.bar.iconSlot, Math.round(scaledHorizontalMargin * 2 + mark.width
+        + (root.countText !== "" ? Style.spaceReal(4) + count.implicitWidth : 0)))
+    fixedHeight: root.vertical ? Style.bar.iconSlot : -1
+    readonly property color ink: active && useActiveColor ? activeColor : foreground
+
+    Item {
+      id: markRow
+      width: mark.width + (count.visible ? Style.spaceReal(4) + count.implicitWidth : 0)
+      height: parent.height
+      x: Math.round((parent.width - width) / 2)
+      scale: button.pressScale
+
+      Mark {
+        id: mark
+        size: Style.bar.iconSize
+        color: button.ink
+        y: Math.round((parent.height - height) / 2)
+      }
+
+      Text {
+        id: count
+        visible: root.countText !== ""
+        anchors.left: mark.right
+        anchors.leftMargin: Style.spaceReal(4)
+        anchors.verticalCenter: parent.verticalCenter
+        // Center the figures, not the line box, as the bar's own labels do.
+        anchors.verticalCenterOffset: (countMetrics.descent - countMetrics.ascent + countMetrics.tightBoundingRect("0").height) / 2
+        text: root.countText
+        textFormat: Text.PlainText
+        color: button.ink
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        renderType: Text.NativeRendering
+      }
+
+      FontMetrics {
+        id: countMetrics
+        font: count.font
+      }
+    }
+
     // The bar's urgent color, the same signal other widgets use for "look here".
     active: root.waiting.length > 0
     fontSize: Style.font.body
@@ -224,7 +272,15 @@ BarWidget {
           width: scrollArea.availableWidth
           spacing: Style.space(8)
 
-          SectionHeader { label: "STAR/FLUX · AGENTS"; foreground: root.ink; fontFamily: root.face }
+          Row {
+            spacing: Style.spaceReal(6)
+            Mark {
+              size: 12
+              color: header.color
+              y: Math.round(header.topPadding + (header.height - header.topPadding - height) / 2)
+            }
+            SectionHeader { id: header; label: "STAR/FLUX · AGENTS"; foreground: root.ink; fontFamily: root.face }
+          }
 
           Text {
             width: parent.width

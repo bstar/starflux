@@ -1,0 +1,210 @@
+<title>STAR/FLUX Bar Icons</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a sheet of studies. One comparison bar on top, then a card per mark with
+   large view, real bar sizes in two themes, and its three states. Kanagawa only,
+   because the marks are judged against the user's own bar. */
+:root {
+  color-scheme: dark;
+  --ink: #16161d;          /* page ground, darker than the bar */
+  --sheet: #1f1f28;        /* Kanagawa background: the bar itself */
+  --raised: #2a2a37;
+  --line: #363646;         /* Kanagawa selection */
+  --fg: #dcd7ba;           /* Kanagawa foreground */
+  --muted: #727169;
+  --urgent: #c34043;       /* the bar's urgent color comes from theme red */
+  --pick: #7e9cd8;         /* Kanagawa blue, for the chosen card */
+  --lt-bg: #eff1f5;        /* Catppuccin Latte, a light Omarchy theme */
+  --lt-fg: #4c4f69;
+  --lt-urgent: #d20f39;
+  --mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", monospace;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+}
+* { box-sizing: border-box }
+body {
+  background: var(--ink); color: var(--fg); font: 15px/1.55 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 1120px; margin: 0 auto; display: grid; gap: 36px }
+header { display: grid; gap: 10px; max-width: 68ch }
+h1 { font: 700 1.6rem/1.2 var(--mono); letter-spacing: -.01em; margin: 0; text-wrap: balance }
+h1 span { color: var(--muted) }
+p { margin: 0 }
+.lede { color: #c8c093 }
+.note { color: var(--muted); font-size: .9rem }
+h2 { font: 600 .75rem var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 10px }
+
+/* Real-size bar mock: 26px tall, like Omarchy's horizontal bar. */
+.bar {
+  height: 26px; display: flex; align-items: center; gap: 14px; padding: 0 12px;
+  background: var(--sheet); color: var(--fg); font: 400 12px var(--mono);
+  border: 1px solid var(--line); overflow: hidden; white-space: nowrap;
+}
+.bar.light { background: var(--lt-bg); color: var(--lt-fg); border-color: #ccd0da }
+.bar .spacer { flex: 1 }
+.bar .ws { display: flex; gap: 10px; opacity: .55 }
+.bar .ws b { opacity: 1; font-weight: 700 }
+.bar .item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums }
+.bar .item svg { width: 15px; height: 15px; flex: none }
+.bar .item.urgent { color: var(--urgent); font-weight: 700 }
+.bar.light .item.urgent { color: var(--lt-urgent) }
+.compare { overflow-x: auto }
+.compare .bar { min-width: 760px; gap: 20px }
+.compare .tag { font-size: 10px; opacity: .5; margin-right: -2px }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px }
+.card {
+  background: var(--sheet); border: 1px solid var(--line); padding: 18px;
+  display: grid; gap: 14px; cursor: pointer; text-align: left; color: inherit; font: inherit;
+  min-width: 0;
+}
+.card:hover { border-color: #54546d }
+.card:focus-visible { outline: 2px solid var(--pick); outline-offset: 2px }
+.card[aria-pressed="true"] { border-color: var(--pick); box-shadow: inset 0 0 0 1px var(--pick) }
+.head { display: flex; align-items: baseline; gap: 10px }
+.letter { font: 700 1.1rem var(--mono); color: var(--pick); width: 1.4em }
+.name { font: 600 1rem var(--sans) }
+.chosen { margin-left: auto; font: 600 .7rem var(--mono); letter-spacing: .1em; color: var(--pick); text-transform: uppercase }
+.card[aria-pressed="false"] .chosen { visibility: hidden }
+.stage { display: flex; align-items: flex-end; gap: 18px; padding: 14px; background: var(--ink); border: 1px solid var(--line) }
+.stage svg { color: var(--fg); flex: none }
+.stage .s96 { width: 96px; height: 96px }
+.stage .s32 { width: 32px; height: 32px }
+.stage .s16 { width: 16px; height: 16px }
+.stage .sizes { display: grid; gap: 4px; justify-items: center; font: 10px var(--mono); color: var(--muted) }
+.idea { font-size: .9rem; color: #c8c093; min-height: 3.1em }
+.states { display: grid; gap: 6px }
+.states .bar { gap: 0; justify-content: space-between }
+.states .label { font: 10px var(--mono); color: var(--muted); display: flex; justify-content: space-between; padding: 0 12px }
+.states .bar.light + .label { display: none }
+
+.choice {
+  position: sticky; bottom: 0; background: var(--raised); border: 1px solid var(--line);
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font: 500 .95rem var(--sans);
+}
+.choice code { font: 600 .95rem var(--mono); color: var(--pick) }
+.choice button {
+  margin-left: auto; font: 600 .8rem var(--mono); background: var(--pick); color: var(--ink);
+  border: 0; padding: 7px 12px; cursor: pointer;
+}
+.choice button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px }
+.choice button[disabled] { opacity: .4; cursor: default }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .12s } }
+</style>
+
+<main>
+  <header>
+    <h1>STAR/FLUX <span>/</span> bar icons</h1>
+    <p class="lede">Ten marks for the Omarchy bar widget, replacing the robot glyph. Click the one you want, then tell me its letter.</p>
+    <p class="note">Each mark is drawn on a 24-unit grid with square ends, like the STAR/FLUX app icon. In the bar it would be drawn as a vector shape in the bar's own colors, so it follows every theme. Two of them, F and G, also show the state in the mark itself.</p>
+  </header>
+
+  <section>
+    <h2>All ten in your bar, at real size</h2>
+    <div class="compare"><div class="bar" id="compare"></div></div>
+  </section>
+
+  <section>
+    <h2>Studies</h2>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <div class="choice" role="status" aria-live="polite">
+    <span id="choiceText">No mark chosen yet.</span>
+    <button type="button" id="copy" disabled>Copy choice</button>
+  </div>
+</main>
+
+<script>
+// Every mark: paths on a 24 grid. "s" is stroked, "f" is filled.
+// State hooks: idle/working/waiting variants for the marks that show state.
+const MARKS = [
+  { id:'A', name:'Prompt frame', idea:'The app icon, simplified for 16 pixels: a square frame around a terminal prompt.',
+    draw: () => [s('M3 3h18v18H3z'), s('M7 8l4 4-4 4'), s('M13 16h4')] },
+  { id:'B', name:'Slash frame', idea:'The slash in every STAR app name, set in a square. It reads as STAR before it reads as anything else.',
+    draw: () => [s('M3 3h18v18H3z'), s('M15 6.5L9 17.5')] },
+  { id:'C', name:'Slash monogram', idea:'The letters /F drawn in strokes: the slash of STAR/ and the F of FLUX.',
+    draw: () => [s('M3.5 21L10 3'), s('M14 21V3.5h7'), s('M14 12h5.5')] },
+  { id:'D', name:'Stacked workspaces', idea:'Three workspaces behind one another, the way STAR/FLUX keeps them all running.',
+    draw: () => [s('M3 9h12v12H3z'), s('M6 9V6h12v12h-3'), s('M9 6V3h12v12h-3')] },
+  { id:'E', name:'Star in frame', idea:'A four-point star inside a terminal window. Says STAR plainly.',
+    draw: () => [s('M3 3h18v18H3z'), f('M12 6.5Q12.7 11.3 17.5 12Q12.7 12.7 12 17.5Q11.3 12.7 6.5 12Q11.3 11.3 12 6.5Z')] },
+  { id:'F', name:'Panes', idea:'Four panes, like a split workspace. When an agent needs you, its pane fills in.',
+    stateful: true,
+    draw: st => [s('M3 3h18v18H3z'), s('M12 3v18'), s('M3 12h18'),
+      ...(st === 'waiting' ? [f('M14 14h5v5h-5z')] : st === 'working' ? [f('M15.5 15.5h2v2h-2z')] : [])] },
+  { id:'G', name:'Pulse', idea:'A signal trace in a window. Flat while agents are idle, a wave while they work.',
+    stateful: true,
+    draw: st => [s('M3 3h18v18H3z'), st === 'idle' ? s('M6 12h12') : s('M5.5 12c2-4.5 4.5-4.5 6.5 0s4.5 4.5 6.5 0')] },
+  { id:'H', name:'Hub', idea:'One workspace with agents around it, local and over SSH.',
+    draw: () => [f('M9.5 9.5h5v5h-5z'), s('M3 3h4v4H3z'), s('M17 3h4v4h-4z'), s('M10 18h4v4h-4z'),
+      s('M7 7l2.5 2.5'), s('M17 7l-2.5 2.5'), s('M12 14.5V18')] },
+  { id:'I', name:'Orbit', idea:'An agent circling a workspace. The most playful of the set.',
+    draw: () => [f('M10 10h4v4h-4z'), s('M3.81 17.74A10 4.5 -35 1 1 20.19 6.26A10 4.5 -35 1 1 3.81 17.74'), f('M18.7 4.8h3v3h-3z')] },
+  { id:'J', name:'Flux lines', idea:'Three streams flowing into one window: many agents, one place to look.',
+    draw: () => [s('M2.5 7H9'), s('M2.5 12H9'), s('M2.5 17H9'), s('M12 4h9v16h-9z')] },
+];
+function s(d){ return { d, mode:'s' } }
+function f(d){ return { d, mode:'f' } }
+
+function svg(mark, state, cls){
+  const parts = mark.draw(state).map(p => p.mode === 's'
+    ? `<path d="${p.d}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"/>`
+    : `<path d="${p.d}" fill="currentColor"/>`).join('');
+  return `<svg class="${cls||''}" viewBox="0 0 24 24" aria-hidden="true">${parts}</svg>`;
+}
+function item(mark, state){
+  const count = state === 'working' ? ' 3' : state === 'waiting' ? ' 2' : '';
+  return `<span class="item${state === 'waiting' ? ' urgent' : ''}">${svg(mark, state)}${count}</span>`;
+}
+function bar(mark, light){
+  return `<div class="bar${light ? ' light' : ''}">${item(mark,'idle')}${item(mark,'working')}${item(mark,'waiting')}</div>`
+    + (light ? '' : `<div class="label"><span>idle</span><span>3 working</span><span>2 need you</span></div>`);
+}
+
+document.getElementById('compare').innerHTML =
+  `<span class="ws"><b>1</b><span>2</span><span>3</span><span>4</span></span><span class="spacer"></span>`
+  + MARKS.map(m => `<span class="tag">${m.id}</span>${item(m,'working')}`).join('')
+  + `<span class="spacer"></span><span class="item">Fri 02:41</span>`;
+
+const grid = document.getElementById('grid');
+grid.innerHTML = MARKS.map(m => `
+  <button type="button" class="card" id="mark-${m.id}" data-id="${m.id}" aria-pressed="false">
+    <div class="head"><span class="letter">${m.id}</span><span class="name">${m.name}</span><span class="chosen">Chosen</span></div>
+    <div class="stage">
+      ${svg(m, 'working', 's96')}
+      <div class="sizes">${svg(m,'working','s32')}32</div>
+      <div class="sizes">${svg(m,'working','s16')}16</div>
+    </div>
+    <p class="idea">${m.idea}</p>
+    <div class="states">${bar(m,false)}${bar(m,true)}</div>
+  </button>`).join('');
+
+let chosen = null;
+try { chosen = localStorage.getItem('starflux-icon'); } catch (e) {}
+const text = document.getElementById('choiceText'), copy = document.getElementById('copy');
+function show(){
+  grid.querySelectorAll('.card').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.id === chosen)));
+  const m = MARKS.find(x => x.id === chosen);
+  if (m) { text.innerHTML = `You chose <code>${m.id}</code>, ${m.name}.`; copy.disabled = false; }
+  else { text.textContent = 'No mark chosen yet.'; copy.disabled = true; }
+}
+grid.addEventListener('click', e => {
+  const card = e.target.closest('.card'); if (!card) return;
+  chosen = card.dataset.id;
+  try { localStorage.setItem('starflux-icon', chosen); } catch (e) {}
+  show();
+});
+copy.addEventListener('click', () => {
+  const m = MARKS.find(x => x.id === chosen); if (!m) return;
+  const line = `Use bar icon ${m.id} (${m.name})`;
+  navigator.clipboard.writeText(line).then(() => { copy.textContent = 'Copied'; setTimeout(() => copy.textContent = 'Copy choice', 1500); })
+    .catch(() => { const r = document.createRange(); r.selectNodeContents(text); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); });
+});
+show();
+</script>
