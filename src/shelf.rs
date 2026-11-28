@@ -306,7 +306,7 @@ impl Pen {
         (w > 0 && h > 0).then(|| R::new(r.x, r.y, w, h))
     }
     /// The STAR/FLUX mark, the `>_` prompt the Omarchy bar widget also
-    /// shows: 10 by 9 whole pixels, like a bitmap terminal font.
+    /// shows: 12 by 9 whole pixels, like a bitmap terminal font.
     fn mark(&mut self, x: u16, y: u16, c: &str) {
         for (dx, dy) in [
             (0, 0),
@@ -321,7 +321,7 @@ impl Pen {
         ] {
             self.fill(R::new(x + dx, y + dy, 2, 1), c);
         }
-        self.fill(R::new(x + 6, y + 7, 4, 2), c);
+        self.fill(R::new(x + 7, y + 8, 5, 1), c);
     }
     fn fill(&mut self, r: R, c: &str) {
         if let Some(r) = self.clip(r) {
@@ -659,7 +659,7 @@ pub fn surfaces(l: Layout, t: &Appearance, m: &Model<'_>) -> (Surface, Surface) 
     );
     p.mark(16, 10, &t.fg);
     p.text(
-        R::new(32, 4, w.saturating_sub(48), 21),
+        R::new(34, 4, w.saturating_sub(50), 21),
         "S T A R / F L U X",
         &t.fg,
         if w >= 188 { 11 } else { 9 },
